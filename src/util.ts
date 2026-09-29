@@ -49,6 +49,7 @@ export function hostPath(url: string): string {
 
 /** An absolute path relative to cwd when inside it, else ~/… when inside home, else unchanged. */
 export function displayPath(path: string, cwd: string, home: string): string {
+  if (cwd && path === cwd) return '.';
   if (cwd && path.startsWith(cwd + '/')) return relative(cwd, path);
   if (home && path.startsWith(home + '/')) return '~/' + path.slice(home.length + 1);
   return path;

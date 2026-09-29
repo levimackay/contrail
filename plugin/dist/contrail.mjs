@@ -487,6 +487,7 @@ function hostPath(url) {
   }
 }
 function displayPath(path, cwd, home) {
+  if (cwd && path === cwd) return ".";
   if (cwd && path.startsWith(cwd + "/")) return relative(cwd, path);
   if (home && path.startsWith(home + "/")) return "~/" + path.slice(home.length + 1);
   return path;

@@ -14,3 +14,10 @@ test('shell output that prints a dependency directory is external, like a Read o
   assert.equal(trustOf('cat src/app.js'), 'local');
   assert.equal(trustOf('cat src/vendors.ts'), 'local');
 });
+
+test('paths show relative to the working directory, which itself shows as .', async () => {
+  const { displayPath } = await import('../util.ts');
+  assert.equal(displayPath('/r', '/r', '/Users/dev'), '.');
+  assert.equal(displayPath('/r/src/a.ts', '/r', '/Users/dev'), 'src/a.ts');
+  assert.equal(displayPath('/Users/dev/.aws/credentials', '/r', '/Users/dev'), '~/.aws/credentials');
+});

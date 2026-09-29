@@ -171,6 +171,8 @@ export interface Graph {
   agentSaid: { byPrompt: Record<string, string>; byAgent: Record<string, string> };
   env: Env;
   firstEvent: string | null;
+  /** When each event was captured, in microseconds since the epoch: timeUs[seq - 1]. */
+  timeUs: number[];
   /** The keyed hash that hashed inputs were stored with; absent when no key exists. */
   hashToken?: (span: string) => string;
 }

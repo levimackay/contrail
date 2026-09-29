@@ -2227,6 +2227,7 @@ function buildGraph(rows, who, hashToken) {
     agentSaid,
     env,
     firstEvent: rows[0]?.hook_event ?? null,
+    timeUs: rows.map((r) => r.captured_us),
     ...hashToken ? { hashToken } : {}
   };
 }
@@ -2906,6 +2907,142 @@ function localTime(us) {
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
 
+// src/render/otel.ts
+import { createHash as createHash2 } from "node:crypto";
+var SPAN_KIND_INTERNAL = 1;
+var STATUS_ERROR = 2;
+function attrs(o) {
+  const out = [];
+  for (const [key, v] of Object.entries(o)) {
+    if (v === null || v === void 0 || v === "") continue;
+    if (typeof v === "boolean") out.push({ key, value: { boolValue: v } });
+    else if (typeof v === "number") out.push({ key, value: { intValue: String(Math.trunc(v)) } });
+    else out.push({ key, value: { stringValue: v } });
+  }
+  return out;
+}
+var hexId = (kind, value, length) => {
+  const hex = createHash2("sha256").update(`${kind}:${value}`).digest("hex").slice(0, length);
+  return /^0+$/.test(hex) ? `1${hex.slice(1)}` : hex;
+};
+var nanos = (us) => (BigInt(Math.round(us)) * 1000n).toString();
+function toOtlp(g, explanations, findings, version) {
+  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? "unknown";
+  const traceId = hexId("trace", sessionId, 32);
+  const rootId = hexId("session", sessionId, 16);
+  const actionSpan = (id) => hexId("action", `${sessionId}:${id}`, 16);
+  const turnSpan = (promptId) => hexId("turn", `${sessionId}:${promptId}`, 16);
+  const at = (seq) => g.timeUs[Math.max(0, Math.min(g.timeUs.length - 1, seq - 1))] ?? 0;
+  const first = g.timeUs.length ? Math.min(...g.timeUs) : 0;
+  const last = g.timeUs.length ? Math.max(...g.timeUs) : 0;
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  const actionIds = new Set(g.actions.map((a) => a.id));
+  const byAction = new Map(findings.map((f) => [f.action.id, f]));
+  const spans = [
+    {
+      traceId,
+      spanId: rootId,
+      name: `claude-code session ${sessionId.slice(0, 8)}`,
+      kind: SPAN_KIND_INTERNAL,
+      startTimeUnixNano: nanos(first),
+      endTimeUnixNano: nanos(last),
+      attributes: attrs({ "session.id": sessionId, "contrail.cwd": g.env.cwd, "contrail.turns": g.prompts.length, "contrail.tool_calls": g.actions.length })
+    }
+  ];
+  g.prompts.forEach((p, i) => {
+    const next = g.prompts[i + 1];
+    spans.push({
+      traceId,
+      spanId: turnSpan(p.promptId),
+      parentSpanId: rootId,
+      name: `turn ${p.label}`,
+      kind: SPAN_KIND_INTERNAL,
+      startTimeUnixNano: nanos(at(p.seq)),
+      endTimeUnixNano: nanos(next ? at(next.seq - 1) : last),
+      attributes: attrs({
+        "contrail.prompt.label": p.label,
+        "contrail.prompt.from": p.from === "task" ? "background task report" : "you",
+        "contrail.prompt.text": clip(p.text, 500)
+      })
+    });
+  });
+  for (const a of g.actions) {
+    const e = explanations.get(a.id);
+    const head = e ? headlineTrace(e) : void 0;
+    const link = head?.links.find((l) => l.grade !== "UNKNOWN");
+    const source = link?.to ? inputs.get(link.to) : void 0;
+    const finding = byAction.get(a.id);
+    const start = at(a.preSeq);
+    const end = Math.max(start, at(a.postSeq ?? a.preSeq));
+    const parent = a.promptId && g.prompts.some((p) => p.promptId === a.promptId) ? turnSpan(a.promptId) : rootId;
+    spans.push({
+      traceId,
+      spanId: actionSpan(a.id),
+      parentSpanId: parent,
+      name: clip(`${a.tool} ${describe(a, g)}`, 120),
+      kind: SPAN_KIND_INTERNAL,
+      startTimeUnixNano: nanos(start),
+      endTimeUnixNano: nanos(end),
+      attributes: attrs({
+        "contrail.tool": a.tool,
+        "contrail.tool_use_id": a.id,
+        "contrail.agent_id": a.scope.agentId,
+        "contrail.seq": a.preSeq,
+        "contrail.requested": e?.requested.verdict,
+        "contrail.grade": e?.chainGrade,
+        "contrail.value": head ? clip(head.token.text, 200) : null,
+        "contrail.source": source ? clip(source.label, 200) : null,
+        "contrail.origin": source?.origin,
+        "contrail.trust": source?.trust,
+        "contrail.sensitive": finding?.kinds.join(","),
+        "contrail.external_upstream": finding ? finding.externalUpstream : null
+      }),
+      events: g.effects.filter((fx) => fx.actionId === a.id).map((fx) => ({
+        timeUnixNano: nanos(end),
+        name: "contrail.effect",
+        attributes: attrs({ "contrail.effect.kind": fx.kind, "contrail.effect.target": clip(fx.target, 200), "contrail.effect.evidence": fx.evidence })
+      })),
+      links: provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan),
+      ...a.status === "failed" || a.status === "interrupted" ? { status: { code: STATUS_ERROR, message: a.status } } : {}
+    });
+  }
+  return {
+    resourceSpans: [
+      {
+        resource: { attributes: attrs({ "service.name": "claude-code", "contrail.version": version }) },
+        scopeSpans: [{ scope: { name: "contrail", version }, spans }]
+      }
+    ]
+  };
+}
+function provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan) {
+  if (!e) return [];
+  const order = { DIRECT: 0, LIKELY: 1, POSSIBLE: 2, UNKNOWN: 3 };
+  const links = /* @__PURE__ */ new Map();
+  for (const t of e.traces) {
+    for (const l of t.links) {
+      const source = l.to ? inputs.get(l.to) : void 0;
+      if (!source || l.grade === "UNKNOWN") continue;
+      const spanId = source.producedBy && source.producedBy !== a.id && actionIds.has(source.producedBy) ? actionSpan(source.producedBy) : source.origin === "prompt" && source.promptId ? turnSpan(source.promptId) : null;
+      if (!spanId) continue;
+      const seen = links.get(spanId);
+      if (!seen || order[l.grade] < order[seen.grade]) links.set(spanId, { spanId, grade: l.grade, value: t.token.text, source, rule: l.rule });
+    }
+  }
+  return [...links.values()].sort((x, y) => order[x.grade] - order[y.grade]).map((l) => ({
+    traceId,
+    spanId: l.spanId,
+    attributes: attrs({
+      "contrail.link": "value_from",
+      "contrail.grade": l.grade,
+      "contrail.rule": l.rule,
+      "contrail.value": clip(l.value, 200),
+      "contrail.source": clip(l.source.label, 200),
+      "contrail.trust": l.source.trust
+    })
+  }));
+}
+
 // src/store/retention.ts
 import { readFileSync as readFileSync3 } from "node:fs";
 import { join as join4 } from "node:path";
@@ -3082,6 +3219,7 @@ var OPTIONS = {
   limit: { type: "string" },
   all: { type: "boolean" },
   tree: { type: "boolean" },
+  otel: { type: "boolean" },
   "from-hook": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -3101,8 +3239,8 @@ Usage:
                                     sensitive actions, those tracing to web or MCP content first
   contrail sessions [--limit N] [--all]
                                     recent sessions at a glance
-  contrail export [<session> | last]
-                                    a session's recorded events as JSON
+  contrail export [<session> | last] [--otel]
+                                    a session's recorded events as JSON, or as OpenTelemetry traces
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
@@ -3338,8 +3476,15 @@ async function sessions(flags, io, s) {
   });
 }
 async function exportSession(args, flags, io) {
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const id = pickSession(db, args[0] ?? flags.session, repoKey);
+    if (flags.otel) {
+      const graph = loadGraph(db, id, io.home, hashToken);
+      const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map((a) => [a.id, explain(a.id, graph)]));
+      io.out(`${JSON.stringify(toOtlp(graph, explanations, findingsFor(graph), VERSION))}
+`);
+      return 0;
+    }
     const events = loadRows(db, id).map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
     io.out(`${JSON.stringify({ contrail: VERSION, schema: SCHEMA_VERSION, session: id, events }, null, 2)}
 `);

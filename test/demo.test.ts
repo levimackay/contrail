@@ -165,3 +165,33 @@ test('recorded text cannot put terminal escapes or backticks into any report', a
     assert.doesNotMatch(out, /`/);
   }
 });
+
+test('export --otel writes one OTLP/JSON request: session, turns, calls, with provenance as span links', async () => {
+  const r = await run(['export', '9c1e', '--otel']);
+  assert.equal(r.out.trim().split('\n').length, 1, 'one request per line');
+  const request = JSON.parse(r.out);
+  const spans: Array<{ traceId: string; spanId: string; parentSpanId?: string; name: string; startTimeUnixNano: string; endTimeUnixNano: string; attributes: Array<{ key: string; value: Record<string, unknown> }>; links?: Array<{ spanId: string; attributes: Array<{ key: string; value: Record<string, unknown> }> }> }> =
+    request.resourceSpans[0].scopeSpans[0].spans;
+  const attr = (s: { attributes: Array<{ key: string; value: Record<string, unknown> }> }, key: string) => Object.values(s.attributes.find(a => a.key === key)?.value ?? {})[0];
+  const ids = new Set(spans.map(s => s.spanId));
+
+  for (const s of spans) {
+    assert.match(s.traceId, /^[0-9a-f]{32}$/);
+    assert.match(s.spanId, /^[0-9a-f]{16}$/);
+    assert.ok(!s.parentSpanId || ids.has(s.parentSpanId), `${s.name} has a parent in the trace`);
+    assert.ok(BigInt(s.endTimeUnixNano) >= BigInt(s.startTimeUnixNano) && BigInt(s.startTimeUnixNano) > 0n);
+    for (const l of s.links ?? []) assert.ok(ids.has(l.spanId), `${s.name} links inside the trace`);
+  }
+  const root = spans.find(s => !s.parentSpanId)!;
+  assert.equal(attr(root, 'session.id'), '9c1e7b52-80a4-4d3f-b6e2-71f09d4c8a16');
+
+  const upload = spans.find(s => s.name.startsWith('Bash cat ~/.aws/credentials'))!;
+  assert.equal(attr(upload, 'contrail.trust'), 'external');
+  assert.equal(attr(upload, 'contrail.sensitive'), 'credentials,network');
+  assert.equal(attr(upload, 'contrail.external_upstream'), true);
+  const fetch = spans.find(s => s.name.startsWith('WebFetch'))!;
+  const toFetch = upload.links!.find(l => l.spanId === fetch.spanId)!;
+  assert.equal(attr(toFetch, 'contrail.grade'), 'LIKELY');
+
+  assert.equal((await run(['export', '9c1e', '--otel'])).out, r.out, 'the same session exports the same trace');
+});

@@ -19,6 +19,7 @@ import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessio
 import { findTarget, parseTarget } from './query/target.ts';
 import { EXPLAINED, matchesFilter, renderCommit, renderRisks, renderSessions, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
 import { PLAIN, styleFor, type Style } from './render/style.ts';
+import { toOtlp } from './render/otel.ts';
 import { renderWhy } from './render/why.ts';
 import { loadConfig, prune } from './store/retention.ts';
 import { migrate, SCHEMA_VERSION } from './store/schema.ts';
@@ -46,6 +47,7 @@ const OPTIONS = {
   limit: { type: 'string' },
   all: { type: 'boolean' },
   tree: { type: 'boolean' },
+  otel: { type: 'boolean' },
   'from-hook': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
@@ -68,8 +70,8 @@ Usage:
                                     sensitive actions, those tracing to web or MCP content first
   contrail sessions [--limit N] [--all]
                                     recent sessions at a glance
-  contrail export [<session> | last]
-                                    a session's recorded events as JSON
+  contrail export [<session> | last] [--otel]
+                                    a session's recorded events as JSON, or as OpenTelemetry traces
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
@@ -330,8 +332,15 @@ async function sessions(flags: Flags, io: Io, s: Style): Promise<number> {
 }
 
 async function exportSession(args: string[], flags: Flags, io: Io): Promise<number> {
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const id = pickSession(db, args[0] ?? (flags.session as string | undefined), repoKey);
+    if (flags.otel) {
+      // One OTLP/JSON request on one line, the shape collectors' file receivers read.
+      const graph = loadGraph(db, id, io.home, hashToken);
+      const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map(a => [a.id, explain(a.id, graph)]));
+      io.out(`${JSON.stringify(toOtlp(graph, explanations, findingsFor(graph), VERSION))}\n`);
+      return 0;
+    }
     const events = loadRows(db, id).map(r => ({ ...r, payload: JSON.parse(r.payload) as unknown }));
     io.out(`${JSON.stringify({ contrail: VERSION, schema: SCHEMA_VERSION, session: id, events }, null, 2)}\n`);
     return 0;

@@ -43,6 +43,22 @@ test('the full sha works too, and an unknown sha is a clear error', async () => 
   assert.match(missing.err, /No recorded agent action made commit deadbee/);
 });
 
+test('why leads with the answer: requested or not, what is sensitive, and each value\'s chain of sources', async () => {
+  const out = (await run(['why', 'cat ~/.aws/credentials'])).out;
+  const short = out.split('\n\n')[1]!;
+  assert.equal(
+    short,
+    [
+      'In short',
+      '  not named in your words · credentials · network · values from external content',
+      '  ~/.aws/credentials, collect.telemetry.example/v1',
+      '    ← LIKELY   WebFetch of docs.quickauth.example/cli/setup:7  (external)',
+      '    ← LIKELY   WebSearch "QuickAuth CLI install"  (external)',
+      '    ← LIKELY   your prompt p1  (principal)',
+    ].join('\n'),
+  );
+});
+
 test('why answers whatever it is pointed at: nothing, a bare sha, a URL, or a value', async () => {
   const last = await run(['why', 'last']);
   const bare = await run(['why']);

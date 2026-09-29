@@ -2591,16 +2591,17 @@ function renderWhy(e, g, note, s = PLAIN) {
   );
   if (note) out.push(s.dim(`  ${note}`));
   out.push("");
-  out.push(...requestedLines(e, s));
-  out.push(
-    !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
-  );
-  out.push("", s.bold(HEADING));
   const best = bestPerGroup(e.traces);
   const credited = new Set(best.filter((t) => t.token.role !== "hint").flatMap((t) => t.links.filter((l) => l.grade !== "UNKNOWN").map((l) => l.to)));
   const shown = best.filter((t) => t.token.role !== "hint" || t.links.some((l) => l.grade !== "UNKNOWN" && !credited.has(l.to)));
   const found = shown.filter((t) => t.links.some((l) => l.grade !== "UNKNOWN"));
   const unfound = shown.filter((t) => !found.includes(t));
+  out.push(...inShort(e, found, unfound, inputs, s), "");
+  out.push(...requestedLines(e, s));
+  out.push(
+    !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
+  );
+  out.push("", s.bold(HEADING));
   for (const t of found) trace(t, 1, out, inputs, s);
   if (unfound.length) {
     out.push(`  ${s.grade("UNKNOWN")}no observed source for: ${unfound.map((t) => clip(t.token.text, 80)).join(", ")}  ${s.dim("[R4]")}`);
@@ -2629,6 +2630,55 @@ function renderWhy(e, g, note, s = PLAIN) {
   return `${out.join("\n")}
 `;
 }
+function inShort(e, found, unfound, inputs, s) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const t of found) {
+    const chain = [];
+    let cur = t;
+    let next;
+    while (cur) {
+      const link = cur.links.find((l) => l.grade === "LIKELY") ?? cur.links.find((l) => l.firstSeen) ?? cur.links.find((l) => l.grade !== "UNKNOWN");
+      const src = link?.to ? inputs.get(link.to) : void 0;
+      if (!link || !src) break;
+      chain.push({ link, src });
+      if (!cur.upstream && cur.truncated) next = cur.truncated.next;
+      cur = cur.upstream?.trace;
+    }
+    if (!chain.length) continue;
+    const key = chain.map((c) => `${c.src.id}:${c.link.quote?.line ?? ""}`).join(">");
+    const group = groups.get(key) ?? { values: [], chain, next };
+    group.values.push(clip(t.token.text, 60));
+    groups.set(key, group);
+  }
+  const external = [...groups.values()].some((g) => g.chain.some((c) => c.src.trust === "external"));
+  const facts = [
+    ASKED[e.requested.verdict](s),
+    ...sensitivity(e.action).map((k) => s.flag(k)),
+    ...external ? [s.flag("values from external content")] : []
+  ];
+  const out = [s.bold("In short"), `  ${facts.join(s.dim(" \xB7 "))}`];
+  const listed = [...groups.values()].slice(0, 3);
+  for (const g of listed) {
+    out.push(`  ${s.accent(clip(g.values.join(", "), 110))}`);
+    for (const { link, src } of g.chain) {
+      const where = link.quote?.line != null ? `${clip(src.label, 90)}:${link.quote.line}` : clip(src.label, 90);
+      const trust = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+      out.push(`    ${s.dim("\u2190")} ${s.grade(link.grade)}${where}  ${trust}`);
+    }
+    if (g.next !== void 0) out.push(`    ${s.dim(`\u2190 \u2026 further back${g.next ? `: contrail why ${callId(g.next)}` : ""}`)}`);
+  }
+  if (groups.size > listed.length) out.push(s.dim(`  (${groups.size - listed.length} more below)`));
+  if (unfound.length) out.push(`  ${s.dim("no observed source for:")} ${clip(unfound.map((t) => t.token.text).join(", "), 100)}`);
+  if (!found.length && !unfound.length) out.push(s.dim("  nothing distinctive in this action to trace"));
+  return out;
+}
+var ASKED = {
+  NAMED: () => "named in your words",
+  NAMED_NEGATED: (s) => s.flag("named, but your latest mention is negated"),
+  PARTLY_NAMED: () => "partly named in your words",
+  NOT_NAMED: (s) => s.flag("not named in your words"),
+  NOTHING_TO_MATCH: () => "nothing in it to match against your words"
+};
 function trace(t, depth, out, inputs, s) {
   const pad3 = "  ".repeat(depth);
   const firstUse2 = t.firstUse ? `, first used in ${callId(t.firstUse.actionId)} at seq ${t.firstUse.preSeq}` : "";

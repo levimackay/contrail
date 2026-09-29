@@ -68,10 +68,12 @@ export function parseAnsi(ansi: string, cols = MAX_COLS): Run[][] {
   let pen = PLAIN_PEN;
   for (const raw of ansi.replace(/\r/g, '').replace(/\n$/, '').split('\n')) {
     let cells: Array<{ ch: string; pen: Pen }> = [];
-    for (const part of raw.split(/(\x1b\[[0-9;]{0,32}[A-Za-z])/)) {
+    // OSC sequences (titles, hyperlinks) go first; then every CSI; then any other escape and control character.
+    const line = raw.replace(/\x1b\][^\x07\x1b]{0,2048}(?:\x07|\x1b\\)?/g, '');
+    for (const part of line.split(/(\x1b\[[0-9;?]{0,32}[@-~])/)) {
       const sgr = /^\x1b\[([0-9;]{0,32})m$/.exec(part);
       if (sgr) pen = applySgr(pen, sgr[1]!);
-      else if (!part.startsWith('\x1b')) for (const ch of part) cells.push({ ch, pen });
+      else if (!part.startsWith('\x1b[')) for (const ch of part.replace(/\x1b[@-_]?|[\x00-\x08\x0b-\x1f\x7f]/g, '')) cells.push({ ch, pen });
     }
     while (cells.length > cols) {
       const space = cells.slice(0, cols + 1).findLastIndex(c => c.ch === ' ');

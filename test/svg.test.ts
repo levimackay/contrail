@@ -24,3 +24,9 @@ test('recorded text is escaped, so it cannot inject markup into the SVG', () => 
   assert.doesNotMatch(svg, /<script|<b>/);
   assert.match(svg, /&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; &quot;x&quot;/);
 });
+
+test('no escape or control character reaches the SVG, and text after one is kept', () => {
+  const lines = parseAnsi('a\x1b[?25lb\x1b]8;;https://x.example\x07link\x1b]8;;\x07 c\x07d');
+  assert.deepEqual(lines.map(l => l.map(r => r.text).join('')), ['ablink cd']);
+  assert.doesNotMatch(ansiToSvg('x\x1b]0;title\x07y\x1b(Bz'), /[\x00-\x08\x0b-\x1f\x7f]/);
+});

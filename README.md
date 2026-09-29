@@ -47,6 +47,7 @@ Then use Claude Code as usual. Contrail records in the background. When you want
 /contrail:why "npm install jwt-decode"   the latest command containing that text
 /contrail:risks                          sensitive actions, those tracing to web or MCP content first
 /contrail:trace                          this session as a timeline
+/contrail:report                         this session as an HTML page you open in a browser
 ```
 
 Each skill prints the report exactly as the CLI wrote it; Claude adds nothing. The same commands work from a terminal (see [Commands](#commands)).
@@ -103,13 +104,14 @@ It is not a transcript viewer, a token tracker or a security scanner. It has one
 | [`contrail trace [--tree]`](#contrail-trace) | A session as a timeline, or as a forest of trails |
 | [`contrail sessions`](#contrail-sessions) | Recent sessions at a glance |
 | [`contrail export [<session> \| last] [--otel]`](#export-to-opentelemetry) | A session's recorded (redacted) events as JSON, or as OpenTelemetry traces |
+| [`contrail report [<session>] [-o file.html]`](#contrail-report) | A session as one self-contained HTML page |
 | `contrail doctor` | Checks the install and times the capture hook on this machine |
 | `contrail prune` | Applies retention now and compacts the database |
 | `contrail ingest` | Moves spooled events into the database (it also runs automatically) |
 
 Options: `--json` for machine-readable output (why, trace, risks, sessions), `--session <id>` (a prefix is enough), `--data <dir>` to read another data directory, `-h` and `-v`.
 
-Inside Claude Code, the `/contrail:why`, `/contrail:risks` and `/contrail:trace` skills run the same CLI. From a terminal, alias the launcher inside the installed plugin, replacing `<version>` with the directory under `~/.claude/plugins/cache/contrail/contrail/`:
+Inside Claude Code, the `/contrail:why`, `/contrail:risks`, `/contrail:trace` and `/contrail:report` skills run the same CLI. From a terminal, alias the launcher inside the installed plugin, replacing `<version>` with the directory under `~/.claude/plugins/cache/contrail/contrail/`:
 
 ```sh
 alias contrail="$HOME/.claude/plugins/cache/contrail/contrail/<version>/bin/contrail"
@@ -207,6 +209,20 @@ What a commit contains, joined to the agent changes behind each file.
 
 Commits made outside Claude Code's shell tool are not recorded, and `why commit` needs to run inside the repository so git can list the files.
 
+### `contrail report`
+
+One session as a single HTML file you open in any browser, offline. It has summary cards, the sensitive actions, and the whole timeline. Every tool call opens into its full trail, in the same colors as the terminal.
+
+```sh
+contrail report <session> -o session.html
+```
+
+<p align="center">
+  <img src="docs/report.png" alt="contrail report: summary cards, sensitive actions, and a timeline with one call opened to its full trail" width="820">
+</p>
+
+The page is self-contained: no scripts, no stylesheets or fonts from elsewhere, and a Content-Security-Policy that forbids loading anything, so it cannot reach the network. All recorded text is escaped. It follows your system's light or dark theme. The file holds what the agent read (redacted), so it is written with mode 0600, like the database. Inside Claude Code, `/contrail:report` writes it to the plugin's data directory and prints the path.
+
 ### Export to OpenTelemetry
 
 ```sh
@@ -240,7 +256,8 @@ flowchart LR
   G --> E[engine: pure rules R1 to R9]
   E --> R[render: all report wording]
   R --> CLI[contrail CLI]
-  CLI --> SK["/contrail:why, :risks, :trace"]
+  CLI --> SK["/contrail:why, :risks, :trace, :report"]
+  CLI --> OUT["HTML report, OTLP traces"]
 ```
 
 <details>
@@ -262,7 +279,7 @@ contrail/
 │   ├── .claude-plugin/plugin.json
 │   ├── hooks/                        hook registrations, capture.sh, health.sh
 │   ├── bin/contrail                  sh launcher
-│   ├── skills/                       /contrail:why, /contrail:risks, /contrail:trace
+│   ├── skills/                       /contrail:why, :risks, :trace, :report
 │   └── dist/contrail.mjs             committed bundle built from src/
 ├── src/
 │   ├── cli.ts, main.ts               command-line entry
@@ -571,6 +588,7 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 **Next**
 
 - [x] OpenTelemetry export: sessions as OTLP traces, with grades as attributes and provenance as span links
+- [x] `contrail report` and `/contrail:report`: a session as one self-contained HTML page
 
 **Planned**
 

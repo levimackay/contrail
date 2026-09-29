@@ -7,6 +7,7 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 ### Added
 
 - `contrail export --otel`: a session as OpenTelemetry traces (OTLP/JSON). Sessions, turns and tool calls become spans with real times, Contrail's grades and trust labels become `contrail.*` attributes, provenance edges become span links, and effects become span events.
+- `contrail report` and the `/contrail:report` skill: a session as one self-contained HTML page with summary cards, sensitive actions, the timeline, and every call's full trail. It loads nothing and runs no script, and it is written with mode 0600.
 - A changelog, security policy, contributing guide, and issue and pull request templates.
 
 ## [0.2.0] - 2026-09-29

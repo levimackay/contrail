@@ -606,7 +606,7 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 **Shipped in 0.1**
 
 - [x] Capture for every hook event, with redaction before storage
-- [x] `contrail why <path | "command" | call id | last>` and the `/contrail:why` skill
+- [x] `contrail why <path | "command" | last>` and the `/contrail:why` skill
 - [x] `contrail ingest` and `contrail doctor`
 
 **Shipped in 0.2**
@@ -629,6 +629,8 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 - [x] `contrail report` and `/contrail:report`: a session as one self-contained HTML page
 - [x] `contrail statusline`, and a launcher at a stable path for aliases and the status bar
 - [x] `contrail find` and `/contrail:find`: every recorded input that held a value, and every call that used it
+- [x] `contrail why <call id>`, for any call a report shows, and `/contrail:sessions`
+- [x] Trails longer than one report's three steps are marked, with the call to continue from
 
 **Planned**
 

@@ -4,15 +4,6 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
-### Added
-
-- The `/contrail:sessions` skill: recent sessions in this repository, from inside Claude Code.
-- `contrail why <call id>`: the trail behind any recorded tool call (a Read, a WebFetch, a search), by the id reports print (`toolu…ALhq1` or `toolu...ALhq1`) or in full.
-
-### Changed
-
-- A trail longer than the three steps one report follows now says so, and names the call to run `why` on next, instead of ending as if it started there.
-
 ## [0.3.0] - 2026-09-29
 
 ### Added
@@ -22,7 +13,13 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 - `contrail find` and the `/contrail:find` skill: every recorded input that held a value and every call that used it, across sessions, in order. It works with hash-only storage and leaves out Contrail's own queries.
 - `contrail statusline`: the current session in Claude Code's status bar, from the JSON Claude Code passes on stdin. It never fails; on any error it prints just the name.
 - A launcher at a stable path, `<data directory>/bin/contrail`, kept up to date by the SessionStart hook, so a shell alias or status-line command survives plugin updates. `contrail doctor` prints it.
+- The `/contrail:sessions` skill: recent sessions in this repository, from inside Claude Code.
+- `contrail why <call id>`: the trail behind any recorded tool call (a Read, a WebFetch, a search), by the id reports print (`toolu…ALhq1` or `toolu...ALhq1`) or in full.
 - A changelog, security policy, contributing guide, and issue and pull request templates.
+
+### Changed
+
+- A trail longer than the three steps one report follows now says so, and names the call to run `why` on next, instead of ending as if it started there.
 
 ## [0.2.0] - 2026-09-29
 

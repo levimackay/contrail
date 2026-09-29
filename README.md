@@ -246,12 +246,13 @@ Every input is labeled with an origin and a trust level that says who wrote it:
 | Your instructions (user, local or managed CLAUDE.md) | config | `InstructionsLoaded` |
 | Repo instructions (project CLAUDE.md, `.claude/rules`) | local: repo content, not you | `InstructionsLoaded` |
 | Repo file or search output | local. Dependency directories (`node_modules`, `vendor`, `.venv`, `site-packages`) are external. `~/.claude` is config. | Read, Grep, Glob and LS results |
-| Shell output | local. External for curl, wget, gh, and git clone, fetch and pull. | Bash results |
+| Shell output | local. External for curl, wget, gh, and git clone, fetch and pull, and for any command that names a dependency directory (`cat node_modules/x/README.md`). | Bash results |
 | Web page (WebFetch) | external, labeled as a model's extraction of the page | WebFetch result and URL |
 | Web search | external | WebSearch result |
 | MCP result | external, annotated with the server | `mcp__*` tool results |
 | Skill body | external if plugin-namespaced, otherwise local | Skill tool call and result |
 | Subagent prompt and result, compaction summary, a file the agent wrote and later read back | agent (conduit) | Agent tool, `PostCompact`, a Read of an agent-written path |
+| A background task's report (`<task-notification>`), which Claude Code delivers as a prompt | the task's own: agent for a subagent, shell output for a command. Never principal. | `UserPromptSubmit` |
 | What the agent said | never evidence | `Stop`, displayed only |
 
 A **conduit** is text the agent wrote. It is never an origin: Contrail follows the same token past it to whoever supplied it first.
@@ -259,6 +260,7 @@ A **conduit** is text the agent wrote. It is never an origin: Contrail follows t
 - A compaction summary is followed to the inputs from before the compaction.
 - A file the agent wrote and later read back is followed into the write, even when a subagent did the writing.
 - A subagent's instructions are followed into the parent's context that wrote them.
+- A subagent's report, including one delivered later from the background, is followed into the subagent's own context.
 
 ## What Contrail can and cannot see
 

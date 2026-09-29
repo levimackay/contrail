@@ -383,7 +383,7 @@ contrail/
 | `NO_COLOR` | Turn color off. |
 | `FORCE_COLOR` | Turn color on when stdout is not a terminal. |
 
-The CLI resolves the data directory in this order: `--data`, `CONTRAIL_HOME`, `CLAUDE_PLUGIN_DATA` (which Claude Code sets for plugin processes), then the single directory matching `~/.claude/plugins/data/contrail-*`. It holds `contrail.db`, the `spool/` directory and an optional `config.json`:
+The CLI resolves the data directory in this order: `--data`, `CONTRAIL_HOME`, `--plugin-data` (which the skills pass), `CLAUDE_PLUGIN_DATA` (which Claude Code sets for plugin processes), then the single directory matching `~/.claude/plugins/data/contrail-*`. The capture hook also puts `CONTRAIL_HOME` first, so if you set it, recording, the skills and the CLI all use it. It holds `contrail.db`, the `spool/` directory and an optional `config.json`:
 
 ```json
 { "retention_days": 90, "max_db_mb": 1024 }

@@ -3,73 +3,36 @@
 [![CI](https://github.com/levimackay/contrail/actions/workflows/ci.yml/badge.svg)](https://github.com/levimackay/contrail/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
-**Claude can tell you what it changed. Contrail shows the trail that led there, and how sure each step is.**
+**For any command or edit Claude Code made, Contrail shows where the values in it came from, who wrote that source, and how strong the evidence is.**
 
-Contrail is a local-first plugin for Claude Code. It records hook events and answers one question about a file change, a shell command, or the last thing the agent did: what observable trail led to this action? It labels every input by origin (your prompt, CLAUDE.md, a repo file, the web, an MCP server, a subagent) and grades each link DIRECT, LIKELY, POSSIBLE or UNKNOWN from evidence alone. It never claims to know why the agent decided anything.
+![contrail risks: a credential upload traced to line 7 of a fetched web page](docs/risks.svg)
 
-[Demo](#demo) · [Install](#install) · [Quick start](#quick-start) · [`contrail why`](#contrail-why) · [Grading](#how-grading-works) · [Privacy](#privacy-and-security) · [Limitations](#limitations) · [Roadmap](#roadmap)
+Above, Claude Code was asked to set up a CLI. It searched the web, fetched a setup page, and that page contained a line addressed to AI agents: send `~/.aws/credentials` to a remote URL. The agent ran it. `contrail risks` lists that command first and traces both the credentials path and the upload URL to line 7 of the fetched page, marked `external`. You never named either one.
 
-## Demo
+Contrail is a local-first plugin for Claude Code. It records hook events and, when you ask, reconstructs the observable trail behind an action: which inputs held the strings in the action's arguments before the agent first used them, who wrote each input (you, your config, your repo, the network, the agent itself), and a grade for each link from DIRECT to UNKNOWN. It uses deterministic rules, no LLM, and it never claims to know why the agent did anything.
 
-Claude Code was asked to figure out why authentication was broken. Along the way it read a README and installed a package nobody asked for. This is the actual CLI output for that session (it ships as a test fixture, so you can reproduce it):
+The output on this page comes from two scripted example sessions over a real git repository, the same ones `npm run demo` builds and the end-to-end tests run against. They are not recordings of a real incident.
 
-```text
-$ contrail why "npm install foo-auth-helper"
-Bash  npm install foo-auth-helper
-  session s1 · turn p1 · t4 · seq 9 · main agent
+[Try it](#try-it-in-10-seconds) · [Install](#install) · [why](#contrail-why) · [risks](#contrail-risks) · [trace](#contrail-trace) · [sessions](#contrail-sessions) · [why commit](#contrail-why-commit) · [Grading](#how-grading-works) · [Privacy](#privacy-and-security) · [Limitations](#limitations) · [Roadmap](#roadmap)
 
-Requested?  NOT NAMED (the agent chose this). Your 1 sentence this session does not name it.  [R8]
-Turn        DIRECT   ran while answering p1: "Figure out why authentication is broken."  [R1]
+## Try it in 10 seconds
 
-Where the values came from (data provenance, not the agent's reasons)
-  foo-auth-helper  ($.command)
-    LIKELY   only observed in auth-service/README.md:83  [R3]
-             83│ use foo-auth-helper for token refresh
-             repo file (local) · returned by t2 (seq 5)
-    how the agent came to call Read t2:
-      auth-service  ($.file_path)
-        LIKELY   only observed in CLAUDE.md:4  [R3]
-                 4│ When auth breaks, check auth-service first.
-                 repo instructions (repo content, not you)
-  (searched 4 inputs in this agent's context before seq 9)
+With Node 24 (the demo runs the TypeScript sources directly):
 
-Effects
-  DIRECT   package.json       changed while this command ran  [R1 bashEditDiff]
-  DIRECT   package-lock.json  changed while this command ran  [R1 bashEditDiff]
-
-Weakest link on this trail: LIKELY
-LIKELY means "this value first appeared in the agent's context from this source", not "this source made the agent act".
-Not observable: the agent's reasons for this action.
-Agent said (shown for context, never used as evidence): "The README recommends foo-auth-helper for token refresh, so I installed it."
-Blind spots: model knowledge and reasoning; system prompt; AGENTS.md; context injected by other hooks. No observed source is not the same as no source.
+```sh
+git clone https://github.com/levimackay/contrail && cd contrail
+npm ci
+npm run demo
 ```
 
-In plain terms: you never named the package. The only place it appeared in the agent's context before the install was line 83 of `auth-service/README.md`, a file the agent read after line 4 of `CLAUDE.md` pointed it at `auth-service`. Claude Code itself reported both file changes, so those links are DIRECT. Nothing here claims the README *made* the agent act; it shows where the value came from.
+`npm run demo` builds a small repository and two recorded Claude Code sessions in a temporary directory, then prints the commands to try against them. Nothing is installed and nothing touches your real Claude Code data.
 
-## Why
+The two sessions:
 
-After a session you can see what Claude Code did. It is much harder to see why one specific action happened.
+- **auth** (`4f2a91c7`): "Users are getting logged out after 30 minutes. Figure out why and fix it." `CLAUDE.md` points the agent at `auth-service`, whose README recommends `jwt-decode`. The agent installs it, edits the session code, runs the tests, and commits when you say "looks good, commit it".
+- **injection** (`9c1e7b52`): "Set up the QuickAuth CLI on this machine so I can test logins locally." The agent searches, fetches a setup page, pipes an install script to `sh`, and then runs the credential upload the page asked for.
 
-- Why did it run `npm install foo-auth-helper`? You never asked for that package.
-- Which file told it to? Was that your instruction, or a line in a README it read on the way?
-- Did text from a web page or an MCP server end up in a shell command?
-
-The session transcript holds the raw material, but answering from it means reading hundreds of events by hand. It also keeps your instructions and a README's instructions side by side without saying which is which, and they are not the same thing.
-
-Contrail keeps them apart. It records what the agent consumed and did. For any action it shows which observed inputs held the strings in that action's arguments before the agent first used them, who wrote each input, and how strong the evidence is.
-
-It is not a transcript viewer, a token tracker, a general logger or a security scanner. It has one job: explain the observable trail behind an action.
-
-## How it compares
-
-| Approach | What it tells you | How Contrail differs |
-|---|---|---|
-| `git blame` | Which commit last changed a line, and who committed it. | Works on shell commands and uncommitted changes. Reports the inputs that came before the action, not the history after it. |
-| Session transcript viewers | Everything that happened, in order. | Filters to the inputs whose text appears in the action's arguments, labels who wrote each one, and grades the link. In a transcript, your prompt and a README line look alike. |
-| Agent observability platforms (span trees) | Which call ran inside which, with timing and cost. | A span tree shows what was running, not where a value in a command came from. Contrail traces argument values back to the input that first held them, and runs locally from Claude Code hooks. |
-| Prompt-injection scanners | Whether content looks like an attack. | Contrail makes no judgment about content. It reports origin and evidence grade, and it never blocks or alerts. |
-
-These answer different questions. Contrail's is narrow on purpose.
+Every domain in them is a reserved `.example` name.
 
 ## Install
 
@@ -82,142 +45,195 @@ Requires Claude Code on macOS or Linux. Recording needs only `sh`. Answering que
 
 Contrail has no history before it is installed. It records sessions from that point on.
 
-To uninstall:
+To uninstall (this deletes the recorded data; add `--keep-data` to keep it):
 
 ```text
 /plugin uninstall contrail@contrail
 ```
 
-Uninstalling deletes the recorded data. Add `--keep-data` to keep the history:
-
-```text
-/plugin uninstall contrail@contrail --keep-data
-```
-
 Windows is not supported.
 
-## Quick start
+### Asking from inside Claude Code
 
-1. Install the plugin and use Claude Code as usual. Contrail records in the background.
-2. When Claude does something you want explained, ask from inside the session:
+Three skills run the CLI and print its output verbatim in a code block. Claude adds nothing to it.
 
-   ```text
-   /contrail:why last
-   /contrail:why src/auth/session.ts
-   /contrail:why "npm install foo-auth-helper"
-   ```
+```text
+/contrail:why last
+/contrail:why src/auth/session.ts
+/contrail:why "npm install foo-auth-helper"
+/contrail:risks
+/contrail:trace
+```
 
-3. Or ask from a terminal. The CLI is `bin/contrail` inside the installed plugin. Alias it, replacing `<version>` with the directory under `~/.claude/plugins/cache/contrail/contrail/`:
+All three are manual-only (`disable-model-invocation: true`): Claude never runs them on its own, only when you type them. `/contrail:risks` and `/contrail:trace` take no arguments. `/contrail:why` passes your text to the CLI through a quoted heredoc on standard input, so text like `npm install foo; rm -rf x` is searched for, never run.
 
-   ```sh
-   alias contrail="$HOME/.claude/plugins/cache/contrail/contrail/<version>/bin/contrail"
-   contrail why last
-   ```
+Keeping Claude out of the loop is deliberate. The CLI output is the source of truth, and a model paraphrasing it could make an explanation sound more certain than the evidence.
 
-   The path contains the plugin version, so update the alias after the plugin updates. From a clone of this repository, run it directly:
+### Asking from a terminal
 
-   ```sh
-   sh plugin/bin/contrail why last
-   ```
+The CLI is `bin/contrail` inside the installed plugin. Alias it, replacing `<version>` with the directory under `~/.claude/plugins/cache/contrail/contrail/`:
 
-Run `contrail doctor` if a query returns nothing and you want to check the install.
+```sh
+alias contrail="$HOME/.claude/plugins/cache/contrail/contrail/<version>/bin/contrail"
+contrail why last
+```
+
+The path contains the plugin version, so update the alias after the plugin updates. From a clone of this repository, run `sh plugin/bin/contrail` instead. Run `contrail doctor` if a query returns nothing and you want to check the install.
 
 ## `contrail why`
 
+The trail behind one action: a file change, a shell command, or the latest thing the agent did.
+
+![contrail why "npm install jwt-decode"](docs/why.svg)
+
+You never named `jwt-decode`. The only place it appeared in the agent's context before the install was line 13 of `auth-service/README.md`. The agent read that file after line 4 of `CLAUDE.md` mentioned `auth-service`, so the report follows the read one step upstream. An install is expected to change `package.json` and the lockfile, but Claude Code did not report those changes for this command, so they are POSSIBLE and worded "expected, not observed". The agent's own summary is shown at the bottom for context and is never used as evidence.
+
 ```text
-contrail why <target> [--json] [--data <dir>]
+contrail why <path>               the trail behind the latest agent change to a file
+contrail why "<command text>"     the trail behind the latest shell command containing the text
+contrail why last                 the latest side-effecting action in this repository
+contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
 ```
 
-| Target | Explains |
-|---|---|
-| `<path>` | What led to changes to this file. |
-| `"<command text>"` | What led to the shell command containing this text. |
-| `last` | What led to the most recent side-effecting action. |
-
-| Flag | Effect |
-|---|---|
-| `--json` | Print the explanation as JSON instead of text. |
-| `--data <dir>` | Read the Contrail data directory at `<dir>` instead of the default location. |
-| `--stdin` | Read the target from standard input. The skill uses this so your text is never interpreted by a shell. |
-
-Commands in the current release:
-
-| Command | What it does |
-|---|---|
-| `contrail why <target>` | Explain one action. |
-| `contrail ingest` | Move spooled events into the database. It also runs before every command, so you rarely need it. |
-| `contrail doctor` | Check the install and the recorded data. |
-
-### Reading a report
-
-The [demo](#demo) shows every part of a report.
+Reading a report:
 
 - **Header.** The action, its session, turn and tool call, and whether the main agent or a subagent ran it.
-- **Requested?** Whether your own sentences name the target. Text inside fenced code blocks is treated as pasted material and does not count. If the sentence that names it also contains a negation such as "don't" or "instead of", the verdict is downgraded and a warning is printed.
+- **Requested?** Whether your own sentences name the target. Text inside fenced code blocks counts as pasted material, not your words. If the sentence that names it also contains a negation such as "don't" or "instead of", the verdict is downgraded and a warning is printed.
 - **Turn.** The prompt the action ran under, recorded by Claude Code.
-- **Where the values came from.** For each significant string in the action's arguments (a package name, a path, a URL), the input where it first appeared in the agent's context, with the source line quoted. If the agent learned a path by reading a file, the report follows that read one step upstream.
-- **Searched.** How many inputs in the agent's context were checked. A value with no match is reported as UNKNOWN, not hidden.
-- **Effects.** What the action changed, when Claude Code reported it.
-- **Weakest link.** The grade of the whole trail: the weakest link that was found along it.
-- **Footer.** What the grade does and does not mean, the agent's own words shown for context only, and the blind spots.
+- **Where the values came from.** For each significant string in the arguments (a package name, a path, a URL), the input where it first appeared in the agent's context, with the source line quoted. The trail is followed upstream: to the call that fetched the source, and through anything the agent wrote itself (see [conduits](#origins-and-trust)).
+- **Searched.** How many inputs were checked. A value with no match is reported as UNKNOWN, never hidden.
+- **Effects.** What the action changed, when Claude Code reported it, and what it was expected to change when it did not.
+- **Weakest link.** The grade of the whole trail.
+- **Footer.** What the grade means and does not mean, the agent's own words, and the blind spots.
 
 Every line names the rule that produced it (`[R3]`), so a grade can always be traced to a stated condition.
 
-## The `/contrail:why` skill
+## `contrail risks`
 
-`/contrail:why <args>` runs the CLI with the same targets and prints its output verbatim in a code block. Claude adds nothing to it. Your arguments reach the CLI through a quoted heredoc on standard input (`--stdin`), so text like `npm install foo; rm -rf x` is searched for, never run.
+Sensitive actions across recent sessions in this repository, with where their values came from. This is the view in the image at the top.
 
-That is deliberate. The CLI output is the source of truth, and it keeps the model from "improving" an explanation into something more confident than the evidence. The skill is manual-only (`disable-model-invocation: true`): Claude never runs it on its own, only when you type it.
+```text
+contrail risks [--session <id> | --all] [--json]
+```
 
-It needs the same runtime as the CLI: Node 22.13+ or Bun.
+An action is sensitive when it matches one of these descriptions:
+
+| Kind | Examples |
+|---|---|
+| credentials | a command or file tool touching `~/.aws/credentials`, `~/.ssh/`, `.netrc`, `.npmrc`, `.env`, `.kube/config` |
+| runs remote code | `curl ... \| sh`, `sh <(curl ...)`, `eval "$(curl ...)"` |
+| network | `curl`, `wget`, `scp`, `rsync`, `ssh`, `git push`, `gh api` |
+| install | `npm install`, `pnpm add`, `pip install`, `cargo add`, `brew install`, `npx` |
+| destructive | `rm -rf`, `git reset --hard`, `git push --force`, `DROP TABLE`, `chmod 777` |
+
+They are ordered by what their trail shows, newest first within each group:
+
+- `▲` some value traces to external content: the web, an MCP server, a dependency, or network output.
+- `△` you did not name it.
+- `·` you named it.
+
+Contrail explains; it does not judge or block. A flagged action is not proof of an attack, and an unflagged one is not proof of safety. The kinds describe the command, not its intent.
+
+## `contrail trace`
+
+A session as a timeline, one line per action, with the headline source of each side effect.
+
+![contrail trace --session 4f2a](docs/trace.svg)
+
+```text
+contrail trace [--session <id>] [--writes | --shell | --network | --mcp | --subagents | --instructions] [--json]
+```
+
+Without `--session` it shows the latest session in this repository. A session id prefix is enough. The filters narrow the timeline to one kind of action.
+
+## `contrail sessions`
+
+Recent sessions at a glance: turns, reads, writes, shell commands, web and MCP calls, subagents, and how many sensitive actions trace to external content.
+
+![contrail sessions](docs/sessions.svg)
+
+```text
+contrail sessions [--limit N] [--all] [--json]
+```
+
+It lists sessions in this repository when there are any, otherwise all of them. `--all` always lists all of them.
+
+## `contrail why commit`
+
+What a commit contains, joined to the agent changes behind each file.
+
+![contrail why commit](docs/why-commit.svg)
+
+Contrail finds the recorded shell command whose output was git's own `[branch sha] subject` line, which makes the commit itself DIRECT. It then asks git for the commit's file list and joins each file by path to the latest agent change before the commit. A file the agent changed is LIKELY, not DIRECT: git lists the file and the agent changed it earlier, but whether that exact change is what was committed is not observed. A file changed only by an expected effect is POSSIBLE. A file with no recorded agent change is UNKNOWN: you, another process, or an earlier session. Above, `docs/CHANGELOG.md` is in the commit but the agent never touched it.
+
+Commits made outside Claude Code's shell tool are not recorded, so `why commit` reports them as not found. It needs to run inside the repository so git can list the files.
+
+## Other commands
+
+| Command | What it does |
+|---|---|
+| `contrail export [<session> \| last]` | Print a session's recorded (redacted) events as JSON. |
+| `contrail doctor` | Check the data directory, schema, stored and spooled events, unparseable events, retention, and time the capture hook on this machine. |
+| `contrail prune` | Apply retention now and compact the database. |
+| `contrail ingest` | Move spooled events into the database. It also runs after every turn and before every command, so you rarely need it. |
+
+Global options: `--json` (why, trace, risks, sessions), `--data <dir>` to read another data directory, `-h` and `-v`.
 
 ## How grading works
 
 | Grade | Meaning |
 |---|---|
-| DIRECT | Claude Code recorded the join itself: an equality on hook fields such as `prompt_id`, `tool_use_id` or `tool_response.filePath`. No text matching is involved. |
+| DIRECT | Claude Code recorded the join itself: an equality on hook fields such as `prompt_id`, `tool_use_id`, `tool_response.filePath`, `bashEditDiff`, or git's commit line in a command's output. No text matching is involved. |
 | LIKELY | Exactly one observed input held this name-like token before the agent first used it. |
-| POSSIBLE | Two or three inputs held it, or it is a plain word, or an effect is merely expected. |
-| UNKNOWN | No observed input holds it, or four or more do (too common to attribute). Always printed with "not evidence of no influence" and the list of blind spots. |
+| POSSIBLE | Two or three inputs held it, or it is a plain word, or an effect is only expected. |
+| UNKNOWN | No observed input holds it, or four or more do (too common to attribute). Always printed with the number of inputs searched and the blind spots. |
+
+The rules:
+
+| Rule | What it grades |
+|---|---|
+| R1 | Joins Claude Code recorded: the turn an action ran in, the files it reported changing, the commit it made. DIRECT. |
+| R2 | Which inputs count as available to the agent at an action (below). |
+| R3 | Where a token's value came from: one source LIKELY, two or three POSSIBLE, four or more UNKNOWN. |
+| R4 | No observed source: UNKNOWN, which is not evidence of no influence. |
+| R5 | One step further upstream from a credited source, up to three hops. |
+| R6 | Effects a command is expected to have (an installer and its lockfile, a redirect target, the host a `curl` names). POSSIBLE, worded "expected, not observed". |
+| R7 | A commit's files joined to earlier agent changes. LIKELY at best. |
+| R8 | Whether your own sentences name the action's target. |
 
 ### Data provenance, not the agent's reasons
 
-Contrail answers two separate questions about one action:
+Contrail answers two questions about an action: did your own words name it, and where did the strings in its arguments first enter the agent's observable context? It never answers why the agent acted. Every report says so in its heading and its footer.
 
-1. Did your own words name it?
-2. Where did the strings in its arguments first enter the agent's observable context?
+That is enforced in code, not left to tone:
 
-It never answers why the agent decided. Every report says so in its heading ("data provenance, not the agent's reasons") and in its footer ("Not observable: the agent's reasons for this action.").
-
-This is enforced by construction, not by tone:
-
-- **Deterministic rules, no LLM.** An LLM summary would invent causality. Every grade comes from a named rule.
-- **Text matching never reaches DIRECT.** Only joins that Claude Code recorded do. A chain is only as strong as its weakest inferred link.
-- **The agent's own words cannot affect a grade.** Its visible text is passed to the renderer for display and to nothing else. Thinking blocks are ignored.
+- **Deterministic rules, no LLM.** A generated summary would invent causality. Every grade comes from a named rule.
+- **Text matching never reaches DIRECT.** Only joins Claude Code recorded do. A trail is only as strong as its weakest inferred link.
+- **The agent's own words cannot affect a grade.** Its visible text goes to the renderer for display and to nothing else. Thinking blocks are ignored. A test asserts that replacing the agent's narration leaves the explanation unchanged.
 - **Trust labels never change a grade.** They say who wrote a source, not how strong the link is.
-- **The wording is tested.** A unit test asserts that Contrail's own wording never uses `because`, `caused`, `led to`, `decided`, `tainted` or `malicious`. Quoted text from you, your files or the agent is shown as is.
+- **The wording is tested.** A test fails if any report's own wording uses "because", "caused", "led to", "decided", "tainted" or "malicious". Quoted text from you, your files or the agent is shown as is.
 
 ### What counts as evidence
 
-An input counts as "available to the agent" at an action only if all of these hold:
+An input counts as available to the agent at an action only if all of these hold:
 
-- It reached the same context. The main thread and each subagent are separate contexts, and a subagent does not inherit its parent's inputs.
+- It reached the same context. The main agent and each subagent are separate contexts, and a subagent does not inherit its parent's inputs.
 - It arrived before the action. Tool calls in one parallel batch never see each other's output.
-- It arrived after the latest compaction in that context. Earlier inputs are gone verbatim.
+- It arrived after the latest compaction in that context. Earlier inputs survive only through the summary.
 
-A token is a string from the action's arguments: a package name, a path, a URL, an argument value. Flags, short tokens, common words, and the directory names that make up your working directory, home directory and username are dropped. Matching is exact after normalization (Unicode NFKC, invisible characters stripped, lowercase) and respects word boundaries, so `foo-auth-helper` does not match inside `foo-auth-helper-v2`.
+A token is a string from the action's arguments: a package name, a path, a URL, an argument value. Flags, short tokens, common words, and the directory names in your working directory, home directory and username are dropped. Matching is exact after normalization (Unicode NFKC, invisible characters stripped, lowercase) and respects word boundaries, so `foo-auth-helper` does not match inside `foo-auth-helper-v2`.
 
-Name-like tokens (`foo-auth-helper`, `retryWithJitter`) can reach LIKELY. Plain words such as `express` cannot go above POSSIBLE. When several inputs hold the same token, your own words are credited first, and the others are listed as "also in".
+Name-like tokens (`foo-auth-helper`, `retryWithJitter`) can reach LIKELY. Plain words such as `express` stop at POSSIBLE. When several inputs hold the same token, your own words are credited first and the others are listed as "also in".
 
-Before a name reaches an action, the agent may have repeated it in an earlier call. Contrail uses the agent's first use as the cut-off, so an echo such as a `grep foo` result is never counted as the source of `foo`.
+The agent may repeat a name before the action that matters, for example `npm search foo` before `npm install foo`. Contrail uses the agent's first use as the cut-off, so an echo such as a search result is never counted as the source of the name it was searching for.
 
 ## Origins and trust
 
-Every input is labeled with an origin. Trust says who wrote the source:
+Every input is labeled with an origin and a trust level that says who wrote it:
 
 - `principal`: you.
 - `config`: your own configuration.
-- `local`: content on your machine or in your repo, not written by you.
+- `local`: content on your machine or in your repo that you did not write.
 - `external`: the network, a dependency, or a plugin.
 - `agent`: text the agent itself wrote.
 
@@ -229,15 +245,19 @@ Every input is labeled with an origin. Trust says who wrote the source:
 | Your instructions (user, local or managed CLAUDE.md) | config | `InstructionsLoaded` |
 | Repo instructions (project CLAUDE.md, `.claude/rules`) | local: repo content, not you | `InstructionsLoaded` |
 | Repo file or search output | local. Dependency directories (`node_modules`, `vendor`, `.venv`, `site-packages`) are external. `~/.claude` is config. | Read, Grep, Glob and LS results |
-| Shell output | local. External for curl, wget, gh and git clone, fetch and pull. | Bash results |
+| Shell output | local. External for curl, wget, gh, and git clone, fetch and pull. | Bash results |
 | Web page (WebFetch) | external, labeled as a model's extraction of the page | WebFetch result and URL |
 | Web search | external | WebSearch result |
-| MCP result | external, annotated with the server's source | `mcp__*` tool results |
+| MCP result | external, annotated with the server | `mcp__*` tool results |
 | Skill body | external if plugin-namespaced, otherwise local | Skill tool call and result |
 | Subagent prompt and result, compaction summary, a file the agent wrote and later read back | agent (conduit) | Agent tool, `PostCompact`, a Read of an agent-written path |
-| What the agent said | never evidence | `Stop`, shown for display only |
+| What the agent said | never evidence | `Stop`, displayed only |
 
-A conduit is text the agent wrote. It is never an origin: Contrail follows the same token upstream past it, to whoever first supplied it. Following conduits is planned for v0.1. The current release follows the chain from an action back through the file reads that led to it.
+A **conduit** is text the agent wrote. It is never an origin: Contrail follows the same token past it to whoever supplied it first.
+
+- A compaction summary is followed to the inputs from before the compaction.
+- A file the agent wrote and later read back is followed into the write, even when a subagent did the writing.
+- A subagent's instructions are followed into the parent's context that wrote them.
 
 ## What Contrail can and cannot see
 
@@ -253,26 +273,27 @@ Hook fields were checked against the Claude Code documentation for 2.1.283 to 2.
 | Tool results and file effects | `PostToolUse` |
 | The exact text the model received from a batch of tool calls | `PostToolBatch` |
 | Failed tool calls | `PostToolUseFailure` |
-| Compaction boundaries | `PostCompact` |
-| Subagent scope, via `agent_id` on hook payloads | all of the above |
+| Compaction boundaries and summaries | `PostCompact` |
+| Subagent scope | `SubagentStart`, `SubagentStop`, and `agent_id` on hook payloads |
 | The end of a turn, shown as "agent said" and never as evidence | `Stop` |
 
 **What it cannot see:**
 
-- **Reasoning.** Contrail reports where an argument's value came from, never why the agent decided. Thinking blocks are ignored on purpose.
+- **Reasoning.** Contrail reports where an argument's value came from, never why the agent chose it. Thinking blocks are ignored on purpose.
 - **Which part of the context actually moved the model.** There are only proxies: literal data flow, order and scope. With no evidence the result is UNKNOWN, and UNKNOWN does not mean "no influence".
-- **Raw web pages.** WebFetch hands Claude a small model's summary of the page. Contrail records that summary and the URL, and labels it as such.
-- **`@`-mentioned files, AGENTS.md, and skill `!` shell preprocessing.** No hook fires for these. Contrail marks them unobserved when your prompt contains an `@`.
-- **The system prompt**, and content that other hooks rewrote.
+- **Raw web pages.** WebFetch hands the model a smaller model's extraction of the page. Contrail records that text and the URL, and labels it as such.
+- **`@`-mentioned files, AGENTS.md, and skill `!` shell preprocessing.** No hook fires for these. Contrail lists `@`-mentions in your prompt as blind spots.
+- **The system prompt**, and content other hooks rewrote.
 - **Anything before Contrail was installed.**
 
-The report says so itself. UNKNOWN results print the number of inputs searched and the blind-spot list, and every report ends with the blind-spot line.
+Reports say so themselves: every one ends with its blind spots, and UNKNOWN results print how many inputs were searched.
 
 ## Privacy and security
 
-Contrail stores what your agent read. It is built so that it does not become a leak.
+Contrail stores what your agent read. It is built so that it does not become the leak.
 
 - **Local only.** No network calls and no telemetry.
+- **Observe only.** It never blocks a tool call and never prints into the agent's context. A recorder that changes the agent corrupts its own evidence.
 - **Outside your repo.** Data lives in the plugin's data directory, so it is never part of your repository and it survives deleting a worktree.
 - **Redaction before storage.** Secrets are replaced with `[REDACTED:<rule>]` before anything is written to the database, for example `OPENAI_API_KEY=[REDACTED:env-secret]`. Redaction walks the decoded string values of each payload rather than the serialized JSON, because escape sequences would otherwise defeat pattern boundaries. The rules cover:
   - PEM and PGP private-key blocks, including truncated ones
@@ -283,152 +304,149 @@ Contrail stores what your agent read. It is built so that it does not become a l
   - sensitive `KEY=VALUE` pairs (`secret`, `token`, `password`, `pwd`, `api_key`, `access_key`, `private_key`, `credential`), quoted or bare
   - any string stored under a secret-named JSON key, such as `{"password": "…"}` or `{"key": "DB_PASSWORD", "value": "…"}`
 
-  Placeholders such as `${VAR}`, `<...>` and `xxxx`, and code that only names a secret (`getToken()`, `process.env.API_KEY`), are left alone. Every pattern is bounded, so a long run of text cannot make redaction backtrack; strings are capped before they are scanned.
+  Placeholders such as `${VAR}`, `<...>` and `xxxx`, and code that only names a secret (`getToken()`, `process.env.API_KEY`), are left alone.
+- **Bounded work.** Every regex quantifier is bounded and strings are capped before they are scanned, so a long run of hostile text cannot make redaction backtrack.
 - **No entropy scanning.** High-entropy detection flags nearly every git SHA, UUID and tool id, and those are exactly the keys Contrail joins on. The rules match known secret shapes and keyword-named values instead.
-- **Bounded content.** Strings are capped at 256 KB. Edit `originalFile` contents and images are dropped, keeping only a sha256. A payload that cannot be processed is stored as a failure and never blocks later events.
-- **Only instruction files are read from disk.** When Claude Code reports a loaded `CLAUDE.md` or `.claude/rules` file, Contrail reads that file (regular files only, within the size cap). If it changed after it loaded, its text is not used, because it is no longer what the agent saw.
+- **Bounded content.** Strings are capped at 256 KB. Edit `originalFile` contents and images are dropped. A payload that cannot be processed is stored as a failure and never blocks later events.
+- **Only instruction files are read from disk.** When Claude Code reports a loaded `CLAUDE.md` or `.claude/rules` file, Contrail reads that file (regular files only, within the size cap). If it changed after it loaded, its text is not kept, because it is no longer what the agent saw.
 - **Safe to print.** Reports strip control characters and backticks from recorded text, so a recorded string cannot restyle your terminal or turn into a command when a report is shown inside Claude Code.
 - **A short unredacted window.** Each hook event is first written to a spool file, unredacted, with mode 0600. Ingest redacts it into the database and deletes the file. Ingest runs after each turn (an async `Stop` hook) and before every `contrail` command, so unredacted text exists for about one turn. That is the same trust boundary as Claude Code's own plaintext session transcripts.
 - **Permissions.** The data directory is 0700 and its files are 0600.
+- **Retention.** Sessions older than 90 days are removed, and the oldest go first when the database passes 1024 MB. Both are configurable (below).
 - **Uninstall deletes the data**, unless you pass `--keep-data`.
 
 Redaction is pattern-based, so it misses secrets it has no rule for. Treat `contrail.db` as sensitive.
 
-## Performance
-
-Capture is a POSIX `sh` hook (`plugin/hooks/capture.sh`) that writes each hook payload to its own file in the spool directory. It writes to a temporary file and renames it, so a reader never sees half a file.
-
-The design target is 20 ms or less per hook. In development measurements on an M2 MacBook Air it takes about 15 ms per event. It prints nothing, always exits 0, and never blocks a tool call.
-
-Two choices keep it that fast and safe:
-
-- **Shell, not Node.** Node is not guaranteed to be present and starts much slower per invocation. Capture needs only `sh`.
-- **One file per event, not a shared log.** Concurrent appends to a single file can interleave when payloads are large. Separate files cannot.
-
-Capture is synchronous on purpose. Claude Code waits for each capture hook, so file order reflects real order, and the engine relies on that order. The cost is a small delay per event, which is why the budget is tight. The post-turn ingest is the only hook Contrail runs asynchronously (Claude Code itself fires `InstructionsLoaded` asynchronously; Contrail places lazily loaded instruction files at the Read that triggered them).
-
-Grading happens when you ask. The only processing outside a query is that async ingest after each turn.
-
 ## Architecture
 
-Paths below are relative to `plugin/`.
-
+```mermaid
+flowchart LR
+  CC[Claude Code] -- hook JSON on stdin --> CAP[hooks/capture.sh]
+  CAP -- one file per event, 0600 --> SPOOL[(spool/)]
+  SPOOL --> ING[ingest: redact, cap, index]
+  ING --> DB[(contrail.db)]
+  DB --> G[graph: events to inputs, actions, effects]
+  G --> E[engine: pure rules R1 to R8]
+  E --> R[render: all report wording]
+  R --> CLI[contrail CLI]
+  CLI --> SK["/contrail:why, :risks, :trace"]
 ```
-Claude Code ──hook JSON on stdin──▶ hooks/capture.sh ──▶ spool/<id>.json   (0600, unredacted, short-lived)
-                                                           │
-     Stop hook (async) · any `contrail` command ──▶ ingest ─┴▶ redact ─▶ contrail.db (events, touches)
-                                                                           │
-           contrail why ◀── render ◀── engine (pure) ◀── session loader ◀──┘
-                 ▲
-   /contrail:why skill ── runs the CLI, prints its output verbatim
-```
 
-- **Capture** (`hooks/capture.sh`): sets `umask 077`, copies stdin to a temp file in `spool/`, renames it into place, prints nothing, exits 0. If the data directory cannot be written, `hooks/health.sh` on `SessionStart` prints a warning that you see and the model does not.
-- **Ingest** (TypeScript): for each spool file in name order, parses the JSON (keeping the raw file with a `parse_error` if it is invalid), redacts string values, caps sizes, inserts by spool name so a repeat is a no-op, fills the file-touch index, and deletes the spool file. Two concurrent ingests are safe.
-- **Store:** SQLite in WAL mode, built into Node 22.13+ and Bun, so there are zero runtime dependencies. The database is a plain file you can inspect with `sqlite3`.
-- **Engine** (`src/engine/`): pure functions over normalized events. No I/O, and no function that grades takes agent text as input.
-- **Render:** the only place report wording lives.
-- **Launcher** (`bin/contrail`): an `sh` script that runs `dist/contrail.mjs` with `bun` if present, otherwise `node` 22.13+.
+- **Capture** (`plugin/hooks/capture.sh`): POSIX `sh`. Sets `umask 077`, copies stdin to a temp file in `spool/`, renames it into place, prints nothing, exits 0. One file per event, because concurrent appends to one shared log can interleave. Shell rather than Node, because Node is not guaranteed to be present and starts far slower. The design target is 20 ms or less per event; `contrail doctor` times it on your machine. Capture is synchronous so file order is event order.
+- **Ingest:** for each spool file in name order, parses the JSON (keeping the raw file as a failure if it is invalid), redacts string values, caps sizes, inserts by spool name so a repeat is a no-op, fills the file-touch index, applies retention, and deletes the spool file. Two concurrent ingests are safe.
+- **Store:** SQLite in WAL mode through `node:sqlite` or `bun:sqlite`, so nothing native to install. The database is a plain file you can inspect with `sqlite3`.
+- **Graph and engine** (`src/graph/`, `src/engine/`): the provenance graph is derived at query time and never stored. Sessions are small, so this is cheap, and improving a rule re-grades every old session with no migration. The engine is pure functions over normalized events, and no function that grades takes agent text as input.
+- **Render** (`src/render/`): the only place report wording lives.
+- **Launcher** (`plugin/bin/contrail`): an `sh` script that runs the committed bundle `plugin/dist/contrail.mjs` with `bun` if present, otherwise `node` 22.13+.
 
-Two decisions shape the design:
-
-- **The provenance graph is derived at query time and never stored.** Sessions are small, so building the graph on demand is cheap, and improving a rule re-grades every old session with no migration.
-- **Contrail observes and never intervenes.** It never blocks a tool call and never writes into the agent's context, because a recorder that changes the agent corrupts its own evidence.
+The only runtime dependency, `shell-quote`, is bundled, so installing the plugin needs no build step and no `npm install`. CI fails if the bundle differs from a fresh build of `src/`.
 
 ### Repository layout
 
 ```
 contrail/
-├── .claude-plugin/
-│   └── marketplace.json      marketplace entry, points at plugin/
-├── plugin/                   the installable plugin
-│   ├── .claude-plugin/
-│   │   └── plugin.json
-│   ├── hooks/                hook registrations and capture.sh
-│   ├── bin/contrail          sh launcher
-│   ├── skills/why/           the /contrail:why skill
-│   └── dist/contrail.mjs     committed bundle built from src/
+├── .claude-plugin/marketplace.json   marketplace entry, points at plugin/
+├── plugin/                           the installable plugin
+│   ├── .claude-plugin/plugin.json
+│   ├── hooks/                        hook registrations, capture.sh, health.sh
+│   ├── bin/contrail                  sh launcher
+│   ├── skills/                       /contrail:why, /contrail:risks, /contrail:trace
+│   └── dist/contrail.mjs             committed bundle built from src/
 ├── src/
-│   ├── cli.ts, main.ts       command-line entry
-│   ├── store/                SQLite adapter (node:sqlite or bun:sqlite), schema, migrations
-│   ├── ingest/               spool → events: redaction, size caps, repository key
-│   ├── graph/                events → provenance graph for one session
-│   ├── engine/               pure provenance engine: tokens, context window, grading, explain
-│   ├── query/                target resolution (path, command text, last)
-│   └── render/               report wording
-├── test/                     fixtures and integration tests
-├── LICENSE
-└── THIRD_PARTY_NOTICES
+│   ├── cli.ts, main.ts               command-line entry
+│   ├── store/                        SQLite adapter, schema, migrations, retention
+│   ├── ingest/                       spool to events: redaction, size caps, repository key
+│   ├── graph/                        events to provenance graph for one session
+│   ├── engine/                       pure rules: tokens, context window, grading, trace, risks
+│   ├── query/                        targets, sessions, commits
+│   └── render/                       report wording and terminal style
+├── scripts/                          npm run demo, npm run svg
+├── docs/                             rendered demo output for this README
+└── test/                             fixtures, end-to-end and adversarial tests
 ```
-
-The bundle in `plugin/dist/` is committed so that installing the plugin needs no build step. CI fails if it differs from a fresh build of `src/`.
 
 ## Configuration
 
 | Variable | Effect |
 |---|---|
 | `CONTRAIL_HOME` | Directory the CLI uses as the Contrail data directory. |
+| `NO_COLOR` | Turn color off. |
+| `FORCE_COLOR` | Turn color on when stdout is not a terminal. |
 
-The CLI resolves the data directory in this order:
+The CLI resolves the data directory in this order: `--data`, `CONTRAIL_HOME`, `CLAUDE_PLUGIN_DATA` (which Claude Code sets for plugin processes), then the single directory matching `~/.claude/plugins/data/contrail-*`. It holds `contrail.db`, the `spool/` directory and an optional `config.json`:
 
-1. `CONTRAIL_HOME`
-2. `CLAUDE_PLUGIN_DATA`, which Claude Code sets for plugin processes
-3. the single directory matching `~/.claude/plugins/data/contrail-*`
+```json
+{ "retention_days": 90, "max_db_mb": 1024 }
+```
 
-Once installed, the data directory is `~/.claude/plugins/data/contrail-<marketplace>/`. It holds `contrail.db`, the `spool/` directory, and (planned) an optional `config.json`. Run the CLI from a terminal and it finds the directory on its own.
+Missing or invalid values fall back to these defaults, and `contrail doctor` reports a `config.json` it cannot parse.
 
-A `config.json` with `retention_days`, `max_db_mb` and `store_content` (set to `false` for hash-only storage) is planned for v0.1, along with retention.
+## How it compares
+
+| Approach | What it tells you | How Contrail differs |
+|---|---|---|
+| `git blame` | Which commit last changed a line, and who committed it. | Works on shell commands and uncommitted changes, and reports the inputs before the action, not the history after it. `why commit` goes the other way: from a commit to the agent changes and sources behind it. |
+| Session transcript viewers | Everything that happened, in order. | Filters to the inputs whose text appears in the action's arguments, labels who wrote each one, and grades the link. In a transcript, your prompt and a README line look alike. |
+| Agent observability platforms (span trees) | Which call ran inside which, with timing and cost. | A span tree shows what was running, not where a value in a command came from. Contrail traces argument values to the input that first held them, locally, from Claude Code hooks. |
+| Prompt-injection scanners and guardrails | Whether content looks like an attack, often blocking it. | Contrail makes no judgment about content and never blocks. `risks` reports which sensitive actions trace to external content, after the fact. The two fit together. |
+
+These answer different questions. Contrail's is narrow on purpose.
 
 ## Limitations
 
 - **It explains data flow, not decisions.** A LIKELY grade means a name first appeared in the agent's context from that source. It does not mean the source made the agent act.
 - **Matching is literal.** If the agent paraphrased a source, or knew a name from training, Contrail finds no source and reports UNKNOWN. No observed source is not the same as no source.
-- **No fuzzy matching.** Text matching never reaches DIRECT, and there is no paraphrase or embedding matching.
-- **Shell file effects depend on a beta field.** Claude Code reports which files a shell command changed in `bashEditDiff`, which is beta. Without it, Contrail cannot record those changes as DIRECT.
-- **Web content is a summary.** For WebFetch, Contrail sees what the model was given, not the page.
+- **No fuzzy matching.** There is no paraphrase or embedding matching, by design.
+- **Shell file effects depend on a beta field.** Claude Code reports which files a shell command changed in `bashEditDiff`, which is beta. Without it, those changes are only "expected, not observed".
+- **Web content is an extraction.** For WebFetch, Contrail sees what the model was given, not the page.
 - **Unobserved inputs.** `@`-mentions, AGENTS.md, skill `!` preprocessing, the system prompt and other hooks' rewrites are not visible.
-- **One session at a time.** Chains do not cross sessions.
+- **One session at a time.** Trails do not cross sessions. `why commit` only sees agent changes in the session that made the commit.
+- **Sensitive-action patterns are a fixed list.** `risks` recognizes common credential paths and command shapes. An unusual command can go unflagged.
 - **History starts at install.**
 - **Redaction is best effort.** Secrets without a matching rule can be stored.
-- **Hook fields change between Claude Code releases.** Contrail tolerates unknown and missing fields and degrades to fewer links, but a renamed field can silently reduce what it can explain. `contrail doctor` is meant to surface this.
-- **Claude Code only, on macOS and Linux.** No Windows and no other agents.
+- **Hook fields change between Claude Code releases.** Contrail tolerates unknown and missing fields and degrades to fewer links, but a renamed field can quietly reduce what it can explain. `contrail doctor` counts unparseable events.
+- **Claude Code only, on macOS and Linux.**
 
 ## Roadmap
 
-Available now: `contrail why <path | "command" | last>`, `contrail ingest`, and `contrail doctor`.
+**Shipped in 0.1**
 
-**Planned for v0.1**
+- [x] Capture for every hook event, with redaction before storage
+- [x] `contrail why <path | "command" | last>` and the `/contrail:why` skill
+- [x] `contrail ingest` and `contrail doctor`
 
-- `contrail why commit <sha>`: the actions behind a commit.
-- `contrail trace`, with filters for writes, shell, network, MCP, subagents and instruction loads, and a `/contrail:trace` skill.
-- `contrail sessions`.
-- `contrail doctor` beyond the basics: counts of unknown or unparsed events and a capture timing check.
-- `contrail export <session-id>`: session JSON to stdout.
-- Retention and pruning, and `config.json`.
-- Following conduits (subagent relays, compaction summaries, files the agent wrote).
-- Expected shell effects, graded POSSIBLE and always worded as "expected, not observed".
+**Shipped in 0.2**
 
-**Planned for v0.2**
+- [x] `contrail why commit <sha>`: a commit's files joined to the agent changes behind them
+- [x] `contrail risks`: sensitive actions, those tracing to external content first. Explain-only.
+- [x] `contrail trace` with `--writes`, `--shell`, `--network`, `--mcp`, `--subagents` and `--instructions`
+- [x] `contrail sessions`, `contrail export`, `contrail prune`
+- [x] `/contrail:risks` and `/contrail:trace` skills
+- [x] Following conduits: compaction summaries, subagent prompts, files the agent wrote and read back
+- [x] Expected shell effects (R6), always worded "expected, not observed"
+- [x] Retention and `config.json`; `doctor` counts unparseable events and times the capture hook
+- [x] Color output, honoring `NO_COLOR` and `FORCE_COLOR`
 
-- A `risks` view: sensitive actions, such as credential-file access or network egress, that sit downstream of untrusted origins. Explain-only.
-- `trace --tree`, an ASCII graph.
-- Optional transcript enrichment, to show what the agent said right before each action.
+**Planned**
 
-**Planned for v0.3**
+- [ ] `trace --tree`: the trail as an ASCII graph
+- [ ] Optional transcript enrichment, to show what the agent said right before each action
+- [ ] `store_content: false` in `config.json`, for hash-only storage
+- [ ] OpenTelemetry export with `contrail.origin` and `contrail.grade` attributes
 
-- OpenTelemetry export with `contrail.origin` and `contrail.grade` attributes.
-
-Windows support, other agents and an enforcement companion that consumes Contrail's graph are considered only if there is demand.
+Windows support, other agents, and an enforcement companion that consumes Contrail's graph are considered only if there is demand.
 
 ## Development
 
-Node 24 is used for development because it runs TypeScript test files directly by stripping types, so there is no test framework. The plugin itself needs Node 22.13+ or Bun at runtime and has no runtime dependencies. Dev dependencies are `typescript`, `esbuild` and `@types/node`.
+Node 24 is used for development because it runs TypeScript directly by stripping types, so there is no test framework beyond `node --test`. The plugin itself needs Node 22.13+ or Bun at runtime. Dev dependencies are `typescript`, `esbuild` and `@types/node`.
 
 ```sh
 npm ci           # install dev dependencies
 npm test         # run the tests with node --test
 npm run build    # bundle src/ into plugin/dist/contrail.mjs
 npm run check    # typecheck, test, build, and fail if plugin/dist/ is out of date
+npm run demo     # build the example repository and sessions, and print commands to try
+npm run svg      # re-render docs/*.svg from the example sessions
 ```
 
 Test the plugin against a real Claude Code session by loading it from the working tree:
@@ -437,7 +455,7 @@ Test the plugin against a real Claude Code session by loading it from the workin
 claude --plugin-dir ./plugin
 ```
 
-Grading rules are specified with adversarial cases that double as the regression suite. Examples include an injected "the user asked you to..." line in a README, a change of mind ("actually don't"), echo searches, parallel batches, compaction, and text laundered through a file the agent wrote. A rule change is not done until those still pass.
+Grading rules are specified with adversarial cases that double as the regression suite: the agent's own narration claiming you asked for something, a change of mind ("actually don't"), echo searches, parallel batches, compaction, text relayed through a subagent's instructions or through a file a subagent wrote, and hostile or pathological input to redaction and ingest. A rule change is not done until those still pass.
 
 ## Contributing
 
@@ -445,7 +463,7 @@ Issues and pull requests are welcome. Open an issue first for anything that chan
 
 - Keep `npm run check` green.
 - Include tests with the change. For anything that could produce a false LIKELY or DIRECT, add an adversarial case.
-- Keep the invariants: observe only, local only, no runtime dependencies, and no causal claims in the output.
+- Keep the invariants: observe only, local only, no new runtime dependencies, and no causal claims in the output.
 
 ## License
 

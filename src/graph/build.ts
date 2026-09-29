@@ -1,6 +1,7 @@
 import { scopeKey, sameScope } from '../engine/scope.ts';
 import type { Action, Effect, Env, Graph, Input, Origin, Prompt, Scope, Trust } from '../engine/types.ts';
 import { expectedShellEffects, parseCommitSha } from '../engine/effects.ts';
+import { shellSegments } from '../engine/tokens.ts';
 import { arr, callId, changedFiles, clip, displayPath, field, hostPath, obj, str, toText } from '../util.ts';
 
 /** One row of the events table. */
@@ -20,6 +21,7 @@ export interface EventRow {
   parse_error: string | null;
 }
 
+const DEPENDENCY_DIR = /(^|\/)(node_modules|vendor|\.venv|venv|site-packages)(\/|$)/;
 const WRITE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const NO_OUTPUT_TOOLS = new Set([...WRITE_TOOLS, 'TodoWrite', 'ExitPlanMode']);
 
@@ -284,7 +286,7 @@ function classify(a: Action, env: Env): { origin: Origin; trust: Trust; ref: str
   if (tool === 'Read' || tool === 'NotebookRead') {
     const path = str(a.input, 'file_path') ?? str(a.input, 'notebook_path') ?? '';
     const ref = displayPath(path, env.cwd, env.home);
-    if (/(^|\/)(node_modules|vendor|\.venv|venv|site-packages)\//.test(path)) {
+    if (DEPENDENCY_DIR.test(path)) {
       return { origin: 'dependency_file', trust: 'external', ref, label: ref };
     }
     if (env.home && path.startsWith(`${env.home}/.claude/`)) return { origin: 'file', trust: 'config', ref, label: ref };
@@ -297,7 +299,9 @@ function classify(a: Action, env: Env): { origin: Origin; trust: Trust; ref: str
   if (tool === 'Bash') {
     const command = str(a.input, 'command') ?? '';
     const network = /^\s*(curl|wget|gh)\b|\bgit\s+(clone|fetch|pull)\b/.test(command);
-    return { origin: 'shell', trust: network ? 'external' : 'local', ref: `shell:${a.id}`, label: `the output of \`${clip(command, 50)}\`` };
+    // cat, grep or cd into a dependency directory prints third-party text, as a Read of it would.
+    const dependency = shellSegments(command).some(seg => [...seg.words, ...seg.redirects].some(w => DEPENDENCY_DIR.test(w)));
+    return { origin: 'shell', trust: network || dependency ? 'external' : 'local', ref: `shell:${a.id}`, label: `the output of \`${clip(command, 50)}\`` };
   }
   if (tool === 'WebFetch') {
     const where = hostPath(str(a.input, 'url') ?? '');

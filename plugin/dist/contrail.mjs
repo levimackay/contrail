@@ -1770,6 +1770,7 @@ function commitFiles(cwd, sha) {
 import { basename as basename3 } from "node:path";
 
 // src/graph/build.ts
+var DEPENDENCY_DIR = /(^|\/)(node_modules|vendor|\.venv|venv|site-packages)(\/|$)/;
 var WRITE_TOOLS2 = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 var NO_OUTPUT_TOOLS = /* @__PURE__ */ new Set([...WRITE_TOOLS2, "TodoWrite", "ExitPlanMode"]);
 function buildGraph(rows, who) {
@@ -2043,7 +2044,7 @@ function classify(a, env) {
   if (tool === "Read" || tool === "NotebookRead") {
     const path = str(a.input, "file_path") ?? str(a.input, "notebook_path") ?? "";
     const ref = displayPath(path, env.cwd, env.home);
-    if (/(^|\/)(node_modules|vendor|\.venv|venv|site-packages)\//.test(path)) {
+    if (DEPENDENCY_DIR.test(path)) {
       return { origin: "dependency_file", trust: "external", ref, label: ref };
     }
     if (env.home && path.startsWith(`${env.home}/.claude/`)) return { origin: "file", trust: "config", ref, label: ref };
@@ -2056,7 +2057,8 @@ function classify(a, env) {
   if (tool === "Bash") {
     const command = str(a.input, "command") ?? "";
     const network = /^\s*(curl|wget|gh)\b|\bgit\s+(clone|fetch|pull)\b/.test(command);
-    return { origin: "shell", trust: network ? "external" : "local", ref: `shell:${a.id}`, label: `the output of \`${clip(command, 50)}\`` };
+    const dependency = shellSegments(command).some((seg) => [...seg.words, ...seg.redirects].some((w) => DEPENDENCY_DIR.test(w)));
+    return { origin: "shell", trust: network || dependency ? "external" : "local", ref: `shell:${a.id}`, label: `the output of \`${clip(command, 50)}\`` };
   }
   if (tool === "WebFetch") {
     const where = hostPath(str(a.input, "url") ?? "");

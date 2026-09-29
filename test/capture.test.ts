@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -75,4 +75,19 @@ test('health warns the user, as JSON, when recording cannot work', () => {
   const r = run(HEALTH, '{}', {});
   assert.equal(r.status, 0);
   assert.match(JSON.parse(r.stdout).systemMessage, /Contrail is not recording/);
+});
+
+test('health keeps a stable launcher in the data directory, quoting paths safely', () => {
+  const base = temp();
+  const root = join(base, "it's a plugin");
+  symlinkSync(join(import.meta.dirname, '..', 'plugin'), root);
+  const data = join(base, 'data dir');
+  const r = run(HEALTH, '{}', { CLAUDE_PLUGIN_ROOT: root, CLAUDE_PLUGIN_DATA: data });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '', 'still silent');
+  const launcher = join(data, 'bin', 'contrail');
+  assert.equal(statSync(launcher).mode & 0o777, 0o700);
+  const v = spawnSync('sh', [launcher, 'doctor'], { env: { PATH }, encoding: 'utf8' });
+  assert.match(v.stdout, /^contrail \d+\.\d+\.\d+ on /);
+  assert.match(v.stdout, new RegExp(`data directory +${data.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n`), 'reads the directory it lives in');
 });

@@ -434,7 +434,7 @@ var require_shell_quote = __commonJS({
 });
 
 // src/main.ts
-import { homedir } from "node:os";
+import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
@@ -1283,6 +1283,8 @@ function blindSpots(action, g) {
   if (g.inputs.some((i) => i.truncated && sameScope(i.scope, action.scope) && i.availableAt < action.preSeq)) {
     spots.push("some inputs were truncated when stored");
   }
+  const skills = g.actions.filter((a) => a.tool === "Skill" && a.preSeq < action.preSeq && sameScope(a.scope, action.scope) && !g.inputs.some((i) => i.id === `skillbody:${a.id}`)).map((a) => str(a.input, "skill") ?? "unnamed");
+  if (skills.length) spots.push(`the body of skill ${[...new Set(skills)].join(", ")} (not recorded; plugin skills are never read)`);
   const unseen = g.prompts.filter((p) => p.command && !p.command.bodyObserved && p.seq < action.preSeq).map((p) => p.command.text.split(" ")[0]);
   if (unseen.length) spots.push(`the text ${[...new Set(unseen)].join(", ")} expanded to (Claude Code records the command, not its body)`);
   const compactions = (g.compactSeqs[scopeKey(action.scope)] ?? []).filter((s) => s < action.preSeq);
@@ -1401,6 +1403,7 @@ var ContrailError = class extends Error {
 // src/ingest/ingest.ts
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 // src/ingest/redact.ts
@@ -1588,6 +1591,7 @@ function toRow(name, raw, capturedUs, repoKeyOf) {
   const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
   const hookEvent = str(p, "hook_event_name") ?? "unknown";
   if (hookEvent === "InstructionsLoaded") attachInstructionText(p, capturedUs);
+  if (hookEvent === "PostToolUse" && str(p, "tool_name") === "Skill") attachSkillText(p, capturedUs);
   const cwd = str(p, "cwd") ?? null;
   return {
     capturedUs,
@@ -1625,6 +1629,26 @@ var INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$/i
 function attachInstructionText(p, capturedUs) {
   const path = str(p, "file_path");
   if (!path || !INSTRUCTION_FILE.test(path)) return;
+  attachFileText(p, path, capturedUs);
+}
+var SKILL_NAME = /^[A-Za-z0-9][\w.-]{0,63}$/;
+function attachSkillText(p, capturedUs) {
+  const name = str(obj(p, "tool_input"), "skill");
+  const cwd = str(p, "cwd");
+  if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
+  const candidates = [...cwd ? [join(cwd, ".claude", "skills", name, "SKILL.md")] : [], join(homedir(), ".claude", "skills", name, "SKILL.md")];
+  for (const path of candidates) {
+    try {
+      if (!statSync(path).isFile()) continue;
+    } catch {
+      continue;
+    }
+    attachFileText(p, path, capturedUs);
+    p._contrail.path = path;
+    return;
+  }
+}
+function attachFileText(p, path, capturedUs) {
   try {
     const st = statSync(path, { bigint: true });
     if (!st.isFile() || Number(st.size) > STRING_CAP) {
@@ -1831,6 +1855,7 @@ function buildGraph(rows, who) {
   const expansions = /* @__PURE__ */ new Map();
   const subagentStarts = /* @__PURE__ */ new Map();
   const instructions = [];
+  const skillBodies = /* @__PURE__ */ new Map();
   const notifications = [];
   rows.forEach((row, index) => {
     const seq = index + 1;
@@ -1871,6 +1896,9 @@ function buildGraph(rows, who) {
         if (row.hook_event === "PostToolUse") {
           a.status = "ok";
           a.response = p.tool_response ?? null;
+          const body = obj(p, "_contrail");
+          const text = str(body, "text");
+          if (a.tool === "Skill" && text) skillBodies.set(id, { text, path: str(body, "path") ?? "" });
         } else {
           a.status = p.is_interrupt === true ? "interrupted" : "failed";
           a.response = { error: str(p, "error") ?? "" };
@@ -1958,6 +1986,26 @@ function buildGraph(rows, who) {
     const output = outputInput(a, modelSaw.get(a.id), env);
     if (output) inputs.push(output);
     effects.push(...effectsOf(a, env));
+    const body = skillBodies.get(a.id);
+    if (body) {
+      const name = str(a.input, "skill") ?? "";
+      const yours = Boolean(env.home) && body.path.startsWith(`${env.home}/.claude/`);
+      inputs.push({
+        // ref is the file, so a Read of the same SKILL.md is the same source, not a second one.
+        id: `skillbody:${a.id}`,
+        scope: a.scope,
+        origin: "skill",
+        trust: yours ? "config" : "local",
+        ref: displayPath(body.path, env.cwd, env.home),
+        label: `skill ${name} (${displayPath(body.path, env.cwd, env.home)})`,
+        text: body.text,
+        truncated: body.text.includes("[contrail: truncated"),
+        fidelity: "read-at-ingest",
+        availableAt: modelSaw.get(a.id)?.seq ?? a.postSeq ?? a.preSeq,
+        producedBy: a.id,
+        promptId: a.promptId
+      });
+    }
     const agentId = (a.tool === "Agent" || a.tool === "Task") && a.status === "ok" ? str(a.response, "agentId") : void 0;
     if (agentId && output) output.relays = { sessionId: a.scope.sessionId, agentId };
     if (agentId) {
@@ -3208,6 +3256,6 @@ process.exitCode = await main(process.argv.slice(2), {
   err: (s) => process.stderr.write(s),
   cwd: process.cwd(),
   env: process.env,
-  home: homedir(),
+  home: homedir2(),
   isTTY: process.stdout.isTTY === true
 });

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Db } from '../store/sqlite.ts';
 import { changedFiles, obj, str } from '../util.ts';
@@ -121,6 +122,7 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
   const p = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { value: parsed }) as Record<string, unknown>;
   const hookEvent = str(p, 'hook_event_name') ?? 'unknown';
   if (hookEvent === 'InstructionsLoaded') attachInstructionText(p, capturedUs);
+  if (hookEvent === 'PostToolUse' && str(p, 'tool_name') === 'Skill') attachSkillText(p, capturedUs);
   const cwd = str(p, 'cwd') ?? null;
 
   return {
@@ -158,6 +160,36 @@ const INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$
 function attachInstructionText(p: Record<string, unknown>, capturedUs: number): void {
   const path = str(p, 'file_path');
   if (!path || !INSTRUCTION_FILE.test(path)) return;
+  attachFileText(p, path, capturedUs);
+}
+
+/** A bare skill name: no plugin namespace, nothing that could step outside a skills directory. */
+const SKILL_NAME = /^[A-Za-z0-9][\w.-]{0,63}$/;
+
+/**
+ * The Skill tool's result is only "Launching skill: <name>", so read the skill's SKILL.md now,
+ * from the two places a bare name can live: the project's .claude/skills, then yours.
+ * Plugin skills (plugin:name) are left unread and stay a blind spot.
+ */
+function attachSkillText(p: Record<string, unknown>, capturedUs: number): void {
+  const name = str(obj(p, 'tool_input'), 'skill');
+  const cwd = str(p, 'cwd');
+  if (!name || !SKILL_NAME.test(name) || name.includes('..')) return;
+  const candidates = [...(cwd ? [join(cwd, '.claude', 'skills', name, 'SKILL.md')] : []), join(homedir(), '.claude', 'skills', name, 'SKILL.md')];
+  for (const path of candidates) {
+    try {
+      if (!statSync(path).isFile()) continue;
+    } catch {
+      continue;
+    }
+    attachFileText(p, path, capturedUs);
+    (p._contrail as Record<string, unknown>).path = path;
+    return;
+  }
+}
+
+/** Reads a file the agent was shown, unless it is not a regular file, too big, or changed since. */
+function attachFileText(p: Record<string, unknown>, path: string, capturedUs: number): void {
   try {
     const st = statSync(path, { bigint: true });
     if (!st.isFile() || Number(st.size) > STRING_CAP) {

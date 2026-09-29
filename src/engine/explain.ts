@@ -1,3 +1,4 @@
+import { str } from '../util.ts';
 import { maxGrade, minGrade } from './grade.ts';
 import { requested, splitSentences } from './requested.ts';
 import { sameScope, scopeKey } from './scope.ts';
@@ -72,6 +73,11 @@ export function blindSpots(action: Action, g: Graph): string[] {
   if (g.inputs.some(i => i.truncated && sameScope(i.scope, action.scope) && i.availableAt < action.preSeq)) {
     spots.push('some inputs were truncated when stored');
   }
+
+  const skills = g.actions
+    .filter(a => a.tool === 'Skill' && a.preSeq < action.preSeq && sameScope(a.scope, action.scope) && !g.inputs.some(i => i.id === `skillbody:${a.id}`))
+    .map(a => str(a.input, 'skill') ?? 'unnamed');
+  if (skills.length) spots.push(`the body of skill ${[...new Set(skills)].join(', ')} (not recorded; plugin skills are never read)`);
 
   const unseen = g.prompts.filter(p => p.command && !p.command.bodyObserved && p.seq < action.preSeq).map(p => p.command!.text.split(' ')[0]!);
   if (unseen.length) spots.push(`the text ${[...new Set(unseen)].join(', ')} expanded to (Claude Code records the command, not its body)`);

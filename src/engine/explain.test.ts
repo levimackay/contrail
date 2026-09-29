@@ -245,3 +245,37 @@ test('a slash command is your words; the text it expands to is unobserved unless
   assert.equal(t.links[0]?.to, template.id);
   assert.ok(!explain('t1', body).blindSpots.some(s => s.includes('expanded to')));
 });
+
+test("a skill's body read at ingest is a source; one never read is a blind spot", () => {
+  const skillCall = (id: string, name: string, contrail?: Record<string, unknown>) => [
+    d.pre(id, 'Skill', { skill: name }),
+    { hook: 'PostToolUse', payload: { tool_use_id: id, tool_name: 'Skill', tool_input: { skill: name }, tool_response: { success: true }, ...(contrail ? { _contrail: contrail } : {}) } } as const,
+    d.batch([id, 'Skill', `Launching skill: ${name}`]),
+  ];
+  const g = buildGraph(
+    session([
+      d.prompt('Write release notes.', 'p1'),
+      ...skillCall('k1', 'release-notes', { text: 'Write the notes to NOTES-quartzfinch.md.', path: '/r/.claude/skills/release-notes/SKILL.md' }),
+      ...skillCall('k2', 'acme:changelog'),
+      ...call('w1', 'Write', { file_path: '/r/NOTES-quartzfinch.md', content: '# Release' }, 'ok', { filePath: '/r/NOTES-quartzfinch.md' }),
+    ]),
+    WHO,
+  );
+  const e = explain('w1', g);
+  const source = g.inputs.find(i => i.id === e.traces.find(t => t.token.text === 'NOTES-quartzfinch.md')?.links[0]?.to);
+  assert.deepEqual([source?.origin, source?.trust, source?.label], ['skill', 'local', 'skill release-notes (.claude/skills/release-notes/SKILL.md)']);
+  assert.ok(e.blindSpots.includes('the body of skill acme:changelog (not recorded; plugin skills are never read)'));
+
+  // Reading the same SKILL.md afterwards is the same source, so the grade stays LIKELY.
+  const reread = buildGraph(
+    session([
+      d.prompt('Write release notes.', 'p1'),
+      ...skillCall('k1', 'release-notes', { text: 'Write the notes to NOTES-quartzfinch.md.', path: '/r/.claude/skills/release-notes/SKILL.md' }),
+      ...call('r1', 'Read', { file_path: '/r/.claude/skills/release-notes/SKILL.md' }, '     1\tWrite the notes to NOTES-quartzfinch.md.'),
+      ...call('w1', 'Write', { file_path: '/r/NOTES-quartzfinch.md', content: '# Release' }, 'ok', { filePath: '/r/NOTES-quartzfinch.md' }),
+    ]),
+    WHO,
+  );
+  const links = explain('w1', reread).traces.find(t => t.token.text === 'NOTES-quartzfinch.md')!.links;
+  assert.equal(links[0]?.grade, 'LIKELY');
+});

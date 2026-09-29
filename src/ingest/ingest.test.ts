@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -133,4 +133,21 @@ test('only real instruction files are read, and not one that changed after it lo
     .map(r => JSON.parse(r.payload));
   assert.equal(notInstructions._contrail, undefined);
   assert.deepEqual([changed._contrail.text, changed._contrail.changedSinceLoad], ['', true]);
+});
+
+test("a skill's body is read at ingest from the project's skills, never from a plugin or outside a skills directory", async () => {
+  const { db, spool } = await setup();
+  const dir = mkdtempSync(join(tmpdir(), 'contrail-repo-'));
+  mkdirSync(join(dir, '.claude', 'skills', 'release-notes'), { recursive: true });
+  writeFileSync(join(dir, '.claude', 'skills', 'release-notes', 'SKILL.md'), 'Write the notes to NOTES-quartzfinch.md.\n');
+  const skill = (name: string) => ({ hook_event_name: 'PostToolUse', session_id: 's1', cwd: dir, tool_name: 'Skill', tool_use_id: name, tool_input: { skill: name }, tool_response: { success: true } });
+  drop(spool, '1-1-a.json', skill('release-notes'));
+  drop(spool, '1-2-b.json', skill('acme:release-notes'));
+  drop(spool, '1-3-c.json', skill('../../../etc'));
+  ingest(db, spool, repoKey);
+  const [project, plugin, escape] = db.all<{ payload: string }>('SELECT payload FROM events ORDER BY spool_name').map(r => JSON.parse(r.payload));
+  assert.equal(project._contrail.text, 'Write the notes to NOTES-quartzfinch.md.\n');
+  assert.equal(project._contrail.path, join(dir, '.claude', 'skills', 'release-notes', 'SKILL.md'));
+  assert.equal(plugin._contrail, undefined);
+  assert.equal(escape._contrail, undefined);
 });

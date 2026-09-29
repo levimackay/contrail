@@ -44,6 +44,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
   const expansions = new Map<string, { command: string; source: string }>();
   const subagentStarts = new Map<string, number>();
   const instructions: Array<{ seq: number; scope: Scope; p: Record<string, unknown>; promptId: string | null }> = [];
+  const skillBodies = new Map<string, { text: string; path: string }>();
   const notifications: Array<{ seq: number; promptId: string; text: string; toolUseId: string | null; taskId: string | null }> = [];
 
   rows.forEach((row, index) => {
@@ -87,6 +88,9 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
         if (row.hook_event === 'PostToolUse') {
           a.status = 'ok';
           a.response = p.tool_response ?? null;
+          const body = obj(p, '_contrail');
+          const text = str(body, 'text');
+          if (a.tool === 'Skill' && text) skillBodies.set(id, { text, path: str(body, 'path') ?? '' });
         } else {
           a.status = p.is_interrupt === true ? 'interrupted' : 'failed';
           a.response = { error: str(p, 'error') ?? '' };
@@ -151,6 +155,20 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     const output = outputInput(a, modelSaw.get(a.id), env);
     if (output) inputs.push(output);
     effects.push(...effectsOf(a, env));
+
+    const body = skillBodies.get(a.id);
+    if (body) {
+      // Read at ingest: the tool result only says the skill launched.
+      const name = str(a.input, 'skill') ?? '';
+      const yours = Boolean(env.home) && body.path.startsWith(`${env.home}/.claude/`);
+      inputs.push({
+        // ref is the file, so a Read of the same SKILL.md is the same source, not a second one.
+        id: `skillbody:${a.id}`, scope: a.scope, origin: 'skill', trust: yours ? 'config' : 'local', ref: displayPath(body.path, env.cwd, env.home),
+        label: `skill ${name} (${displayPath(body.path, env.cwd, env.home)})`, text: body.text,
+        truncated: body.text.includes('[contrail: truncated'), fidelity: 'read-at-ingest',
+        availableAt: modelSaw.get(a.id)?.seq ?? a.postSeq ?? a.preSeq, producedBy: a.id, promptId: a.promptId,
+      });
+    }
 
     const agentId = (a.tool === 'Agent' || a.tool === 'Task') && a.status === 'ok' ? str(a.response, 'agentId') : undefined;
     if (agentId && output) output.relays = { sessionId: a.scope.sessionId, agentId };

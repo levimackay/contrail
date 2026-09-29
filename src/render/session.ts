@@ -48,7 +48,7 @@ export function renderTrace(
   const out: string[] = [];
   const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? '';
   const inputs = new Map(g.inputs.map(i => [i.id, i]));
-  out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(g.env.cwd)}`);
+  out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(
     s.dim(
       `${g.prompts.length} turn${g.prompts.length === 1 ? '' : 's'} · ${g.actions.length} tool calls · ${g.effects.filter(e => e.kind === 'file').length} file effects` +
@@ -66,7 +66,7 @@ export function renderTrace(
   }
   if (!filter || filter === 'instructions') {
     for (const i of g.inputs.filter(x => x.origin === 'instructions')) {
-      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad(`${i.availableAt}`, 4))} ${pad('LOADED', 7)} ${i.label}  ${s.dim(originWording(i))}`] });
+      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad(`${i.availableAt}`, 4))} ${pad('LOADED', 7)} ${clip(i.label, 100)}  ${s.dim(originWording(i))}`] });
     }
   }
   if (!filter) {
@@ -97,7 +97,7 @@ function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Ma
   const link = head?.links.find(l => l.grade !== 'UNKNOWN');
   const src = link?.to ? inputs.get(link.to) : undefined;
   const from = src && link
-    ? `${s.grade(link.grade, 0).trim()} ${head!.token.text} ← ${src.label}${link.quote?.line != null ? `:${link.quote.line}` : ''} ${src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`
+    ? `${s.grade(link.grade, 0).trim()} ${clip(head!.token.text, 80)} ← ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ''} ${src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`
     : e.traces.length ? `${s.grade('UNKNOWN', 0).trim()} ${s.dim('no observed source')}` : '';
   const asked = e.requested.verdict === 'NAMED' ? s.dim('named by you') : e.requested.verdict === 'NOT_NAMED' ? s.flag('not named by you') : '';
   const detail = [from, asked].filter(Boolean).join('   ');
@@ -118,7 +118,7 @@ const headline = headlineTrace;
 export function renderTree(g: Graph, forest: TreeRoot[], omitted: number, s: Style = PLAIN): string {
   const out: string[] = [];
   const sessionId = g.actions[0]?.scope.sessionId ?? '';
-  out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(g.env.cwd)}`);
+  out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(s.dim('Each action sits under the call whose output first held its headline value. Data flow, not the agent\'s reasons.'));
   for (const root of forest) {
     out.push('', rootLine(root, g, s));
@@ -134,7 +134,7 @@ function rootLine(root: TreeRoot, g: Graph, s: Style): string {
   if (root.kind === 'nothing') return s.bold('nothing to trace') + s.dim(' (no values in these calls to follow)');
   const src = root.source!;
   const prompt = src.origin === 'prompt' ? g.prompts.find(p => `prompt:${p.promptId}` === src.id) : undefined;
-  const what = prompt ? `${src.label}  "${clip(prompt.text, 70)}"` : src.label;
+  const what = prompt ? `${clip(src.label, 100)}  "${clip(prompt.text, 70)}"` : clip(src.label, 100);
   return `${s.bold(what)}  ${src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`;
 }
 
@@ -144,7 +144,7 @@ function nodeLines(node: TreeNode, prefix: string, last: boolean, g: Graph, s: S
   const failed = a.status === 'failed' || a.status === 'interrupted' ? s.flag(` ${a.status.toUpperCase()}`) : '';
   const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : '';
   const external = node.source?.trust === 'external' ? ` ${s.flag('(external)')}` : '';
-  const via = node.link && node.token ? `  ${s.dim('←')} ${s.grade(node.link.grade, 0).trim()} ${node.token}${line}${external}` : '';
+  const via = node.link && node.token ? `  ${s.dim('←')} ${s.grade(node.link.grade, 0).trim()} ${clip(node.token, 80)}${line}${external}` : '';
   out.push(`${s.dim(prefix + (last ? '└── ' : '├── '))}${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kindOf(a), 7)} ${clip(summary(a, g), 60)}${who}${failed}${via}`);
   const next = prefix + (last ? '    ' : '│   ');
   node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
@@ -207,8 +207,8 @@ export function renderRisks(findings: Finding[], scanned: { actions: number; ses
     }
     out.push(`  ${external.length ? s.flag('values trace to external content:') : s.dim('values trace to:')}`);
     for (const { link, input } of shown) {
-      const where = `${input.label}${link.quote?.line != null ? `:${link.quote.line}` : ''}`;
-      out.push(`    ${s.grade(link.grade)}${link.token}  ← ${where}  ${input.trust === 'external' ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
+      const where = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ''}`;
+      out.push(`    ${s.grade(link.grade)}${clip(link.token ?? '', 80)}  ← ${where}  ${input.trust === 'external' ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
       if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}│` : '│')} ${clip(link.quote.text, 96)}`);
     }
   }

@@ -140,3 +140,28 @@ test('no report uses causal or accusatory wording of its own', async () => {
     }
   }
 });
+
+test('recorded text cannot put terminal escapes or backticks into any report', async () => {
+  const { buildGraph } = await import('../src/graph/build.ts');
+  const { explain } = await import('../src/engine/explain.ts');
+  const { trailForest } = await import('../src/engine/tree.ts');
+  const { renderTree, renderTrace } = await import('../src/render/session.ts');
+  const { renderWhy } = await import('../src/render/why.ts');
+  const { call, d, session, WHO } = await import('./fixtures/synthetic.ts');
+  const hostile = 'pwn\x1b]0;x\x07\x1b[2J`id`-helper';
+  const g = buildGraph(
+    session([
+      d.prompt('set it up', 'p1'),
+      ...call('w1', 'WebFetch', { url: 'https://docs.x.example/\x1b[31msetup', prompt: 'how?' }, `Run: npm install ${hostile}`),
+      ...call('b1', 'Bash', { command: `npm install '${hostile}'` }, 'ok'),
+      ...call('r1', 'Read', { file_path: '/r/`evil`\x1b[2J.md' }, 'x'),
+    ]),
+    WHO,
+  );
+  const explanations = new Map(g.actions.map(a => [a.id, explain(a.id, g)]));
+  const outputs = [renderWhy(explanations.get('b1')!, g), renderWhy(explanations.get('r1')!, g), renderTrace(g, explanations, null), renderTree(g, trailForest(g, explanations), 0)];
+  for (const out of outputs) {
+    assert.doesNotMatch(out, /[\x00-\x08\x0b-\x1f\x7f]/);
+    assert.doesNotMatch(out, /`/);
+  }
+});

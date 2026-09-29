@@ -47,7 +47,7 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
   const unfound = shown.filter(t => !found.includes(t));
   for (const t of found) trace(t, 1, out, inputs, s);
   if (unfound.length) {
-    out.push(`  ${s.grade('UNKNOWN')}no observed source for: ${unfound.map(t => t.token.text).join(', ')}  ${s.dim('[R4]')}`);
+    out.push(`  ${s.grade('UNKNOWN')}no observed source for: ${unfound.map(t => clip(t.token.text, 80)).join(', ')}  ${s.dim('[R4]')}`);
   }
   if (!e.traces.length) out.push(s.dim('  nothing distinctive in this action to trace'));
   const searched = e.traces[0]?.searched;
@@ -78,7 +78,7 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
 function trace(t: TokenTrace, depth: number, out: string[], inputs: Map<string, Input>, s: Style): void {
   const pad = '  '.repeat(depth);
   const firstUse = t.firstUse ? `, first used in ${callId(t.firstUse.actionId)} at seq ${t.firstUse.preSeq}` : '';
-  out.push(`${pad}${s.accent(t.token.text)}  ${s.dim(`(${t.token.argPath}${firstUse})`)}`);
+  out.push(`${pad}${s.accent(clip(t.token.text, 80))}  ${s.dim(`(${t.token.argPath}${firstUse})`)}`);
 
   for (const l of t.links) {
     if (!l.to) {
@@ -87,7 +87,7 @@ function trace(t: TokenTrace, depth: number, out: string[], inputs: Map<string, 
     }
     const src = inputs.get(l.to);
     if (!src) continue;
-    const where = l.quote?.line != null ? `${src.label}:${l.quote.line}` : src.label;
+    const where = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
     out.push(`${pad}  ${s.grade(l.grade)}${sourceWording(l, where)}  ${s.dim(`[${l.rule}]`)}`);
     if (l.quote?.text) out.push(`${pad}           ${s.dim(l.quote.line != null ? `${l.quote.line}│` : '│')} ${clip(l.quote.text, 100)}`);
     const origin = originWording(src);
@@ -155,7 +155,7 @@ function requestedLines(e: Explanation, s: Style): string[] {
     case 'NAMED_NEGATED':
       return [`Requested?  ${s.flag('NAMED, BUT YOUR LATEST MENTION IS NEGATED:')} ${quoted}  ${tag(`R8 ${r.grade}`)}`];
     case 'PARTLY_NAMED':
-      return [`Requested?  ${s.bold('PARTLY NAMED')}  ${quoted} names ${r.matched}, not everything this action targets  ${tag(`R8 ${r.grade}`)}`];
+      return [`Requested?  ${s.bold('PARTLY NAMED')}  ${quoted} names ${clip(r.matched ?? '', 80)}, not everything this action targets  ${tag(`R8 ${r.grade}`)}`];
     case 'NOT_NAMED': {
       const yours = r.searched === 1 ? 'Your 1 sentence this session does not' : `None of your ${r.searched} sentences this session`;
       return [`Requested?  ${s.flag('NOT NAMED')} (the agent chose this). ${yours} name it.  ${tag('R8')}`];
@@ -167,7 +167,7 @@ function requestedLines(e: Explanation, s: Style): string[] {
 
 export function describe(a: Action, g: Graph): string {
   const path = str(a.input, 'file_path') ?? str(a.input, 'notebook_path');
-  if (path) return displayPath(path, g.env.cwd, g.env.home);
+  if (path) return clip(displayPath(path, g.env.cwd, g.env.home), 120);
   if (a.tool === 'Bash') return clip(str(a.input, 'command') ?? '', 90);
   if (a.tool === 'WebFetch') return clip(str(a.input, 'url') ?? '', 90);
   if (a.tool === 'Agent' || a.tool === 'Task') return clip(str(a.input, 'description') ?? str(a.input, 'prompt') ?? '', 90);
@@ -176,7 +176,7 @@ export function describe(a: Action, g: Graph): string {
     return clip(`${JSON.stringify(str(a.input, 'pattern') ?? '')}${where ? ` in ${displayPath(where, g.env.cwd, g.env.home)}` : ''}`, 90);
   }
   if (a.tool === 'WebSearch') return clip(JSON.stringify(str(a.input, 'query') ?? ''), 90);
-  if (a.tool === 'Skill') return str(a.input, 'skill') ?? '';
+  if (a.tool === 'Skill') return clip(str(a.input, 'skill') ?? '', 90);
   if (a.tool.startsWith('mcp__')) return clip(`${a.tool.slice(5).replace('__', '/')} ${JSON.stringify(a.input)}`, 90);
   return clip(JSON.stringify(a.input), 90);
 }

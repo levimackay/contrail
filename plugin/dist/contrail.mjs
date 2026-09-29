@@ -1655,17 +1655,17 @@ function attachSkillText(p, capturedUs) {
   const name = str(obj(p, "tool_input"), "skill");
   const cwd = str(p, "cwd");
   if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
-  const candidates = [...cwd ? [join(cwd, ".claude", "skills", name, "SKILL.md")] : [], join(homedir(), ".claude", "skills", name, "SKILL.md")];
-  for (const path of candidates) {
+  const candidates = [join(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join(cwd, ".claude", "skills", name, "SKILL.md")] : []];
+  const found = [...new Set(candidates)].filter((path) => {
     try {
-      if (!statSync(path).isFile()) continue;
+      return statSync(path).isFile();
     } catch {
-      continue;
+      return false;
     }
-    attachFileText(p, path, capturedUs);
-    p._contrail.path = path;
-    return;
-  }
+  });
+  if (found.length !== 1) return;
+  attachFileText(p, found[0], capturedUs);
+  p._contrail.path = found[0];
 }
 function attachFileText(p, path, capturedUs) {
   try {

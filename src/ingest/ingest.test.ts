@@ -151,3 +151,22 @@ test("a skill's body is read at ingest from the project's skills, never from a p
   assert.equal(plugin._contrail, undefined);
   assert.equal(escape._contrail, undefined);
 });
+
+test('a skill name found both in your skills and the project is ambiguous, so neither body is read', async () => {
+  const { db, spool } = await setup();
+  const home = mkdtempSync(join(tmpdir(), 'contrail-home-'));
+  const dir = mkdtempSync(join(tmpdir(), 'contrail-repo-'));
+  for (const root of [home, dir]) {
+    mkdirSync(join(root, '.claude', 'skills', 'deploy'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'skills', 'deploy', 'SKILL.md'), `body from ${root}\n`);
+  }
+  const saved = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    drop(spool, '1-1-a.json', { hook_event_name: 'PostToolUse', session_id: 's1', cwd: dir, tool_name: 'Skill', tool_use_id: 'k1', tool_input: { skill: 'deploy' }, tool_response: { success: true } });
+    ingest(db, spool, repoKey);
+  } finally {
+    process.env.HOME = saved;
+  }
+  assert.equal(JSON.parse(db.get<{ payload: string }>('SELECT payload FROM events')!.payload)._contrail, undefined);
+});

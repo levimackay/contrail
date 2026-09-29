@@ -168,24 +168,25 @@ const SKILL_NAME = /^[A-Za-z0-9][\w.-]{0,63}$/;
 
 /**
  * The Skill tool's result is only "Launching skill: <name>", so read the skill's SKILL.md now,
- * from the two places a bare name can live: the project's .claude/skills, then yours.
- * Plugin skills (plugin:name) are left unread and stay a blind spot.
+ * from the two places a bare name can live: yours and the project's .claude/skills. If both
+ * exist, which one ran is not observable, so neither is read and the body stays a blind spot.
+ * Plugin skills (plugin:name) are left unread too.
  */
 function attachSkillText(p: Record<string, unknown>, capturedUs: number): void {
   const name = str(obj(p, 'tool_input'), 'skill');
   const cwd = str(p, 'cwd');
   if (!name || !SKILL_NAME.test(name) || name.includes('..')) return;
-  const candidates = [...(cwd ? [join(cwd, '.claude', 'skills', name, 'SKILL.md')] : []), join(homedir(), '.claude', 'skills', name, 'SKILL.md')];
-  for (const path of candidates) {
+  const candidates = [join(homedir(), '.claude', 'skills', name, 'SKILL.md'), ...(cwd ? [join(cwd, '.claude', 'skills', name, 'SKILL.md')] : [])];
+  const found = [...new Set(candidates)].filter(path => {
     try {
-      if (!statSync(path).isFile()) continue;
+      return statSync(path).isFile();
     } catch {
-      continue;
+      return false;
     }
-    attachFileText(p, path, capturedUs);
-    (p._contrail as Record<string, unknown>).path = path;
-    return;
-  }
+  });
+  if (found.length !== 1) return;
+  attachFileText(p, found[0]!, capturedUs);
+  (p._contrail as Record<string, unknown>).path = found[0];
 }
 
 /** Reads a file the agent was shown, unless it is not a regular file, too big, or changed since. */

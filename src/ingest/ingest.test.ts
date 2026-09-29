@@ -102,3 +102,35 @@ test('a missing spool directory is not an error', async () => {
   const { db } = await setup();
   assert.deepEqual(ingest(db, '/nonexistent/spool', repoKey), { ingested: 0, duplicates: 0, parseErrors: 0, staleTmpRemoved: 0 });
 });
+
+test('one pathological payload is stored as a failure and never blocks later events', async () => {
+  const { db, spool } = await setup();
+  const deep = '['.repeat(20000) + ']'.repeat(20000);
+  drop(spool, '1-1-a.json', `{"hook_event_name":"PreToolUse","x":${deep}}`);
+  drop(spool, '1-2-b.json', { hook_event_name: 'UserPromptSubmit', session_id: 's1', prompt: 'hi', cwd: '/r' });
+  const r = ingest(db, spool, repoKey);
+  assert.equal(r.ingested, 2);
+  assert.deepEqual(readdirSync(spool), []);
+  assert.deepEqual(
+    db.all<{ hook_event: string }>('SELECT hook_event FROM events ORDER BY spool_name').map(e => e.hook_event),
+    ['unparsed', 'UserPromptSubmit'],
+  );
+});
+
+test('only real instruction files are read, and not one that changed after it loaded', async () => {
+  const { db, spool } = await setup();
+  const dir = mkdtempSync(join(tmpdir(), 'contrail-repo-'));
+  writeFileSync(join(dir, 'secrets.txt'), 'nope');
+  drop(spool, '1-1-a.json', { hook_event_name: 'InstructionsLoaded', session_id: 's1', cwd: dir, file_path: join(dir, 'secrets.txt') });
+  writeFileSync(join(dir, 'CLAUDE.md'), 'edited later');
+  const past = Date.now() / 1000 - 60;
+  drop(spool, '1-2-b.json', { hook_event_name: 'InstructionsLoaded', session_id: 's1', cwd: dir, file_path: join(dir, 'CLAUDE.md') });
+  const { utimesSync } = await import('node:fs');
+  utimesSync(join(spool, '1-2-b.json'), past, past);
+  ingest(db, spool, repoKey);
+  const [notInstructions, changed] = db
+    .all<{ payload: string }>('SELECT payload FROM events ORDER BY spool_name')
+    .map(r => JSON.parse(r.payload));
+  assert.equal(notInstructions._contrail, undefined);
+  assert.deepEqual([changed._contrail.text, changed._contrail.changedSinceLoad], ['', true]);
+});

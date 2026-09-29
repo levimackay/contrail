@@ -56,3 +56,81 @@ test('walks string leaves, including inside escaped multi-line content, and neve
   assert.match(out.tool_response.stdout, /GITHUB_TOKEN=\[REDACTED:(github-token|env-secret)\]/);
   assert.ok(!out.tool_response.stdout.includes('ghp_'));
 });
+
+// Found in the security audit: formats that used to survive redaction.
+const MORE_SECRETS: Array<[string, string]> = [
+  ['gitlab-token', `glpat-${repeat('Ab12', 6)}`],
+  ['npm-token', `npm_${repeat('aB3d', 9)}`],
+  ['huggingface-token', `hf_${repeat('Qw7e', 9)}`],
+  ['sendgrid-key', `SG.${repeat('ab', 11)}.${repeat('cd', 22)}`],
+  ['stripe-webhook-secret', `whsec_${repeat('Zx9', 9)}`],
+  ['webhook-url', `https://hooks.slack.com/services/T0000/B0000/${repeat('x1', 12)}`],
+  ['cookie', 'Set-Cookie: session=abc123def456; HttpOnly'],
+  ['url-password', `redis://:${repeat('pw', 5)}@cache.internal:6379`],
+  ['cli-password', `psql --password ${repeat('Pw9', 4)} -h db`],
+  ['cli-password', `curl -u admin:${repeat('Pw9', 4)} https://api.example.com`],
+  ['cli-password', `mysql -uroot -p${repeat('Pw9', 4)} app`],
+  ['env-secret', 'PASSWORD="my pass phrase here"'],
+  ['env-secret', `DB_PWD=${repeat('z9', 5)}`],
+  ['env-secret', `MYSQL_PASS=${repeat('z9', 5)}`],
+  ['env-secret', 'PASSWORD=Sup3r(Secret)123'],
+  ['private-key', `-----BEGIN PGP PRIVATE KEY BLOCK-----\n${repeat('lQdG', 10)}\n-----END PGP PRIVATE KEY BLOCK-----`],
+  ['auth-header', 'Authorization: Bearer AbCd1234.EfGh5678.IjKl9012'],
+];
+for (const [rule, text] of MORE_SECRETS) {
+  test(`redacts ${rule}: ${text.slice(0, 24)}`, () => assert.match(redactString(text), new RegExp(`\\[REDACTED:${rule}\\]`)));
+}
+
+test('a password containing @ is removed whole from a URL', () => {
+  const out = redactString('postgres://user:hun@ter2@db.internal/app');
+  assert.equal(out, 'postgres://user:[REDACTED:url-password]@db.internal/app');
+});
+
+const MORE_KEEP = [
+  'class="sk-kebab-case-css-class-name-for-spinner"',
+  'docker://registry/img:tag@sha256:9f3c2a1d4e5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d',
+  'mkdir -p build/output',
+  'PASSTHROUGH=enabled',
+];
+for (const text of MORE_KEEP) {
+  test(`leaves alone: ${text.slice(0, 40)}`, () => assert.equal(redactString(text), text));
+}
+
+test('an unterminated private key header does not swallow the ids after it', () => {
+  const out = redactString(`-----BEGIN RSA PRIVATE KEY-----\nMIIEow\ntoolu_01ABCDEFGH more text`);
+  assert.match(out, /\[REDACTED:private-key\]/);
+  assert.match(out, /toolu_01ABCDEFGH more text/);
+});
+
+test('values under secret-named JSON keys are redacted whole', () => {
+  const out = redactValue({
+    password: 'Sup3rS3cret!xyz',
+    api_key: 'abcd1234efgh5678',
+    headers: { Authorization: 'Bearer abc123def456ghi' },
+    env: [{ key: 'DB_PASSWORD', value: 'hunter2hunter2' }],
+    max_tokens: 1024,
+    tool_use_id: 'toolu_01ABCDEFGH',
+  }) as Record<string, any>;
+  assert.equal(out.password, '[REDACTED:secret-field]');
+  assert.equal(out.api_key, '[REDACTED:secret-field]');
+  assert.equal(out.headers.Authorization, '[REDACTED:secret-field]');
+  assert.equal(out.env[0].value, '[REDACTED:secret-field]');
+  assert.equal(out.max_tokens, 1024);
+  assert.equal(out.tool_use_id, 'toolu_01ABCDEFGH');
+});
+
+test('long adversarial text redacts in linear time, not minutes', () => {
+  const size = 256 * 1024;
+  const inputs = [
+    'a.a.'.repeat(size / 4),
+    Array.from({ length: size / 12 }, (_, i) => `slug-${i}-part`).join(' '),
+    'x'.repeat(size),
+    Array.from({ length: size / 4 }, (_, i) => 'Ab9_-'[i % 5]).join('').repeat(4),
+    'token='.repeat(size / 6),
+  ];
+  const start = performance.now();
+  for (const s of inputs) redactString(s);
+  const ms = performance.now() - start;
+  // ~0.3 s alone; the quadratic version this guards against took minutes. Loose for busy CI runners.
+  assert.ok(ms < 15_000, `took ${Math.round(ms)} ms`);
+});

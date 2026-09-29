@@ -159,7 +159,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     inputs.push({
       id: `instr:${ins.seq}`, scope: ins.scope, origin: 'instructions',
       trust: str(ins.p, 'memory_type') === 'Project' ? 'local' : 'config', ref: shown,
-      label: extra?.changedSinceLoad === true ? `${shown} (changed on disk since it loaded)` : shown,
+      label: extra?.changedSinceLoad === true ? `${shown} (changed after it loaded; its text is not used)` : shown,
       text: str(extra, 'text') ?? '', truncated: (str(extra, 'text') ?? '').includes('[contrail: truncated'),
       fidelity: 'read-at-ingest', availableAt: readAt ?? ins.seq, producedBy: null, promptId: ins.promptId,
     });
@@ -212,14 +212,14 @@ function templateTrust(source: string): Trust {
 /** A tool's result as an input: preferably the exact text the model received (PostToolBatch). */
 function outputInput(a: Action, saw: { seq: number; text: string } | undefined, env: Env): Input | null {
   if (NO_OUTPUT_TOOLS.has(a.tool) || a.postSeq === null) return null;
-  const text = saw?.text ?? toText(a.response);
+  const text = saw?.text || toText(a.response);
   return {
     id: `out:${a.id}`,
     scope: a.scope,
     ...classify(a, env),
     text,
     truncated: text.includes('[contrail: truncated'),
-    fidelity: saw ? 'as-seen' : 'reported',
+    fidelity: saw?.text ? 'as-seen' : 'reported',
     availableAt: saw?.seq ?? a.postSeq,
     producedBy: a.id,
     promptId: a.promptId,

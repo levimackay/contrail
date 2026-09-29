@@ -63,8 +63,16 @@ export function changedFiles(response: unknown, cwd: string): string[] {
     .map(f => (isAbsolute(f) || !cwd ? f : resolve(cwd, f)));
 }
 
-/** One line, at most `max` characters. */
+/**
+ * One line, at most `max` characters, safe to print: control characters (terminal escapes)
+ * become spaces and backticks become quotes, so recorded text can't restyle a terminal or
+ * turn into a command when a report is shown inside Claude Code.
+ */
 export function clip(s: string, max: number): string {
-  const one = s.replace(/\s+/g, ' ').trim();
+  const one = s
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/`/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
   return one.length <= max ? one : one.slice(0, max - 1) + '…';
 }

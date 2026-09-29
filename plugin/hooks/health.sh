@@ -2,6 +2,7 @@
 # SessionStart health check. Silent when recording works. Otherwise it shows
 # one warning to the user through systemMessage, which never reaches the model.
 
+umask 077
 cat >/dev/null
 data="${CONTRAIL_HOME:-${CLAUDE_PLUGIN_DATA:-}}"
 
@@ -13,6 +14,6 @@ else
   exit 0
 fi
 
-msg=$(printf '%s' "$msg" | tr -d '"\134')
+msg=$(printf '%s' "$msg" | tr -d '\000-\037"\134')
 printf '{"systemMessage": "%s"}\n' "$msg"
 exit 0

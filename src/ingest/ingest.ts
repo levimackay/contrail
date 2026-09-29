@@ -53,7 +53,14 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
       continue; // a concurrent ingest already took it
     }
 
-    const row = toRow(name, raw, Number(mtimeNs / 1000n), repoKeyOf);
+    const capturedUs = Number(mtimeNs / 1000n);
+    let row: Row;
+    try {
+      row = toRow(name, raw, capturedUs, repoKeyOf);
+    } catch (e) {
+      // Never let one bad payload block every later event: store the failure and move on.
+      row = failedRow(capturedUs, `${name}: ${(e as Error).message}`);
+    }
     if (row.parseError) report.parseErrors++;
 
     db.exec('BEGIN IMMEDIATE');
@@ -107,12 +114,7 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return {
-      capturedUs, sessionId: null, promptId: null, agentId: null, hookEvent: 'unparsed', toolName: null,
-      toolUseId: null, cwd: null, repoKey: null, touches: [],
-      payload: JSON.stringify({ raw: capString(redactString(raw)) }),
-      parseError: `${name}: ${(e as Error).message}`,
-    };
+    return { ...failedRow(capturedUs, `${name}: ${(e as Error).message}`), payload: JSON.stringify({ raw: redactString(capString(raw)) }) };
   }
 
   const p = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { value: parsed }) as Record<string, unknown>;
@@ -130,20 +132,40 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
     toolUseId: str(p, 'tool_use_id') ?? null,
     cwd,
     repoKey: cwd ? repoKeyOf(cwd) : null,
-    payload: JSON.stringify(capValue(redactValue(dropBulky(p)))),
+    // Cap before redacting, so no pattern ever scans more than STRING_CAP characters.
+    payload: JSON.stringify(redactValue(capValue(dropBulky(p)))),
     parseError: null,
     touches: hookEvent === 'PostToolUse' ? touchesOf(p, cwd ?? '') : [],
   };
 }
 
-/** The hook names the instruction file but not its text, so read it now, as close to load time as we get. */
+function failedRow(capturedUs: number, parseError: string): Row {
+  return {
+    capturedUs, sessionId: null, promptId: null, agentId: null, hookEvent: 'unparsed', toolName: null,
+    toolUseId: null, cwd: null, repoKey: null, touches: [], payload: '{}', parseError,
+  };
+}
+
+/** Only the files InstructionsLoaded can name: CLAUDE.md, CLAUDE.local.md and .claude/rules/*.md. */
+const INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$/i;
+
+/**
+ * The hook names the instruction file but not its text, so read it now, as close to load
+ * time as we get. If it changed after it loaded (say the agent edited it), its current text
+ * is not what the agent saw, so it is not kept.
+ */
 function attachInstructionText(p: Record<string, unknown>, capturedUs: number): void {
   const path = str(p, 'file_path');
-  if (!path) return;
+  if (!path || !INSTRUCTION_FILE.test(path)) return;
   try {
-    const text = readFileSync(path, 'utf8');
-    const changedSinceLoad = statSync(path).mtimeMs * 1000 > capturedUs;
-    p._contrail = { text, sha256: sha256(text), changedSinceLoad };
+    const st = statSync(path);
+    if (!st.isFile() || st.size > STRING_CAP) {
+      p._contrail = { skipped: st.isFile() ? 'larger than the storage cap' : 'not a regular file' };
+      return;
+    }
+    const changedSinceLoad = st.mtimeMs * 1000 > capturedUs;
+    const text = changedSinceLoad ? '' : readFileSync(path, 'utf8');
+    p._contrail = { text, sha256: text ? sha256(text) : null, changedSinceLoad };
   } catch {
     p._contrail ??= { missing: true };
   }

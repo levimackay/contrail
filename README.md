@@ -102,7 +102,7 @@ It is not a transcript viewer, a token tracker or a security scanner. It has one
 | [`contrail risks`](#contrail-risks) | Sensitive actions, with where their values came from |
 | [`contrail trace [--tree]`](#contrail-trace) | A session as a timeline, or as a forest of trails |
 | [`contrail sessions`](#contrail-sessions) | Recent sessions at a glance |
-| `contrail export [<session> \| last]` | A session's recorded (redacted) events as JSON |
+| [`contrail export [<session> \| last] [--otel]`](#export-to-opentelemetry) | A session's recorded (redacted) events as JSON, or as OpenTelemetry traces |
 | `contrail doctor` | Checks the install and times the capture hook on this machine |
 | `contrail prune` | Applies retention now and compacts the database |
 | `contrail ingest` | Moves spooled events into the database (it also runs automatically) |
@@ -206,6 +206,21 @@ What a commit contains, joined to the agent changes behind each file.
 - **Each file.** Contrail asks git for the commit's file list and joins each file by path to the latest agent change before the commit. A file the agent changed is LIKELY, not DIRECT: whether that exact change is what was committed is not observed. A file changed only by an expected effect is POSSIBLE. A file with no recorded agent change is UNKNOWN: you, another process, or an earlier session. Above, `docs/CHANGELOG.md` is in the commit, but the agent never touched it.
 
 Commits made outside Claude Code's shell tool are not recorded, and `why commit` needs to run inside the repository so git can list the files.
+
+### Export to OpenTelemetry
+
+```sh
+contrail export <session> --otel > session.otlp.json
+```
+
+`--otel` writes the session as one OTLP/JSON trace request on one line, the format collectors' file receivers read. From there it can go into Jaeger, Grafana Tempo, Honeycomb or any OpenTelemetry backend. Contrail itself never sends it anywhere.
+
+- **Spans.** The session is the root span, each turn a child, and each tool call a child of its turn, with its real start and end times. A failed call carries an error status.
+- **Attributes.** Contrail's findings go on each call: `contrail.grade`, `contrail.requested`, `contrail.value`, `contrail.source`, `contrail.origin`, `contrail.trust`, and for sensitive actions `contrail.sensitive` and `contrail.external_upstream`.
+- **Links.** Each provenance edge becomes a span link from an action to the call (or turn) whose output held its value, with the grade, rule and value on the link.
+- **Events.** Each effect (a file written, a commit, a host reached) is a span event.
+
+Span and trace ids are derived from the session, so exporting a session twice gives the same trace. The output is checked against the official OTLP protobuf schema.
 
 ## How it works
 
@@ -553,9 +568,12 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 - [x] A synchronous `SessionEnd` ingest, so the unredacted spool never outlives a session
 - [x] Color output, honoring `NO_COLOR` and `FORCE_COLOR`
 
+**Next**
+
+- [x] OpenTelemetry export: sessions as OTLP traces, with grades as attributes and provenance as span links
+
 **Planned**
 
-- [ ] OpenTelemetry export with `contrail.origin` and `contrail.grade` attributes
 - [ ] Optional transcript enrichment, to show what the agent said right before each action
 
 Windows support, other agents, and an enforcement companion that consumes Contrail's graph are considered only if there is demand.

@@ -20,9 +20,9 @@ const KIND: Record<string, string> = {
   Read: 'READ', Grep: 'SEARCH', Glob: 'SEARCH', LS: 'SEARCH', Edit: 'EDIT', MultiEdit: 'EDIT', Write: 'WRITE',
   NotebookEdit: 'EDIT', Bash: 'SHELL', WebFetch: 'WEB', WebSearch: 'WEB', Agent: 'AGENT', Task: 'AGENT', Skill: 'SKILL',
 };
-const kindOf = (a: Action) => (a.tool.startsWith('mcp__') ? 'MCP' : (KIND[a.tool] ?? 'TOOL'));
+export const kindOf = (a: Action) => (a.tool.startsWith('mcp__') ? 'MCP' : (KIND[a.tool] ?? 'TOOL'));
 /** What a timeline line shows after the kind: for a tool without a kind of its own, its name first. */
-const summary = (a: Action, g: Graph) => (kindOf(a) === 'TOOL' ? `${a.tool} ${describe(a, g)}` : describe(a, g));
+export const summary = (a: Action, g: Graph) => (kindOf(a) === 'TOOL' ? `${a.tool} ${describe(a, g)}` : describe(a, g));
 
 /** Side effects worth explaining in a trace: anything that writes, runs, or reaches the network. */
 export const EXPLAINED = new Set(['EDIT', 'WRITE', 'SHELL', 'WEB', 'MCP', 'AGENT']);

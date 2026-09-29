@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,7 @@ import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessio
 import { findTarget, parseTarget } from './query/target.ts';
 import { EXPLAINED, matchesFilter, renderCommit, renderRisks, renderSessions, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
 import { PLAIN, styleFor, type Style } from './render/style.ts';
+import { renderReport } from './render/html.ts';
 import { toOtlp } from './render/otel.ts';
 import { renderWhy } from './render/why.ts';
 import { loadConfig, prune } from './store/retention.ts';
@@ -48,6 +49,7 @@ const OPTIONS = {
   all: { type: 'boolean' },
   tree: { type: 'boolean' },
   otel: { type: 'boolean' },
+  output: { type: 'string', short: 'o' },
   'from-hook': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
@@ -72,6 +74,8 @@ Usage:
                                     recent sessions at a glance
   contrail export [<session> | last] [--otel]
                                     a session's recorded events as JSON, or as OpenTelemetry traces
+  contrail report [<session> | last] [-o file.html]
+                                    a session as one self-contained HTML page
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
@@ -115,6 +119,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     risks: () => risks(flags, io, style),
     sessions: () => sessions(flags, io, style),
     export: args => exportSession(args, flags, io),
+    report: args => report(args, flags, io),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io),
@@ -343,6 +348,32 @@ async function exportSession(args: string[], flags: Flags, io: Io): Promise<numb
     }
     const events = loadRows(db, id).map(r => ({ ...r, payload: JSON.parse(r.payload) as unknown }));
     io.out(`${JSON.stringify({ contrail: VERSION, schema: SCHEMA_VERSION, session: id, events }, null, 2)}\n`);
+    return 0;
+  });
+}
+
+async function report(args: string[], flags: Flags, io: Io): Promise<number> {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const id = pickSession(db, args[0] ?? (flags.session as string | undefined), repoKey);
+    const graph = loadGraph(db, id, io.home, hashToken);
+    const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map(a => [a.id, explain(a.id, graph)]));
+    const html = renderReport({
+      graph,
+      explanations,
+      findings: rankFindings(findingsFor(graph)),
+      forest: trailForest(graph, explanations),
+      omitted: graph.actions.length - explanations.size,
+      version: VERSION,
+      generatedAt: new Date(),
+    });
+    const path = flags.output as string | undefined;
+    if (!path) {
+      io.out(html);
+      return 0;
+    }
+    // The report holds what the agent read (redacted), so it gets the same 0600 as the database.
+    writeFileSync(path, html, { mode: 0o600 });
+    io.out(`Wrote ${path}\n`);
     return 0;
   });
 }

@@ -84,3 +84,16 @@ test('two git commits running at that second attribute nothing', async () => {
   assert.equal(r.code, 1);
   assert.match(r.err, /2 recorded git commits were running when git dated commit/);
 });
+
+test('a command that committed and then failed, like git commit -q && git push, still counts', async () => {
+  const [pre] = quiet('c1');
+  const failed: Draft = { hook: 'PostToolUseFailure', payload: { tool_use_id: 'c1', tool_name: 'Bash', tool_input: { command: 'git commit -q -m "Add a" && git push' }, error: 'push rejected' } };
+  const { repo, data, sha } = setup([
+    [d.prompt('commit and push', 'p1'), T - 30],
+    [pre!, T - 1],
+    [failed, T + 2],
+  ]);
+  const r = await why(repo, data, sha.slice(0, 7));
+  assert.equal(r.err, '');
+  assert.match(r.out, /LIKELY {3}made by Bash c1 .*\[R9\]/);
+});

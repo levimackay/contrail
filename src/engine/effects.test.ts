@@ -12,6 +12,9 @@ test('parseCommitSha reads git\'s own commit line, only for real git commits', (
   assert.equal(parseCommitSha('echo "[main 9f3c2a1] x"', '[main 9f3c2a1] x'), null);
   assert.equal(parseCommitSha('git status', '[main 9f3c2a1] x'), null);
   assert.equal(parseCommitSha('echo git commit', '[main 9f3c2a1] x'), null);
+  for (const wrapped of ['time git commit -m x', 'env GIT_AUTHOR_DATE=now git commit -m x', 'sudo -u bob git commit -m x', 'command git commit -m x', 'nohup git commit -m x', 'timeout 30 git commit -m x']) {
+    assert.equal(parseCommitSha(wrapped, '[main 9f3c2a1] x')?.sha, '9f3c2a1', wrapped);
+  }
   assert.equal(parseCommitSha('git -c user.name=x commit -qm y && git log -1 --oneline', '[main 9f3c2a1] y')?.sha, '9f3c2a1');
 });
 
@@ -75,4 +78,6 @@ test('commitByTime needs exactly one git commit whose hooks bracket the commit s
   assert.deepEqual(commitByTime(100, [commit, at('git commit -qam y', 98, 101)]), { match: null, candidates: 2 });
   assert.equal(commitByTime(100, [at('echo "git commit" && git status', 99, 101)]).candidates, 0);
   assert.equal(commitByTime(100, [at('cd app && GIT_EDITOR=true git -C . commit --no-edit', 99, 101)]).candidates, 1);
+  assert.equal(commitByTime(100, [at('git commit --dry-run -m x', 99, 101)]).candidates, 0);
+  assert.equal(commitByTime(100, [at('git merge --abort', 99, 101)]).candidates, 0);
 });

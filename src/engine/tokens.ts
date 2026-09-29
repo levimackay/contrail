@@ -27,7 +27,32 @@ const INSTALL_VERBS: Record<string, string[]> = {
   pip: ['install'], pip3: ['install'], cargo: ['add'], go: ['get'], gem: ['install'], brew: ['install'], uv: ['add'],
 };
 const RUNNERS = new Set(['npx', 'bunx', 'pnpx', 'uvx']);
-const WRAPPERS = new Set(['sudo', 'env', 'time', 'nohup', 'command', 'exec']);
+const WRAPPERS = new Set(['sudo', 'env', 'time', 'nohup', 'command', 'exec', 'nice', 'timeout']);
+/** Wrapper options that take a value: sudo -u bob, env -u VAR, nice -n 10. */
+const WRAPPER_VALUE_OPTIONS = new Set(['sudo -u', 'sudo -g', 'sudo -C', 'sudo -h', 'sudo -p', 'env -u', 'env -C', 'nice -n', 'timeout -s', 'timeout -k']);
+
+/**
+ * The command a segment really runs: `sudo -u bob env FOO=1 time git commit` → git commit.
+ * Drops VAR=value assignments and wrappers with their options (and timeout's duration).
+ */
+export function unwrapCommand(words: string[]): string[] {
+  let argv = words;
+  for (let guard = 0; guard < 8 && argv.length; guard++) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0]!)) {
+      argv = argv.slice(1);
+      continue;
+    }
+    const wrapper = basename(argv[0]!);
+    if (!WRAPPERS.has(wrapper)) break;
+    argv = argv.slice(1);
+    while (argv.length && argv[0]!.startsWith('-') && argv[0] !== '-') {
+      const option = argv[0]!;
+      argv = argv.slice(WRAPPER_VALUE_OPTIONS.has(`${wrapper} ${option}`) ? 2 : 1);
+    }
+    if (wrapper === 'timeout' && argv.length) argv = argv.slice(1);
+  }
+  return argv;
+}
 const URL_RE = /https?:\/\/[^\s'"<>)\]]+/g;
 const WORD_RE = /[A-Za-z0-9_@][A-Za-z0-9_\-./@:]*[A-Za-z0-9_]/g;
 const MAX_HINTS = 20;
@@ -163,8 +188,7 @@ function looksLikePath(s: string): boolean {
 function bash(command: string, b: Collector): void {
   let group = 0;
   for (const seg of segments(command)) {
-    let argv = seg.words;
-    while (argv.length && (WRAPPERS.has(basename(argv[0]!)) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0]!))) argv = argv.slice(1);
+    const argv = unwrapCommand(seg.words);
     if (argv.length === 0) continue;
     const prog = basename(argv[0]!);
     const args = argv.slice(1);

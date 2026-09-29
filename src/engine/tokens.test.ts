@@ -80,3 +80,11 @@ test('an action has at most 40 targets however long its command', () => {
   const many = 'npm install ' + Array.from({ length: 200 }, (_, i) => `pkg-${i}`).join(' ');
   assert.equal(texts('Bash', { command: many }).length, 40);
 });
+
+test('wrappers and their options are not the command', async () => {
+  const { unwrapCommand } = await import('./tokens.ts');
+  assert.deepEqual(unwrapCommand(['sudo', '-u', 'bob', 'env', 'FOO=1', 'time', 'npm', 'install', 'x']), ['npm', 'install', 'x']);
+  assert.deepEqual(unwrapCommand(['timeout', '-k', '5', '30', 'git', 'push']), ['git', 'push']);
+  assert.deepEqual(unwrapCommand(['nice', '-n', '10', 'make']), ['make']);
+  assert.deepEqual(unwrapCommand(['git', 'status']), ['git', 'status']);
+});

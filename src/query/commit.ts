@@ -48,7 +48,7 @@ export function findCommit(db: Db, sha: string, cwd?: string, repoKey?: string):
         `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
                 json_extract(payload, '$.tool_input.command') AS command
            FROM events
-          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse')
+          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')
             AND captured_us BETWEEN ? AND ? ${repoKey ? 'AND repo_key = ?' : ''}`,
         info.sec * 1e6 - window,
         info.sec * 1e6 + window,

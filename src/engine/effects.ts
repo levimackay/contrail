@@ -1,6 +1,6 @@
 import { basename, isAbsolute, resolve } from 'node:path';
 import { hostPath } from '../util.ts';
-import { shellSegments } from './tokens.ts';
+import { shellSegments, unwrapCommand } from './tokens.ts';
 import type { Commit } from './types.ts';
 
 const COMMIT_LINE = /^\[([^\s\]]+)(?: \([^)]*\))? ([0-9a-f]{7,40})\] (.*)$/m;
@@ -19,9 +19,10 @@ export function parseCommitSha(command: string, stdout: string): Commit | null {
 /** True when some segment of a shell command runs git commit (or cherry-pick, revert, merge), not just names it. */
 export function runsGitCommit(command: string): boolean {
   return shellSegments(command).some(seg => {
-    let words = seg.words.filter(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
-    if (words[0] === 'sudo') words = words.slice(1);
+    const words = unwrapCommand(seg.words);
     if (basename(words[0] ?? '') !== 'git') return false;
+    // --dry-run, --abort and --quit never make a commit.
+    if (words.some(w => w === '--dry-run' || w === '--abort' || w === '--quit')) return false;
     for (let i = 1; i < words.length; i++) {
       const w = words[i]!;
       if (w === '-C' || w === '-c') i++;

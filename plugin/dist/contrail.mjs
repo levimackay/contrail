@@ -675,7 +675,26 @@ var INSTALL_VERBS = {
   uv: ["add"]
 };
 var RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx", "pnpx", "uvx"]);
-var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "env", "time", "nohup", "command", "exec"]);
+var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "env", "time", "nohup", "command", "exec", "nice", "timeout"]);
+var WRAPPER_VALUE_OPTIONS = /* @__PURE__ */ new Set(["sudo -u", "sudo -g", "sudo -C", "sudo -h", "sudo -p", "env -u", "env -C", "nice -n", "timeout -s", "timeout -k"]);
+function unwrapCommand(words2) {
+  let argv = words2;
+  for (let guard = 0; guard < 8 && argv.length; guard++) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0])) {
+      argv = argv.slice(1);
+      continue;
+    }
+    const wrapper = basename(argv[0]);
+    if (!WRAPPERS.has(wrapper)) break;
+    argv = argv.slice(1);
+    while (argv.length && argv[0].startsWith("-") && argv[0] !== "-") {
+      const option = argv[0];
+      argv = argv.slice(WRAPPER_VALUE_OPTIONS.has(`${wrapper} ${option}`) ? 2 : 1);
+    }
+    if (wrapper === "timeout" && argv.length) argv = argv.slice(1);
+  }
+  return argv;
+}
 var URL_RE = /https?:\/\/[^\s'"<>)\]]+/g;
 var WORD_RE = /[A-Za-z0-9_@][A-Za-z0-9_\-./@:]*[A-Za-z0-9_]/g;
 var MAX_HINTS = 20;
@@ -791,8 +810,7 @@ function looksLikePath(s) {
 function bash(command, b) {
   let group = 0;
   for (const seg of segments(command)) {
-    let argv = seg.words;
-    while (argv.length && (WRAPPERS.has(basename(argv[0])) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0]))) argv = argv.slice(1);
+    const argv = unwrapCommand(seg.words);
     if (argv.length === 0) continue;
     const prog = basename(argv[0]);
     const args = argv.slice(1);
@@ -969,9 +987,9 @@ function parseCommitSha(command, stdout) {
 }
 function runsGitCommit(command) {
   return shellSegments(command).some((seg) => {
-    let words2 = seg.words.filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
-    if (words2[0] === "sudo") words2 = words2.slice(1);
+    const words2 = unwrapCommand(seg.words);
     if (basename2(words2[0] ?? "") !== "git") return false;
+    if (words2.some((w) => w === "--dry-run" || w === "--abort" || w === "--quit")) return false;
     for (let i = 1; i < words2.length; i++) {
       const w = words2[i];
       if (w === "-C" || w === "-c") i++;
@@ -1795,7 +1813,7 @@ function findCommit(db, sha, cwd, repoKey) {
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
                 json_extract(payload, '$.tool_input.command') AS command
            FROM events
-          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse')
+          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')
             AND captured_us BETWEEN ? AND ? ${repoKey ? "AND repo_key = ?" : ""}`,
       info.sec * 1e6 - window,
       info.sec * 1e6 + window,

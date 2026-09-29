@@ -1,6 +1,7 @@
 import type { CommitFile } from '../engine/effects.ts';
 import type { Finding } from '../engine/risks.ts';
-import type { Action, Commit, Explanation, Graph, Grade, Input, TokenTrace } from '../engine/types.ts';
+import { headlineTrace, type TreeNode, type TreeRoot } from '../engine/tree.ts';
+import type { Action, Commit, Explanation, Graph, Grade, Input } from '../engine/types.ts';
 import { clip, displayPath } from '../util.ts';
 import { callId, PLAIN, type Style } from './style.ts';
 import { describe, originWording } from './why.ts';
@@ -109,9 +110,42 @@ function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Ma
   return lines;
 }
 
-function headline(e: Explanation): TokenTrace | undefined {
-  const found = (t: TokenTrace) => t.links.some(l => l.grade !== 'UNKNOWN');
-  return e.traces.find(t => t.token.role === 'target' && found(t)) ?? e.traces.find(found);
+const headline = headlineTrace;
+
+/** trace --tree: each action under the call whose output first held its headline value. */
+export function renderTree(g: Graph, forest: TreeRoot[], omitted: number, s: Style = PLAIN): string {
+  const out: string[] = [];
+  const sessionId = g.actions[0]?.scope.sessionId ?? '';
+  out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(g.env.cwd)}`);
+  out.push(s.dim('Each action sits under the call whose output first held its headline value. Data flow, not the agent\'s reasons.'));
+  for (const root of forest) {
+    out.push('', rootLine(root, g, s));
+    root.children.forEach((child, i) => nodeLines(child, '', i === root.children.length - 1, g, s, out));
+  }
+  if (omitted) out.push('', s.dim(`${omitted} later actions are not shown; run contrail trace for the full timeline.`));
+  out.push('', s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
+  return `${out.join('\n')}\n`;
+}
+
+function rootLine(root: TreeRoot, g: Graph, s: Style): string {
+  if (root.kind === 'unknown') return s.bold('no observed source');
+  if (root.kind === 'nothing') return s.bold('nothing to trace') + s.dim(' (no values in these calls to follow)');
+  const src = root.source!;
+  const prompt = src.origin === 'prompt' ? g.prompts.find(p => `prompt:${p.promptId}` === src.id) : undefined;
+  const what = prompt ? `${src.label}  "${clip(prompt.text, 70)}"` : src.label;
+  return `${s.bold(what)}  ${src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`;
+}
+
+function nodeLines(node: TreeNode, prefix: string, last: boolean, g: Graph, s: Style, out: string[]): void {
+  const a = node.action;
+  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : '';
+  const failed = a.status === 'failed' || a.status === 'interrupted' ? s.flag(` ${a.status.toUpperCase()}`) : '';
+  const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : '';
+  const external = node.source?.trust === 'external' ? ` ${s.flag('(external)')}` : '';
+  const via = node.link && node.token ? `  ${s.dim('←')} ${s.grade(node.link.grade, 0).trim()} ${node.token}${line}${external}` : '';
+  out.push(`${s.dim(prefix + (last ? '└── ' : '├── '))}${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kindOf(a), 7)} ${clip(describe(a, g), 60)}${who}${failed}${via}`);
+  const next = prefix + (last ? '    ' : '│   ');
+  node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
 }
 
 /** Recent sessions with what they did at a glance. */

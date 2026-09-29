@@ -1350,6 +1350,34 @@ function rankFindings(findings) {
   return [...findings].sort((a, b) => weight(a) - weight(b) || b.action.preSeq - a.action.preSeq);
 }
 
+// src/engine/tree.ts
+function headlineTrace(e) {
+  const found = (t) => t.links.some((l) => l.grade !== "UNKNOWN");
+  return e.traces.find((t) => t.token.role === "target" && found(t)) ?? e.traces.find(found);
+}
+function trailForest(g, explanations) {
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  const nodes = /* @__PURE__ */ new Map();
+  const roots = /* @__PURE__ */ new Map();
+  const rootFor = (key, make) => roots.get(key) ?? roots.set(key, make()).get(key);
+  for (const action of [...g.actions].sort((a, b) => a.preSeq - b.preSeq)) {
+    const e = explanations.get(action.id);
+    if (!e) continue;
+    const head = headlineTrace(e);
+    const link = head?.links.find((l) => l.grade !== "UNKNOWN") ?? null;
+    const source = link?.to ? inputs.get(link.to) : void 0;
+    const node = { action, token: head?.token.text ?? null, link, source: source ?? null, children: [] };
+    nodes.set(action.id, node);
+    const parent = source?.producedBy && source.producedBy !== action.id ? nodes.get(source.producedBy) : void 0;
+    if (parent) parent.children.push(node);
+    else if (source) rootFor(source.id, () => ({ kind: "source", source, children: [] })).children.push(node);
+    else if (e.traces.length) rootFor("unknown", () => ({ kind: "unknown", source: null, children: [] })).children.push(node);
+    else rootFor("nothing", () => ({ kind: "nothing", source: null, children: [] })).children.push(node);
+  }
+  const order = (r) => r.kind === "source" ? r.source?.availableAt ?? 0 : r.kind === "unknown" ? 1e12 : 1e12 + 1;
+  return [...roots.values()].sort((a, b) => order(a) - order(b));
+}
+
 // src/errors.ts
 var ContrailError = class extends Error {
   name = "ContrailError";
@@ -2485,9 +2513,39 @@ function actionLines(a, g, e, inputs, s) {
   }
   return lines;
 }
-function headline2(e) {
-  const found = (t) => t.links.some((l) => l.grade !== "UNKNOWN");
-  return e.traces.find((t) => t.token.role === "target" && found(t)) ?? e.traces.find(found);
+var headline2 = headlineTrace;
+function renderTree(g, forest, omitted, s = PLAIN) {
+  const out = [];
+  const sessionId = g.actions[0]?.scope.sessionId ?? "";
+  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(g.env.cwd)}`);
+  out.push(s.dim("Each action sits under the call whose output first held its headline value. Data flow, not the agent's reasons."));
+  for (const root of forest) {
+    out.push("", rootLine(root, g, s));
+    root.children.forEach((child, i) => nodeLines(child, "", i === root.children.length - 1, g, s, out));
+  }
+  if (omitted) out.push("", s.dim(`${omitted} later actions are not shown; run contrail trace for the full timeline.`));
+  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
+  return `${out.join("\n")}
+`;
+}
+function rootLine(root, g, s) {
+  if (root.kind === "unknown") return s.bold("no observed source");
+  if (root.kind === "nothing") return s.bold("nothing to trace") + s.dim(" (no values in these calls to follow)");
+  const src = root.source;
+  const prompt = src.origin === "prompt" ? g.prompts.find((p) => `prompt:${p.promptId}` === src.id) : void 0;
+  const what = prompt ? `${src.label}  "${clip(prompt.text, 70)}"` : src.label;
+  return `${s.bold(what)}  ${src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`;
+}
+function nodeLines(node, prefix, last, g, s, out) {
+  const a = node.action;
+  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
+  const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : "";
+  const external = node.source?.trust === "external" ? ` ${s.flag("(external)")}` : "";
+  const via = node.link && node.token ? `  ${s.dim("\u2190")} ${s.grade(node.link.grade, 0).trim()} ${node.token}${line}${external}` : "";
+  out.push(`${s.dim(prefix + (last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 "))}${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kindOf(a), 7)} ${clip(describe(a, g), 60)}${who}${failed}${via}`);
+  const next = prefix + (last ? "    " : "\u2502   ");
+  node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
 }
 function renderSessions(sessions2, s = PLAIN) {
   if (!sessions2.length) return "No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n";
@@ -2779,6 +2837,7 @@ var OPTIONS = {
   session: { type: "string" },
   limit: { type: "string" },
   all: { type: "boolean" },
+  tree: { type: "boolean" },
   "from-hook": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -2792,7 +2851,8 @@ Usage:
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source
-        [--writes | --shell | --network | --mcp | --subagents | --instructions]
+        [--writes | --shell | --network | --mcp | --subagents | --instructions | --tree]
+                                    --tree: each action under the call whose output held its value
   contrail risks [--session <id> | --all]
                                     sensitive actions, those tracing to web or MCP content first
   contrail sessions [--limit N] [--all]
@@ -2954,8 +3014,18 @@ async function trace2(flags, io, s) {
   const chosen = FILTERS.filter((f) => flags[f]);
   if (chosen.length > 1) throw new ContrailError(`Pick one filter: ${chosen.map((f) => `--${f}`).join(", ")}`);
   const filter = chosen[0] ?? null;
+  if (flags.tree && filter) throw new ContrailError(`--tree shows the whole session; it does not combine with --${filter}.`);
   return withStore(flags, io, ({ db, repoKey }) => {
     const graph = loadGraph(db, pickSession(db, flags.session, repoKey), io.home);
+    if (flags.tree) {
+      const explanations2 = new Map(graph.actions.slice(0, MAX_EXPLAINED).map((a) => [a.id, explain(a.id, graph)]));
+      const forest = trailForest(graph, explanations2);
+      const omitted = graph.actions.length - explanations2.size;
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}
+`);
+      else io.out(renderTree(graph, forest, omitted, s));
+      return 0;
+    }
     const explanations = /* @__PURE__ */ new Map();
     for (const a of graph.actions) {
       if (explanations.size >= MAX_EXPLAINED) break;
@@ -2967,6 +3037,10 @@ async function trace2(flags, io, s) {
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
   });
+}
+function treeJson(root) {
+  const node = (n) => ({ action: n.action.id, tool: n.action.tool, seq: n.action.preSeq, token: n.token, grade: n.link?.grade ?? null, children: n.children.map(node) });
+  return { kind: root.kind, source: root.source ? { id: root.source.id, label: root.source.label, trust: root.source.trust } : null, children: root.children.map(node) };
 }
 function kindForExplain(tool) {
   if (tool.startsWith("mcp__")) return "MCP";

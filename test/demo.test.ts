@@ -71,6 +71,20 @@ test('trace shows each side effect with where its values came from', async () =>
   assert.doesNotMatch(shell.out, /\bREAD\b/);
 });
 
+test('trace --tree hangs each action under the call whose output held its value', async () => {
+  const r = await run(['trace', '--session', '4f2a', '--tree']);
+  assert.match(r.out, /\nCLAUDE\.md {2}\(local\)\n├── 3 +READ +auth-service\/README\.md {2}← LIKELY auth-service \(line 4\)\n│ {3}└── 12 +SHELL +npm install jwt-decode {2}← LIKELY jwt-decode \(line 13\)\n/);
+  assert.match(r.out, /your prompt p2 {2}"looks good, commit it" {2}\(principal\)\n└── 23 +SHELL +git add -A && git commit/);
+  assert.match(r.out, /nothing to trace.*\n└── 18 +SHELL +npm test/);
+  const injection = await run(['trace', '--session', '9c1e', '--tree']);
+  assert.match(injection.out, /└── 12 +SHELL +cat ~\/\.aws\/credentials .*← LIKELY ~\/\.aws\/credentials \(line 7\) \(external\)/);
+  const json = JSON.parse((await run(['trace', '--session', '4f2a', '--tree', '--json'])).out);
+  assert.equal(json.forest[0].children[0].children[0].action, 't4');
+  const both = await run(['trace', '--tree', '--shell']);
+  assert.equal(both.code, 1);
+  assert.match(both.err, /does not combine with --shell/);
+});
+
 test('export writes the recorded events as JSON', async () => {
   const r = await run(['export', '9c1e']);
   const data = JSON.parse(r.out);
@@ -114,7 +128,7 @@ test('a version 1 database upgrades to the current schema with its rows intact',
 });
 
 test('no report uses causal or accusatory wording of its own', async () => {
-  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['sessions']];
+  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['trace', '--session', '9c1e', '--tree'], ['sessions']];
   for (const argv of views) {
     const own = (await run(argv)).out
       .split('\n')

@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 import { commitContains } from './engine/effects.ts';
 import { explain } from './engine/explain.ts';
 import { assess, rankFindings, sensitivity, type Finding } from './engine/risks.ts';
+import { trailForest, type TreeNode, type TreeRoot } from './engine/tree.ts';
 import type { Explanation, Graph } from './engine/types.ts';
 import { ContrailError } from './errors.ts';
 import { ingest } from './ingest/ingest.ts';
@@ -15,7 +16,7 @@ import { resolveDataDir } from './paths.ts';
 import { commitFiles, findCommit } from './query/commit.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget } from './query/target.ts';
-import { EXPLAINED, matchesFilter, renderCommit, renderRisks, renderSessions, renderTrace, type TraceFilter } from './render/session.ts';
+import { EXPLAINED, matchesFilter, renderCommit, renderRisks, renderSessions, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
 import { PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderWhy } from './render/why.ts';
 import { loadConfig, prune } from './store/retention.ts';
@@ -42,6 +43,7 @@ const OPTIONS = {
   session: { type: 'string' },
   limit: { type: 'string' },
   all: { type: 'boolean' },
+  tree: { type: 'boolean' },
   'from-hook': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
@@ -58,7 +60,8 @@ Usage:
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source
-        [--writes | --shell | --network | --mcp | --subagents | --instructions]
+        [--writes | --shell | --network | --mcp | --subagents | --instructions | --tree]
+                                    --tree: each action under the call whose output held its value
   contrail risks [--session <id> | --all]
                                     sensitive actions, those tracing to web or MCP content first
   contrail sessions [--limit N] [--all]
@@ -235,8 +238,18 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
   const chosen = FILTERS.filter(f => flags[f]);
   if (chosen.length > 1) throw new ContrailError(`Pick one filter: ${chosen.map(f => `--${f}`).join(', ')}`);
   const filter = chosen[0] ?? null;
+  if (flags.tree && filter) throw new ContrailError(`--tree shows the whole session; it does not combine with --${filter}.`);
   return withStore(flags, io, ({ db, repoKey }) => {
     const graph = loadGraph(db, pickSession(db, flags.session as string | undefined, repoKey), io.home);
+    if (flags.tree) {
+      // Every call, reads included: a read is often the parent of what came after it.
+      const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map(a => [a.id, explain(a.id, graph)]));
+      const forest = trailForest(graph, explanations);
+      const omitted = graph.actions.length - explanations.size;
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
+      else io.out(renderTree(graph, forest, omitted, s));
+      return 0;
+    }
     const explanations = new Map<string, Explanation>();
     for (const a of graph.actions) {
       if (explanations.size >= MAX_EXPLAINED) break;
@@ -247,6 +260,11 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
   });
+}
+
+function treeJson(root: TreeRoot): unknown {
+  const node = (n: TreeNode): unknown => ({ action: n.action.id, tool: n.action.tool, seq: n.action.preSeq, token: n.token, grade: n.link?.grade ?? null, children: n.children.map(node) });
+  return { kind: root.kind, source: root.source ? { id: root.source.id, label: root.source.label, trust: root.source.trust } : null, children: root.children.map(node) };
 }
 
 function kindForExplain(tool: string): string {

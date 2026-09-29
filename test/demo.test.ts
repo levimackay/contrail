@@ -233,3 +233,17 @@ test('report escapes recorded text, so a hostile page cannot inject markup into 
   assert.doesNotMatch(html, /<script|<img /);
   assert.match(html, /&lt;script&gt;alert\(2\)&lt;\/script&gt;/);
 });
+
+test('statusline prints one line for the session Claude Code names on stdin, and never fails', async () => {
+  const line = async (stdin: string, env: NodeJS.ProcessEnv = { NO_COLOR: '1' }) => {
+    let out = '';
+    const code = await main(['statusline', '--data', demo.data], { out: s => (out += s), err: () => {}, cwd: demo.repo, env, home: '/Users/dev', stdin: () => stdin });
+    assert.equal(code, 0);
+    return out;
+  };
+  assert.equal(await line('{"session_id":"9c1e7b52-80a4-4d3f-b6e2-71f09d4c8a16"}'), 'contrail ▲ 2 from external content · 5 calls\n');
+  assert.equal(await line('{"session_id":"4f2a91c7-3d0e-4b8a-9f61-2c7d0a1e5b33"}'), 'contrail △ 1 not named by you · 7 calls\n');
+  assert.equal(await line('{"session_id":"not-recorded-yet"}'), 'contrail recording\n');
+  assert.equal(await line('not json'), 'contrail\n');
+  assert.match(await line('{"session_id":"9c1e7b52-80a4-4d3f-b6e2-71f09d4c8a16"}', {}), /\x1b\[1;35m▲ 2 from external content/, 'colored by default');
+});

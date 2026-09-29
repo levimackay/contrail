@@ -150,6 +150,23 @@ function nodeLines(node: TreeNode, prefix: string, last: boolean, g: Graph, s: S
   node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
 }
 
+/**
+ * One status-bar line for the current session: sensitive actions whose values trace to external
+ * content, those you did not name, and how many calls were recorded. Null: nothing recorded yet.
+ */
+export function renderStatusline(g: Graph | null, findings: Finding[], s: Style = PLAIN): string {
+  const name = s.dim('contrail');
+  if (!g) return `${name} ${s.dim('recording')}`;
+  const external = findings.filter(f => f.externalUpstream).length;
+  const unnamed = findings.filter(f => !f.externalUpstream && f.requested === 'NOT_NAMED').length;
+  const parts = [
+    external ? s.flag(`▲ ${external} from external content`) : '',
+    unnamed ? s.bold(`△ ${unnamed} not named by you`) : '',
+    s.dim(`${g.actions.length} call${g.actions.length === 1 ? '' : 's'}`),
+  ].filter(Boolean);
+  return `${name} ${parts.join(s.dim(' · '))}`;
+}
+
 /** Recent sessions with what they did at a glance. */
 export function renderSessions(sessions: SessionSummary[], s: Style = PLAIN): string {
   if (!sessions.length) return 'No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n';

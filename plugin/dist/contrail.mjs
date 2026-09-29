@@ -2786,6 +2786,18 @@ function nodeLines(node, prefix, last, g, s, out) {
   const next = prefix + (last ? "    " : "\u2502   ");
   node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
 }
+function renderStatusline(g, findings, s = PLAIN) {
+  const name = s.dim("contrail");
+  if (!g) return `${name} ${s.dim("recording")}`;
+  const external = findings.filter((f) => f.externalUpstream).length;
+  const unnamed = findings.filter((f) => !f.externalUpstream && f.requested === "NOT_NAMED").length;
+  const parts = [
+    external ? s.flag(`\u25B2 ${external} from external content`) : "",
+    unnamed ? s.bold(`\u25B3 ${unnamed} not named by you`) : "",
+    s.dim(`${g.actions.length} call${g.actions.length === 1 ? "" : "s"}`)
+  ].filter(Boolean);
+  return `${name} ${parts.join(s.dim(" \xB7 "))}`;
+}
 function renderSessions(sessions2, s = PLAIN) {
   if (!sessions2.length) return "No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n";
   const head = ["SESSION", "LAST ACTIVE", "TURNS", "READS", "WRITES", "SHELL", "WEB/MCP", "SUBAGENTS", "FLAGGED", "FIRST PROMPT"];
@@ -3470,6 +3482,7 @@ Usage:
                                     a session's recorded events as JSON, or as OpenTelemetry traces
   contrail report [<session> | last] [-o file.html]
                                     a session as one self-contained HTML page
+  contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
@@ -3514,6 +3527,7 @@ ${USAGE}`);
     sessions: () => sessions(flags, io, style),
     export: (args) => exportSession(args, flags, io),
     report: (args) => report(args, flags, io),
+    statusline: () => statusline(flags, io),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io)
@@ -3563,7 +3577,7 @@ async function withStore(flags, io, use) {
 }
 async function why(args, flags, io, s) {
   if (args[0] === "commit") return whyCommit(args.slice(1), flags, io, s);
-  const target = parseTarget(flags.stdin ? [readFileSync4(0, "utf8")] : args, io.cwd);
+  const target = parseTarget(flags.stdin ? [readStdin(io)] : args, io.cwd);
   if (target.kind === "command" && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(" ").slice(1), flags, io, s);
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findTarget(db, target, repoKey);
@@ -3746,6 +3760,25 @@ async function report(args, flags, io) {
     return 0;
   });
 }
+var readStdin = (io) => io.stdin ? io.stdin() : readFileSync4(0, "utf8");
+async function statusline(flags, io) {
+  const s = io.env.NO_COLOR ? PLAIN : COLOR;
+  try {
+    const input = JSON.parse(readStdin(io) || "{}");
+    const sessionId = typeof input.session_id === "string" ? input.session_id : void 0;
+    const line = await withStore(flags, { ...io, cwd: typeof input.cwd === "string" ? input.cwd : io.cwd }, ({ db, repoKey, hashToken }) => {
+      if (!sessionId || !db.get("SELECT 1 FROM events WHERE session_id = ? LIMIT 1", sessionId)) return renderStatusline(null, [], s);
+      const graph = loadGraph(db, pickSession(db, sessionId, repoKey), io.home, hashToken);
+      return renderStatusline(graph, findingsFor(graph), s);
+    });
+    io.out(`${line}
+`);
+  } catch {
+    io.out(`${s.dim("contrail")}
+`);
+  }
+  return 0;
+}
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
@@ -3799,6 +3832,7 @@ async function doctor(flags, io) {
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1e3)).toISOString() : "never"}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ""}`,
       `content          ${config.storeContent ? "stored as redacted text" : "stored as keyed hashes only (store_content: false)"}`,
+      `launcher         ${existsSync3(join5(dataDir, "bin", "contrail")) ? join5(dataDir, "bin", "contrail") : "written at the next session start"}`,
       ...hook ? [`capture hook     ${hook} ms per event (median of 5)`] : [],
       stats.events === 0 && backlog === 0 ? "No events yet. Run a Claude Code session with the plugin enabled, then check again." : "Recording and queries work."
     ];

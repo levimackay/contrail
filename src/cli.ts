@@ -17,8 +17,8 @@ import { resolveDataDir } from './paths.ts';
 import { commitFiles, findCommit } from './query/commit.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget } from './query/target.ts';
-import { EXPLAINED, matchesFilter, renderCommit, renderRisks, renderSessions, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
-import { PLAIN, styleFor, type Style } from './render/style.ts';
+import { EXPLAINED, matchesFilter, renderCommit, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
+import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
 import { toOtlp } from './render/otel.ts';
 import { renderWhy } from './render/why.ts';
@@ -34,6 +34,8 @@ export interface Io {
   env: NodeJS.ProcessEnv;
   home: string;
   isTTY?: boolean;
+  /** Standard input, read once; defaults to the process's. */
+  stdin?: () => string;
 }
 
 const FILTERS: TraceFilter[] = ['writes', 'shell', 'network', 'mcp', 'subagents', 'instructions'];
@@ -76,6 +78,7 @@ Usage:
                                     a session's recorded events as JSON, or as OpenTelemetry traces
   contrail report [<session> | last] [-o file.html]
                                     a session as one self-contained HTML page
+  contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
@@ -120,6 +123,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     sessions: () => sessions(flags, io, style),
     export: args => exportSession(args, flags, io),
     report: args => report(args, flags, io),
+    statusline: () => statusline(flags, io),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io),
@@ -175,7 +179,7 @@ async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Pro
 
 async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
   if (args[0] === 'commit') return whyCommit(args.slice(1), flags, io, s);
-  const target = parseTarget(flags.stdin ? [readFileSync(0, 'utf8')] : args, io.cwd);
+  const target = parseTarget(flags.stdin ? [readStdin(io)] : args, io.cwd);
   if (target.kind === 'command' && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(' ').slice(1), flags, io, s);
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findTarget(db, target, repoKey);
@@ -378,6 +382,30 @@ async function report(args: string[], flags: Flags, io: Io): Promise<number> {
   });
 }
 
+const readStdin = (io: Io) => (io.stdin ? io.stdin() : readFileSync(0, 'utf8'));
+
+/**
+ * Claude Code runs a statusLine command after each message with the session as JSON on stdin.
+ * One short line for this session, and never an error: a status bar that breaks is worse than
+ * none, so any failure prints just the name.
+ */
+async function statusline(flags: Flags, io: Io): Promise<number> {
+  const s = io.env.NO_COLOR ? PLAIN : COLOR;
+  try {
+    const input = JSON.parse(readStdin(io) || '{}') as Record<string, unknown>;
+    const sessionId = typeof input.session_id === 'string' ? input.session_id : undefined;
+    const line = await withStore(flags, { ...io, cwd: typeof input.cwd === 'string' ? input.cwd : io.cwd }, ({ db, repoKey, hashToken }) => {
+      if (!sessionId || !db.get('SELECT 1 FROM events WHERE session_id = ? LIMIT 1', sessionId)) return renderStatusline(null, [], s);
+      const graph = loadGraph(db, pickSession(db, sessionId, repoKey), io.home, hashToken);
+      return renderStatusline(graph, findingsFor(graph), s);
+    });
+    io.out(`${line}\n`);
+  } catch {
+    io.out(`${s.dim('contrail')}\n`);
+  }
+  return 0;
+}
+
 async function ingestCommand(flags: Flags, io: Io): Promise<number> {
   const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
   mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
@@ -430,6 +458,7 @@ async function doctor(flags: Flags, io: Io): Promise<number> {
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1000)).toISOString() : 'never'}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ''}`,
       `content          ${config.storeContent ? 'stored as redacted text' : 'stored as keyed hashes only (store_content: false)'}`,
+      `launcher         ${existsSync(join(dataDir, 'bin', 'contrail')) ? join(dataDir, 'bin', 'contrail') : 'written at the next session start'}`,
       ...(hook ? [`capture hook     ${hook} ms per event (median of 5)`] : []),
       stats.events === 0 && backlog === 0
         ? 'No events yet. Run a Claude Code session with the plugin enabled, then check again.'

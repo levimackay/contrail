@@ -1,5 +1,6 @@
 import type { Action, Effect, Explanation, Graph, Input, Link, TokenTrace } from '../engine/types.ts';
 import { bestPerGroup } from '../engine/explain.ts';
+import { MAX_DEPTH } from '../engine/trace.ts';
 import { clip, displayPath, str } from '../util.ts';
 import { callId, PLAIN, type Style } from './style.ts';
 
@@ -110,6 +111,10 @@ function trace(t: TokenTrace, depth: number, out: string[], inputs: Map<string, 
           : 'a compaction summary is agent-written; the same value before the compaction:';
     out.push(s.dim(`${pad}  ${heading}`));
     trace(u.trace, depth + 2, out, inputs, s);
+  }
+  if (t.truncated) {
+    const next = t.truncated.next ? `; contrail why ${callId(t.truncated.next)} picks it up from there` : '';
+    out.push(s.dim(`${pad}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
   }
 }
 

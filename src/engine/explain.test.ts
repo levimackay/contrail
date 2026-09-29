@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { authSession, call, d, session, WHO } from '../../test/fixtures/synthetic.ts';
+import { authSession, call, d, longTrail, session, WHO } from '../../test/fixtures/synthetic.ts';
 import { buildGraph } from '../graph/build.ts';
 import { explain } from './explain.ts';
 import { traceToken } from './trace.ts';
@@ -223,6 +223,26 @@ test("a background subagent's report arrives as a prompt, and is never your word
   assert.equal(t.upstream?.kind, 'conduit');
   assert.equal(t.upstream?.via?.id, 'a1');
   assert.equal(t.upstream?.trace.links[0]?.to, 'out:s1');
+});
+
+test('a trail cut off at the hop limit says so and names the call to continue from', () => {
+  const g = buildGraph(longTrail(), WHO);
+  const chain: string[] = [];
+  let last;
+  for (let t = explain('g4', g).traces.find(x => x.token.text === 'pinned-builder-9'); t; t = t.upstream?.trace) {
+    chain.push(`${t.token.text} <- ${t.links[0]?.to}`);
+    last = t;
+  }
+  assert.deepEqual(chain, [
+    'pinned-builder-9 <- out:g3',
+    'tools/buildkit/README.md <- out:g2',
+    'tools/buildkit <- out:g1',
+    'docs.y.example/build <- out:g0',
+  ]);
+  assert.deepEqual(last?.truncated, { next: 'g0' });
+  // The call it names picks the trail up: g0's url is your words.
+  const rest = explain('g0', g).traces.find(x => x.token.text === 'docs.y.example/index');
+  assert.equal(rest?.links[0]?.to, 'prompt:p1');
 });
 
 test('a slash command is your words; the text it expands to is unobserved unless recorded', () => {

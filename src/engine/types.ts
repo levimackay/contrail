@@ -190,6 +190,11 @@ export interface TokenTrace {
    *   compaction  the credited text is a compaction summary, so the same name is looked for before it
    */
   upstream: { kind: 'call' | 'conduit' | 'compaction'; via: Action | null; trace: TokenTrace } | null;
+  /**
+   * Set when the credited source has a further step back that the hop limit left unfollowed.
+   * next is the call whose own trail picks up from there, when one call does.
+   */
+  truncated?: { next: string | null };
 }
 
 export interface Explanation {

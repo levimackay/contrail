@@ -160,7 +160,7 @@ You never named `jwt-decode`. The only place it appeared in the agent's context 
 - **Header.** The action, its session, turn and tool call, and whether the main agent or a subagent ran it.
 - **Requested?** Whether your own sentences name the target. Text inside fenced code blocks counts as pasted material, not your words. If the sentence that names it also contains a negation such as "don't" or "instead of", the verdict is downgraded and a warning is printed.
 - **Turn.** The prompt the action ran under, recorded by Claude Code.
-- **Where the values came from.** For each significant string in the arguments (a package name, a path, a URL), the input where it first appeared in the agent's context, with the source line quoted. The trail is followed upstream: to the call that fetched the source, and through anything the agent wrote itself (see [conduits](#origins-and-trust)).
+- **Where the values came from.** For each significant string in the arguments (a package name, a path, a URL), the input where it first appeared in the agent's context, with the source line quoted. The trail is followed upstream: to the call that fetched the source, and through anything the agent wrote itself (see [conduits](#origins-and-trust)). After three steps the report stops and names the call whose own trail picks up from there.
 - **Searched.** How many inputs were checked. A value with no match is reported as UNKNOWN, never hidden.
 - **Effects.** What the action changed, when Claude Code reported it, and what it was expected to change when it did not.
 - **Weakest link.** The grade of the whole trail.
@@ -365,7 +365,7 @@ That is enforced in code, not left to tone:
 | R2 | Which inputs count as available to the agent at an action (below). |
 | R3 | Where a token's value came from: one source LIKELY, two or three POSSIBLE, four or more UNKNOWN. |
 | R4 | No observed source: UNKNOWN, which is not evidence of no influence. |
-| R5 | One step further upstream from a credited source, up to three hops. |
+| R5 | One step further upstream from a credited source, up to three hops. A trail that goes further says so and names the call to run `why` on next. |
 | R6 | Effects a command is expected to have (an installer and its lockfile, a redirect target, the host a `curl` names). POSSIBLE, worded "expected, not observed". |
 | R7 | A commit's files joined to earlier agent changes. LIKELY at best. |
 | R8 | Whether your own sentences name the action's target. |

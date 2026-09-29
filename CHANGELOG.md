@@ -9,6 +9,10 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 - The `/contrail:sessions` skill: recent sessions in this repository, from inside Claude Code.
 - `contrail why <call id>`: the trail behind any recorded tool call (a Read, a WebFetch, a search), by the id reports print (`toolu…ALhq1` or `toolu...ALhq1`) or in full.
 
+### Changed
+
+- A trail longer than the three steps one report follows now says so, and names the call to run `why` on next, instead of ending as if it started there.
+
 ## [0.3.0] - 2026-09-29
 
 ### Added

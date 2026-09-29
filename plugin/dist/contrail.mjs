@@ -1281,11 +1281,23 @@ function traceAt(token, probe, fromId, firstUseInfo, g, depth, visited) {
     links,
     upstream: null
   };
-  if (depth >= MAX_DEPTH) return trace3;
   const best = links.find((l) => l.grade === "LIKELY") ?? links.find((l) => l.firstSeen);
   const source = best?.to ? g.inputs.find((i) => i.id === best.to) : void 0;
-  if (source) trace3.upstream = followSource(token, source, g, depth + 1, visited);
+  if (!source) return trace3;
+  if (depth >= MAX_DEPTH) {
+    const next = nextStep(token, source, g, visited);
+    if (next !== void 0) trace3.truncated = { next };
+    return trace3;
+  }
+  trace3.upstream = followSource(token, source, g, depth + 1, visited);
   return trace3;
+}
+function nextStep(token, source, g, visited) {
+  if (source.origin === "compaction") return visited.has(source.id) ? void 0 : null;
+  if (source.relays) return source.producedBy && !visited.has(`relay:${source.id}`) ? null : void 0;
+  const writer = source.origin === "file" ? agentWriter(token, source, g) : void 0;
+  if (writer && !visited.has(writer.id)) return writer.id;
+  return source.producedBy && !visited.has(source.producedBy) && g.actions.some((a) => a.id === source.producedBy) ? source.producedBy : void 0;
 }
 function followSource(token, source, g, depth, visited) {
   if (source.origin === "compaction") {
@@ -2631,6 +2643,10 @@ function trace(t, depth, out, inputs, s) {
     const heading = u.kind === "call" ? `how the agent came to call ${u.via?.tool} ${callId(u.via?.id ?? "")}:` : u.kind === "conduit" ? `that text was written by the agent (${u.via?.tool} ${callId(u.via?.id ?? "")}); following the same value back:` : "a compaction summary is agent-written; the same value before the compaction:";
     out.push(s.dim(`${pad3}  ${heading}`));
     trace(u.trace, depth + 2, out, inputs, s);
+  }
+  if (t.truncated) {
+    const next = t.truncated.next ? `; contrail why ${callId(t.truncated.next)} picks it up from there` : "";
+    out.push(s.dim(`${pad3}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
   }
 }
 function sourceWording(l, where) {

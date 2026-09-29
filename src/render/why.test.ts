@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { authSession, WHO } from '../../test/fixtures/synthetic.ts';
+import { authSession, longTrail, WHO } from '../../test/fixtures/synthetic.ts';
 import { explain } from '../engine/explain.ts';
 import { buildGraph } from '../graph/build.ts';
 import { FOOTER, HEADING, renderWhy } from './why.ts';
@@ -23,6 +23,15 @@ test('the report for the motivating example states what was observed', () => {
   assert.match(out, /DIRECT {3}package\.json {7}changed while this command ran {2}\[R1 bashEditDiff\]/);
   assert.match(out, /DIRECT {3}package-lock\.json/);
   assert.match(out, /Weakest link on this trail: LIKELY/);
+});
+
+test('a trail cut off at the step limit says so, and names the call to ask next', () => {
+  const g = buildGraph(longTrail(), WHO);
+  const out = renderWhy(explain('g4', g), g);
+  assert.match(out, /only observed in WebFetch of docs\.y\.example\/index/);
+  assert.match(out, /\n {16}the trail goes further back, past the 3-step limit of one report; contrail why g0 picks it up from there\n/);
+  assert.equal(out.match(/the trail goes further back/g)?.length, 1);
+  assert.doesNotMatch(render(), /further back/);
 });
 
 test('every report carries the data-provenance heading and the not-observable footer', () => {

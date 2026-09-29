@@ -1725,9 +1725,10 @@ function gitCommonDir(cwd) {
 // src/paths.ts
 import { existsSync, readdirSync as readdirSync2 } from "node:fs";
 import { join as join2 } from "node:path";
-function resolveDataDir(flag, env, home) {
+function resolveDataDir(flag, env, home, pluginData) {
   if (flag) return flag;
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
+  if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
   const base = join2(home, ".claude", "plugins", "data");
   const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
@@ -2846,6 +2847,7 @@ var MAX_EXPLAINED = 300;
 var OPTIONS = {
   json: { type: "boolean" },
   data: { type: "string" },
+  "plugin-data": { type: "string" },
   stdin: { type: "boolean" },
   session: { type: "string" },
   limit: { type: "string" },
@@ -2879,6 +2881,8 @@ Usage:
 Options:
   --json          machine-readable output (why, trace, risks, sessions)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
+  --plugin-data <dir>
+                  the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
   --stdin         read the why target from standard input (used by the /contrail:why skill)
   -h, --help      show this help
   -v, --version   show the version
@@ -2940,7 +2944,7 @@ ${e.stack ?? String(e)}
   }
 }
 async function withStore(flags, io, use) {
-  const dataDir = resolveDataDir(flags.data, io.env, io.home);
+  const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   let db;
   try {
     mkdirSync(join4(dataDir, "spool"), { recursive: true, mode: 448 });
@@ -3112,7 +3116,7 @@ async function exportSession(args, flags, io) {
   });
 }
 async function ingestCommand(flags, io) {
-  const dataDir = resolveDataDir(flags.data, io.env, io.home);
+  const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   mkdirSync(join4(dataDir, "spool"), { recursive: true, mode: 448 });
   const db = await openDb(join4(dataDir, "contrail.db"));
   try {

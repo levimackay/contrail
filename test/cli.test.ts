@@ -108,3 +108,11 @@ test('an unwritable data directory is a clear error, not a crash', { skip: proce
   assert.equal(r.code, 1);
   assert.match(r.err, /^contrail: Cannot use the data directory/);
 });
+
+test('the data directory resolves as the capture hook does: CONTRAIL_HOME before the plugin directory', async () => {
+  const { resolveDataDir } = await import('../src/paths.ts');
+  assert.equal(resolveDataDir('/flag', { CONTRAIL_HOME: '/home' }, '/Users/dev', '/plugin'), '/flag');
+  assert.equal(resolveDataDir(undefined, { CONTRAIL_HOME: '/home' }, '/Users/dev', '/plugin'), '/home');
+  assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev', '/plugin'), '/plugin');
+  assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev'), '/env');
+});

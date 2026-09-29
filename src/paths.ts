@@ -3,12 +3,15 @@ import { join } from 'node:path';
 import { ContrailError } from './errors.ts';
 
 /**
- * Where recorded events live. Order: --data flag, CONTRAIL_HOME, CLAUDE_PLUGIN_DATA
- * (set inside Claude Code), then the one Contrail directory under ~/.claude/plugins/data.
+ * Where recorded events live. Order: --data, CONTRAIL_HOME, --plugin-data (what the skills
+ * pass: Claude Code's plugin data directory), CLAUDE_PLUGIN_DATA, then the one Contrail
+ * directory under ~/.claude/plugins/data. The capture hook uses the same order, so a query
+ * reads where recording writes.
  */
-export function resolveDataDir(flag: string | undefined, env: NodeJS.ProcessEnv, home: string): string {
+export function resolveDataDir(flag: string | undefined, env: NodeJS.ProcessEnv, home: string, pluginData?: string): string {
   if (flag) return flag;
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
+  if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
 
   const base = join(home, '.claude', 'plugins', 'data');

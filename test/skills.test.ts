@@ -13,6 +13,10 @@ test('every skill is manual-only and may run nothing but the Contrail launcher',
     assert.match(text, /\ndisable-model-invocation: true\n/, name);
     assert.match(text, /\nallowed-tools: Bash\(sh \$\{CLAUDE_PLUGIN_ROOT\}\/bin\/contrail \*\)\n/, name);
     assert.match(text, /exactly as printed/, name);
+    // The permission check refuses shell expansion, so the data directory is plain substitution,
+    // and it must not override CONTRAIL_HOME, which the capture hook honors first.
+    assert.match(text, /contrail \w+ --plugin-data "\$\{CLAUDE_PLUGIN_DATA\}"/, name);
+    assert.doesNotMatch(text, /--data |:-/, name);
   }
 });
 

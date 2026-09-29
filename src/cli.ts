@@ -39,6 +39,7 @@ const MAX_EXPLAINED = 300;
 const OPTIONS = {
   json: { type: 'boolean' },
   data: { type: 'string' },
+  'plugin-data': { type: 'string' },
   stdin: { type: 'boolean' },
   session: { type: 'string' },
   limit: { type: 'string' },
@@ -75,6 +76,8 @@ Usage:
 Options:
   --json          machine-readable output (why, trace, risks, sessions)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
+  --plugin-data <dir>
+                  the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
   --stdin         read the why target from standard input (used by the /contrail:why skill)
   -h, --help      show this help
   -v, --version   show the version
@@ -139,7 +142,7 @@ interface Store {
 }
 
 async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Promise<T>): Promise<T> {
-  const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home);
+  const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
   let db: Db;
   try {
     mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
@@ -331,7 +334,7 @@ async function exportSession(args: string[], flags: Flags, io: Io): Promise<numb
 }
 
 async function ingestCommand(flags: Flags, io: Io): Promise<number> {
-  const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home);
+  const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
   mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
   const db = await openDb(join(dataDir, 'contrail.db'));
   try {

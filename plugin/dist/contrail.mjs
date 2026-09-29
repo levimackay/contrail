@@ -1317,7 +1317,8 @@ function bestPerGroup(traces) {
 }
 
 // src/engine/risks.ts
-var CREDENTIAL_PATH = /(\.aws\/(credentials|config)|\.ssh\/|\bid_(rsa|ed25519|ecdsa)\b|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config|\.gnupg\/|(^|[\s/"'])\.env(\.[\w-]+)?(?=$|[\s"'])|keychain|credentials\.json|secrets?\.(json|ya?ml|env|toml))/i;
+var CREDENTIAL_PATH = /(\.aws\/(credentials|config)|\.ssh\/|\bid_(rsa|ed25519|ecdsa)\b|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config|\.gnupg\/|(^|[\s/"'])\.env(\.[\w-]+)?(?=$|[\s"'])|keychain|credentials\.json|secrets?\.(json|ya?ml|env|toml)|\.git-credentials|\.config\/gh\/hosts\.ya?ml|\.pgpass|\.my\.cnf|\.config\/gcloud\/|\.azure\/|\.vault-token|\.terraform\.d\/credentials|\.boto\b)/i;
+var DUMPS_ENV = /(^|[\s;&|(])(printenv|env)\s{0,8}($|[|;&>)])/;
 var RUNS_REMOTE_CODE = /\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|da)?sh\b|\b(ba|z)?sh\s+<\(\s*(curl|wget)\b|\beval\s+"?\$\((curl|wget)\b/;
 var NETWORK = /(^|[\s;&|(])(curl|wget|nc|ncat|scp|rsync|ssh|sftp|ftp)\s|\bgit\s+push\b|\bgh\s+api\b/;
 var INSTALL = /(^|[\s;&|(])((npm|pnpm|bun)\s+(install|i|add)\s+[^-\s]|yarn\s+add\s|pip3?\s+install\s|uv\s+(add|pip\s+install)\s|cargo\s+add\s|gem\s+install\s|brew\s+install\s|go\s+get\s|npx\s+[^-\s])/;
@@ -1326,7 +1327,7 @@ function sensitivity(action) {
   const kinds = /* @__PURE__ */ new Set();
   if (action.tool === "Bash") {
     const cmd = str(action.input, "command") ?? "";
-    if (CREDENTIAL_PATH.test(cmd)) kinds.add("credentials");
+    if (CREDENTIAL_PATH.test(cmd) || DUMPS_ENV.test(cmd)) kinds.add("credentials");
     if (RUNS_REMOTE_CODE.test(cmd)) kinds.add("runs remote code");
     if (NETWORK.test(cmd)) kinds.add("network");
     if (INSTALL.test(cmd)) kinds.add("install");

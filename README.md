@@ -120,7 +120,7 @@ An action is sensitive when it matches one of these descriptions:
 
 | Kind | Examples |
 |---|---|
-| credentials | a command or file tool touching `~/.aws/credentials`, `~/.ssh/`, `.netrc`, `.npmrc`, `.env`, `.kube/config` |
+| credentials | a command or file tool touching `~/.aws/credentials`, `~/.ssh/`, `.netrc`, `.npmrc`, `.env`, `.kube/config`, `.git-credentials`, the GitHub CLI's `hosts.yml`, `.pgpass`, gcloud or Azure credentials; or `printenv` / a bare `env`, which print every variable |
 | runs remote code | `curl ... \| sh`, `sh <(curl ...)`, `eval "$(curl ...)"` |
 | network | `curl`, `wget`, `scp`, `rsync`, `ssh`, `git push`, `gh api` |
 | install | `npm install`, `pnpm add`, `pip install`, `cargo add`, `brew install`, `npx` |

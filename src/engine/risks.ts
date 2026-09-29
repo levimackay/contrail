@@ -5,7 +5,9 @@ import type { Action, Explanation, Graph, Input, Link, TokenTrace, Verdict } fro
 export type Sensitivity = 'credentials' | 'runs remote code' | 'network' | 'install' | 'destructive';
 
 const CREDENTIAL_PATH =
-  /(\.aws\/(credentials|config)|\.ssh\/|\bid_(rsa|ed25519|ecdsa)\b|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config|\.gnupg\/|(^|[\s/"'])\.env(\.[\w-]+)?(?=$|[\s"'])|keychain|credentials\.json|secrets?\.(json|ya?ml|env|toml))/i;
+  /(\.aws\/(credentials|config)|\.ssh\/|\bid_(rsa|ed25519|ecdsa)\b|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config|\.gnupg\/|(^|[\s/"'])\.env(\.[\w-]+)?(?=$|[\s"'])|keychain|credentials\.json|secrets?\.(json|ya?ml|env|toml)|\.git-credentials|\.config\/gh\/hosts\.ya?ml|\.pgpass|\.my\.cnf|\.config\/gcloud\/|\.azure\/|\.vault-token|\.terraform\.d\/credentials|\.boto\b)/i;
+/** printenv or a bare env dumps every variable, secrets included; env VAR=x cmd does not. */
+const DUMPS_ENV = /(^|[\s;&|(])(printenv|env)\s{0,8}($|[|;&>)])/;
 const RUNS_REMOTE_CODE = /\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|da)?sh\b|\b(ba|z)?sh\s+<\(\s*(curl|wget)\b|\beval\s+"?\$\((curl|wget)\b/;
 const NETWORK = /(^|[\s;&|(])(curl|wget|nc|ncat|scp|rsync|ssh|sftp|ftp)\s|\bgit\s+push\b|\bgh\s+api\b/;
 const INSTALL = /(^|[\s;&|(])((npm|pnpm|bun)\s+(install|i|add)\s+[^-\s]|yarn\s+add\s|pip3?\s+install\s|uv\s+(add|pip\s+install)\s|cargo\s+add\s|gem\s+install\s|brew\s+install\s|go\s+get\s|npx\s+[^-\s])/;
@@ -17,7 +19,7 @@ export function sensitivity(action: Action): Sensitivity[] {
   const kinds = new Set<Sensitivity>();
   if (action.tool === 'Bash') {
     const cmd = str(action.input, 'command') ?? '';
-    if (CREDENTIAL_PATH.test(cmd)) kinds.add('credentials');
+    if (CREDENTIAL_PATH.test(cmd) || DUMPS_ENV.test(cmd)) kinds.add('credentials');
     if (RUNS_REMOTE_CODE.test(cmd)) kinds.add('runs remote code');
     if (NETWORK.test(cmd)) kinds.add('network');
     if (INSTALL.test(cmd)) kinds.add('install');

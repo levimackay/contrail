@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { authSession, call, d, session, WHO } from '../../test/fixtures/synthetic.ts';
+import { authSession, call, d, longTrail, session, WHO } from '../../test/fixtures/synthetic.ts';
 import { buildGraph } from '../graph/build.ts';
 import { explain } from './explain.ts';
 import { traceToken } from './trace.ts';
@@ -225,6 +225,26 @@ test("a background subagent's report arrives as a prompt, and is never your word
   assert.equal(t.upstream?.trace.links[0]?.to, 'out:s1');
 });
 
+test('a trail cut off at the hop limit says so and names the call to continue from', () => {
+  const g = buildGraph(longTrail(), WHO);
+  const chain: string[] = [];
+  let last;
+  for (let t = explain('g4', g).traces.find(x => x.token.text === 'pinned-builder-9'); t; t = t.upstream?.trace) {
+    chain.push(`${t.token.text} <- ${t.links[0]?.to}`);
+    last = t;
+  }
+  assert.deepEqual(chain, [
+    'pinned-builder-9 <- out:g3',
+    'tools/buildkit/README.md <- out:g2',
+    'tools/buildkit <- out:g1',
+    'docs.y.example/build <- out:g0',
+  ]);
+  assert.deepEqual(last?.truncated, { next: 'g0' });
+  // The call it names picks the trail up: g0's url is your words.
+  const rest = explain('g0', g).traces.find(x => x.token.text === 'docs.y.example/index');
+  assert.equal(rest?.links[0]?.to, 'prompt:p1');
+});
+
 test('a slash command is your words; the text it expands to is unobserved unless recorded', () => {
   const expansion = (args: string) => ({ hook: 'UserPromptExpansion', payload: { prompt_id: 'p1', expansion_type: 'slash_command', command_name: 'deploy', command_args: args, command_source: 'project' } }) as const;
   const typed = buildGraph(
@@ -278,4 +298,19 @@ test("a skill's body read at ingest is a source; one never read is a blind spot"
   );
   const links = explain('w1', reread).traces.find(t => t.token.text === 'NOTES-quartzfinch.md')!.links;
   assert.equal(links[0]?.grade, 'LIKELY');
+});
+
+test("find skips Contrail's own queries: a /contrail: prompt, a contrail run and its output", async () => {
+  const { findValue } = await import('./find.ts');
+  const g = buildGraph(
+    session([
+      d.prompt('add a logger', 'p1'),
+      ...call('r1', 'Read', { file_path: '/r/vendor/log/README.md' }, 'use createLogger()'),
+      d.prompt('/contrail:find createLogger', 'p2'),
+      ...call('c1', 'Bash', { command: 'sh ~/.claude/plugins/data/contrail-x/bin/contrail find createLogger' }, 'createLogger HELD ...'),
+    ]),
+    WHO,
+  );
+  const hits = findValue(g, 'createLogger');
+  assert.deepEqual(hits.map(h => h.source?.input.id ?? h.use?.action.id), ['out:r1']);
 });

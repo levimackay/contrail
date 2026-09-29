@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { main, type Io } from '../src/cli.ts';
-import { authSession, CLAUDE_MD, d, session } from './fixtures/synthetic.ts';
+import { authSession, call, CLAUDE_MD, d, session } from './fixtures/synthetic.ts';
 
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -56,6 +56,27 @@ test('--json prints the explanation as data', async () => {
   const e = JSON.parse(r.out);
   assert.equal(e.requested.verdict, 'NOT_NAMED');
   assert.equal(e.chainGrade, 'LIKELY');
+});
+
+test('why <call id> explains any recorded call, by the id reports print or in full', async () => {
+  const read = 'toolu_01XWNSRthmT3jfsUEY1ReAd1';
+  const data = spoolFrom(
+    session([
+      d.instructions('/r/CLAUDE.md', CLAUDE_MD),
+      d.prompt('Figure out why authentication is broken.', 'p1'),
+      ...call(read, 'Read', { file_path: '/r/auth-service/README.md' }, '    83\tuse foo-auth-helper'),
+      ...call('toolu_01XWNSRthmT3jfsUEY1InSt2', 'Bash', { command: 'npm install foo-auth-helper' }, 'ok'),
+    ]),
+  );
+  for (const id of ['toolu…ReAd1', 'toolu...ReAd1', read]) {
+    const r = await run(['why', id, '--data', data]);
+    assert.equal(r.err, '', id);
+    assert.match(r.out, /^Read {2}auth-service\/README\.md\n/, id);
+    assert.match(r.out, /toolu…ReAd1/, id);
+  }
+  const missing = await run(['why', 'toolu…NoNe9', '--data', data]);
+  assert.equal(missing.code, 1);
+  assert.match(missing.err, /No recorded tool call toolu…NoNe9\./);
 });
 
 test('an unknown target is a clear error, not a stack trace', async () => {

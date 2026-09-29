@@ -11,6 +11,9 @@ import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { MAX_COLS, parseAnsi, type Run } from '../src/render/ansi.ts';
+
+export { parseAnsi };
 
 const FONT_SIZE = 13;
 const CHAR_WIDTH = 7.8; // advance of a 13px monospace glyph
@@ -18,7 +21,6 @@ const LINE_HEIGHT = 18;
 const PAD_X = 18;
 const TITLE_BAR = 36;
 const PAD_BOTTOM = 16;
-const MAX_COLS = 120;
 
 const BACKGROUND = '#0d1117';
 const TITLE_BACKGROUND = '#161b22';
@@ -26,75 +28,6 @@ const BORDER = '#30363d';
 const FOREGROUND = '#c9d1d9';
 const DIM = '#7d8590';
 const DOTS = ['#ff5f57', '#febc2e', '#28c840'];
-
-/** SGR foreground codes used by style.ts: 32 DIRECT, 36 LIKELY and accents, 33 POSSIBLE, 90 UNKNOWN, 35 flags. */
-const COLORS: Record<number, string> = {
-  32: '#3fb950',
-  33: '#d29922',
-  35: '#d2a8ff',
-  36: '#56d4dd',
-  90: '#6e7681',
-};
-
-interface Pen {
-  bold: boolean;
-  dim: boolean;
-  color: string | null;
-}
-
-interface Run extends Pen {
-  col: number;
-  text: string;
-}
-
-const PLAIN_PEN: Pen = { bold: false, dim: false, color: null };
-
-function applySgr(pen: Pen, params: string): Pen {
-  const next = { ...pen };
-  for (const code of (params || '0').split(';').map(Number)) {
-    if (code === 0) Object.assign(next, PLAIN_PEN);
-    else if (code === 1) next.bold = true;
-    else if (code === 2) next.dim = true;
-    else if (code === 22) next.bold = next.dim = false;
-    else if (code === 39) next.color = null;
-    else if (COLORS[code]) next.color = COLORS[code]!;
-  }
-  return next;
-}
-
-/** Splits ANSI text into lines of styled runs, wrapping long lines at a space as `fold -s` would. */
-export function parseAnsi(ansi: string, cols = MAX_COLS): Run[][] {
-  const lines: Run[][] = [];
-  let pen = PLAIN_PEN;
-  for (const raw of ansi.replace(/\r/g, '').replace(/\n$/, '').split('\n')) {
-    let cells: Array<{ ch: string; pen: Pen }> = [];
-    // OSC sequences (titles, hyperlinks) go first; then every CSI; then any other escape and control character.
-    const line = raw.replace(/\x1b\][^\x07\x1b]{0,2048}(?:\x07|\x1b\\)?/g, '');
-    for (const part of line.split(/(\x1b\[[0-9;?]{0,32}[@-~])/)) {
-      const sgr = /^\x1b\[([0-9;]{0,32})m$/.exec(part);
-      if (sgr) pen = applySgr(pen, sgr[1]!);
-      else if (!part.startsWith('\x1b[')) for (const ch of part.replace(/\x1b[@-_]?|[\x00-\x08\x0b-\x1f\x7f]/g, '')) cells.push({ ch, pen });
-    }
-    while (cells.length > cols) {
-      const space = cells.slice(0, cols + 1).findLastIndex(c => c.ch === ' ');
-      const cut = space > cols / 2 ? space : cols;
-      lines.push(toRuns(cells.slice(0, cut)));
-      cells = cells.slice(cut === space ? cut + 1 : cut);
-    }
-    lines.push(toRuns(cells));
-  }
-  return lines;
-}
-
-function toRuns(cells: Array<{ ch: string; pen: Pen }>): Run[] {
-  const runs: Run[] = [];
-  cells.forEach(({ ch, pen }, col) => {
-    const last = runs.at(-1);
-    if (last && last.bold === pen.bold && last.dim === pen.dim && last.color === pen.color) last.text += ch;
-    else runs.push({ ...pen, col, text: ch });
-  });
-  return runs;
-}
 
 const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -141,6 +74,7 @@ const VIEWS: Array<{ file: string; args: string[]; cols?: number }> = [
   { file: 'trace.svg', args: ['trace', '--session', '4f2a'] },
   { file: 'trace-tree.svg', args: ['trace', '--session', '9c1e', '--tree'], cols: 146 },
   { file: 'why-commit.svg', args: ['why', 'commit', '{sha}'] },
+  { file: 'find.svg', args: ['find', 'collect.telemetry.example'], cols: 146 },
   { file: 'sessions.svg', args: ['sessions'], cols: 150 },
 ];
 

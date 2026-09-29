@@ -1,5 +1,6 @@
 import type { Action, Effect, Explanation, Graph, Input, Link, TokenTrace } from '../engine/types.ts';
 import { bestPerGroup } from '../engine/explain.ts';
+import { MAX_DEPTH } from '../engine/trace.ts';
 import { clip, displayPath, str } from '../util.ts';
 import { callId, PLAIN, type Style } from './style.ts';
 
@@ -42,7 +43,11 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
   out.push('', s.bold(HEADING));
 
   // A path, its basename and its stem are alternatives for one target: show only the best of each group.
-  const shown = bestPerGroup(e.traces);
+  // A hint (a directory in a path, a word of a message) is shown only when it adds a source
+  // the targets do not already credit, or a value no target covers.
+  const best = bestPerGroup(e.traces);
+  const credited = new Set(best.filter(t => t.token.role !== 'hint').flatMap(t => t.links.filter(l => l.grade !== 'UNKNOWN').map(l => l.to)));
+  const shown = best.filter(t => t.token.role !== 'hint' || t.links.some(l => l.grade !== 'UNKNOWN' && !credited.has(l.to)));
   const found = shown.filter(t => t.links.some(l => l.grade !== 'UNKNOWN'));
   const unfound = shown.filter(t => !found.includes(t));
   for (const t of found) trace(t, 1, out, inputs, s);
@@ -106,6 +111,10 @@ function trace(t: TokenTrace, depth: number, out: string[], inputs: Map<string, 
           : 'a compaction summary is agent-written; the same value before the compaction:';
     out.push(s.dim(`${pad}  ${heading}`));
     trace(u.trace, depth + 2, out, inputs, s);
+  }
+  if (t.truncated) {
+    const next = t.truncated.next ? `; contrail why ${callId(t.truncated.next)} picks it up from there` : '';
+    out.push(s.dim(`${pad}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
   }
 }
 

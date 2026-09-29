@@ -438,7 +438,7 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync } from "node:fs";
+import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename as basename4, dirname as dirname2, join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1281,11 +1281,23 @@ function traceAt(token, probe, fromId, firstUseInfo, g, depth, visited) {
     links,
     upstream: null
   };
-  if (depth >= MAX_DEPTH) return trace3;
   const best = links.find((l) => l.grade === "LIKELY") ?? links.find((l) => l.firstSeen);
   const source = best?.to ? g.inputs.find((i) => i.id === best.to) : void 0;
-  if (source) trace3.upstream = followSource(token, source, g, depth + 1, visited);
+  if (!source) return trace3;
+  if (depth >= MAX_DEPTH) {
+    const next = nextStep(token, source, g, visited);
+    if (next !== void 0) trace3.truncated = { next };
+    return trace3;
+  }
+  trace3.upstream = followSource(token, source, g, depth + 1, visited);
   return trace3;
+}
+function nextStep(token, source, g, visited) {
+  if (source.origin === "compaction") return visited.has(source.id) ? void 0 : null;
+  if (source.relays) return source.producedBy && !visited.has(`relay:${source.id}`) ? null : void 0;
+  const writer = source.origin === "file" ? agentWriter(token, source, g) : void 0;
+  if (writer && !visited.has(writer.id)) return writer.id;
+  return source.producedBy && !visited.has(source.producedBy) && g.actions.some((a) => a.id === source.producedBy) ? source.producedBy : void 0;
 }
 function followSource(token, source, g, depth, visited) {
   if (source.origin === "compaction") {
@@ -1455,6 +1467,31 @@ function assess(e, g) {
 function rankFindings(findings) {
   const weight = (f) => f.externalUpstream ? 0 : f.requested === "NAMED" ? 2 : 1;
   return [...findings].sort((a, b) => weight(a) - weight(b) || b.action.preSeq - a.action.preSeq);
+}
+
+// src/engine/find.ts
+function findValue(g, value) {
+  const needle = normalize(value.trim());
+  if (!needle) return [];
+  const own = new Set(g.actions.filter(runsContrail).map((a) => a.id));
+  const out = [];
+  for (const input of g.inputs) {
+    if (input.producedBy && own.has(input.producedBy) || input.origin === "prompt" && /^\s*\/contrail:/.test(input.text)) continue;
+    const index = findInInput(input, needle, g.hashToken);
+    if (index < 0) continue;
+    const { line, text } = lineOf(input.text, index);
+    out.push({ seq: input.availableAt, source: { input, line, text: input.hashed ? "" : text } });
+  }
+  for (const action of g.actions) {
+    if (own.has(action.id)) continue;
+    const leaf = stringLeaves(action.input).find((l) => findNormalized(normalize(l.value), needle) >= 0);
+    if (leaf) out.push({ seq: action.preSeq, use: { action, argPath: leaf.path, kinds: sensitivity(action) } });
+  }
+  return out.sort((a, b) => a.seq - b.seq || Number(Boolean(a.use)) - Number(Boolean(b.use)));
+}
+function runsContrail(a) {
+  const command = a.tool === "Bash" ? stringLeaves(a.input).find((l) => l.path === "$.command")?.value ?? "" : "";
+  return /(^|[\s;&|(/])(bin\/contrail|contrail)\s+(why|find|trace|risks|sessions|report|export|doctor|statusline)\b/.test(command);
 }
 
 // src/engine/tree.ts
@@ -1676,17 +1713,17 @@ var STALE_TMP_MS = 60 * 60 * 1e3;
 var WRITE_TOOLS = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 var READ_TOOLS = /* @__PURE__ */ new Set(["Read", "NotebookRead"]);
 function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
-  const report = { ingested: 0, duplicates: 0, parseErrors: 0, staleTmpRemoved: 0 };
+  const report2 = { ingested: 0, duplicates: 0, parseErrors: 0, staleTmpRemoved: 0 };
   let names;
   try {
     names = readdirSync(spoolDir).sort();
   } catch {
-    return report;
+    return report2;
   }
   for (const name of names) {
     const file = join2(spoolDir, name);
     if (name.startsWith(".tmp.")) {
-      if (removeIfStale(file, now)) report.staleTmpRemoved++;
+      if (removeIfStale(file, now)) report2.staleTmpRemoved++;
       continue;
     }
     if (!name.endsWith(".json")) continue;
@@ -1705,7 +1742,7 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     } catch (e) {
       row = failedRow(capturedUs, `${name}: ${e.message}`);
     }
-    if (row.parseError) report.parseErrors++;
+    if (row.parseError) report2.parseErrors++;
     db.exec("BEGIN IMMEDIATE");
     try {
       const inserted = db.run(
@@ -1728,9 +1765,9 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
       if (inserted) {
         const id = db.get("SELECT id FROM events WHERE spool_name = ?", name).id;
         for (const t of row.touches) db.run("INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)", id, t.path, t.kind);
-        report.ingested++;
+        report2.ingested++;
       } else {
-        report.duplicates++;
+        report2.duplicates++;
       }
       db.exec("COMMIT");
     } catch (e) {
@@ -1742,7 +1779,7 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     } catch {
     }
   }
-  return report;
+  return report2;
 }
 function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
   let parsed;
@@ -2227,6 +2264,7 @@ function buildGraph(rows, who, hashToken) {
     agentSaid,
     env,
     firstEvent: rows[0]?.hook_event ?? null,
+    timeUs: rows.map((r) => r.captured_us),
     ...hashToken ? { hashToken } : {}
   };
 }
@@ -2423,11 +2461,16 @@ function loadGraph(db, sessionId, home, hashToken) {
 // src/query/target.ts
 import { existsSync as existsSync2, realpathSync as realpathSync2 } from "node:fs";
 import { resolve as resolve5 } from "node:path";
+var SHORT_CALL = /^([A-Za-z0-9_-]{1,40})(?:…|\.\.\.)([A-Za-z0-9_-]{1,40})$/;
+var FULL_CALL = /^toolu_[A-Za-z0-9_-]{8,200}$/;
 function parseTarget(args, cwd) {
   const text = unquote(args.join(" ").trim());
-  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | last>');
+  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | call id | last>');
   if (text === "last") return { kind: "last" };
   const abs = resolve5(cwd, text);
+  const short = SHORT_CALL.exec(text);
+  if (short && !existsSync2(abs)) return { kind: "call", prefix: short[1], suffix: short[2], shown: text };
+  if (FULL_CALL.test(text) && !existsSync2(abs)) return { kind: "call", prefix: text, suffix: "", shown: text };
   if (!/\s/.test(text) && (existsSync2(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) return { kind: "path", path: abs, shown: text };
   return { kind: "command", text };
 }
@@ -2462,6 +2505,20 @@ function findTarget(db, target, repoKey) {
       target.text
     );
     if (!rows.length) throw new ContrailError(`No recorded shell command contains "${target.text}".`);
+  } else if (target.kind === "call") {
+    rows = db.all(
+      `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
+        WHERE hook_event = 'PreToolUse' AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
+          AND (? = '' OR substr(tool_use_id, -?) = ?)
+        ORDER BY captured_us DESC, spool_name DESC`,
+      target.prefix.length,
+      target.prefix,
+      target.prefix.length + target.suffix.length,
+      target.suffix,
+      target.suffix.length,
+      target.suffix
+    );
+    if (!rows.length) throw new ContrailError(`No recorded tool call ${target.shown}.`);
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
@@ -2529,7 +2586,9 @@ function renderWhy(e, g, note, s = PLAIN) {
     !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
   );
   out.push("", s.bold(HEADING));
-  const shown = bestPerGroup(e.traces);
+  const best = bestPerGroup(e.traces);
+  const credited = new Set(best.filter((t) => t.token.role !== "hint").flatMap((t) => t.links.filter((l) => l.grade !== "UNKNOWN").map((l) => l.to)));
+  const shown = best.filter((t) => t.token.role !== "hint" || t.links.some((l) => l.grade !== "UNKNOWN" && !credited.has(l.to)));
   const found = shown.filter((t) => t.links.some((l) => l.grade !== "UNKNOWN"));
   const unfound = shown.filter((t) => !found.includes(t));
   for (const t of found) trace(t, 1, out, inputs, s);
@@ -2584,6 +2643,10 @@ function trace(t, depth, out, inputs, s) {
     const heading = u.kind === "call" ? `how the agent came to call ${u.via?.tool} ${callId(u.via?.id ?? "")}:` : u.kind === "conduit" ? `that text was written by the agent (${u.via?.tool} ${callId(u.via?.id ?? "")}); following the same value back:` : "a compaction summary is agent-written; the same value before the compaction:";
     out.push(s.dim(`${pad3}  ${heading}`));
     trace(u.trace, depth + 2, out, inputs, s);
+  }
+  if (t.truncated) {
+    const next = t.truncated.next ? `; contrail why ${callId(t.truncated.next)} picks it up from there` : "";
+    out.push(s.dim(`${pad3}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
   }
 }
 function sourceWording(l, where) {
@@ -2785,6 +2848,52 @@ function nodeLines(node, prefix, last, g, s, out) {
   const next = prefix + (last ? "    " : "\u2502   ");
   node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
 }
+function renderStatusline(g, findings, s = PLAIN) {
+  const name = s.dim("contrail");
+  if (!g) return `${name} ${s.dim("recording")}`;
+  const external = findings.filter((f) => f.externalUpstream).length;
+  const unnamed = findings.filter((f) => !f.externalUpstream && f.requested === "NOT_NAMED").length;
+  const parts = [
+    external ? s.flag(`\u25B2 ${external} from external content`) : "",
+    unnamed ? s.bold(`\u25B3 ${unnamed} not named by you`) : "",
+    s.dim(`${g.actions.length} call${g.actions.length === 1 ? "" : "s"}`)
+  ].filter(Boolean);
+  return `${name} ${parts.join(s.dim(" \xB7 "))}`;
+}
+function renderFind(value, hits, scanned, s = PLAIN) {
+  const found = hits.filter((h) => h.sightings.length);
+  const out = [`${s.bold(`"${clip(value, 80)}"`)} ${s.dim(`in ${found.length} of ${scanned} session${scanned === 1 ? "" : "s"}`)}`];
+  if (!found.length) {
+    out.push("", `  ${s.dim("No recorded input or call contains it. Matching is whole-token and literal; no observed source is not the same as no source.")}`);
+    return `${out.join("\n")}
+`;
+  }
+  for (const { graph: g, sightings } of found) {
+    const sessionId = g.actions[0]?.scope.sessionId ?? "";
+    const first = g.prompts.find((p) => p.from === "you");
+    out.push("", `${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : "")}`);
+    let seenSource = false;
+    for (const hit of sightings) {
+      if (hit.source) {
+        const src = hit.source.input;
+        const where = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ""}`;
+        const trust = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("HELD", 6)} ${where}  ${trust}${seenSource ? "" : `  ${s.accent("first seen")}`}`);
+        seenSource = true;
+        if (hit.source.text) out.push(`              ${s.dim(hit.source.line != null ? `${hit.source.line}\u2502` : "\u2502")} ${clip(hit.source.text, 96)}`);
+        else if (src.hashed) out.push(`              ${s.dim(`${hit.source.line ?? ""}\u2502 (text not stored)`)}`);
+      } else if (hit.use) {
+        const a = hit.use.action;
+        const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+        const kinds = hit.use.kinds.length ? `  ${s.flag(hit.use.kinds.join(" \xB7 "))}` : "";
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("USED", 6)} ${kindOf(a)} ${clip(summary(a, g), 80)} ${s.dim(`(${hit.use.argPath})`)}${who}${kinds}`);
+      }
+    }
+  }
+  out.push("", s.dim(`HELD: an input that held the value. USED: a call whose arguments contain it. Run ${s.bold("contrail why")} on a call for its graded trail.`));
+  return `${out.join("\n")}
+`;
+}
 function renderSessions(sessions2, s = PLAIN) {
   if (!sessions2.length) return "No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n";
   const head = ["SESSION", "LAST ACTIVE", "TURNS", "READS", "WRITES", "SHELL", "WEB/MCP", "SUBAGENTS", "FLAGGED", "FIRST PROMPT"];
@@ -2904,6 +3013,368 @@ function localTime(us) {
   const d = new Date(Math.floor(us / 1e3));
   const two = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+// src/render/ansi.ts
+var MAX_COLS = 120;
+var COLORS = {
+  32: "#3fb950",
+  33: "#d29922",
+  35: "#d2a8ff",
+  36: "#56d4dd",
+  90: "#6e7681"
+};
+var PLAIN_PEN = { bold: false, dim: false, color: null };
+function applySgr(pen, params) {
+  const next = { ...pen };
+  for (const code of (params || "0").split(";").map(Number)) {
+    if (code === 0) Object.assign(next, PLAIN_PEN);
+    else if (code === 1) next.bold = true;
+    else if (code === 2) next.dim = true;
+    else if (code === 22) next.bold = next.dim = false;
+    else if (code === 39) next.color = null;
+    else if (COLORS[code]) next.color = COLORS[code];
+  }
+  return next;
+}
+function parseAnsi(ansi, cols = MAX_COLS) {
+  const lines = [];
+  let pen = PLAIN_PEN;
+  for (const raw of ansi.replace(/\r/g, "").replace(/\n$/, "").split("\n")) {
+    let cells = [];
+    const line = raw.replace(/\x1b\][^\x07\x1b]{0,2048}(?:\x07|\x1b\\)?/g, "");
+    for (const part of line.split(/(\x1b\[[0-9;?]{0,32}[@-~])/)) {
+      const sgr2 = /^\x1b\[([0-9;]{0,32})m$/.exec(part);
+      if (sgr2) pen = applySgr(pen, sgr2[1]);
+      else if (!part.startsWith("\x1B[")) for (const ch of part.replace(/\x1b[@-_]?|[\x00-\x08\x0b-\x1f\x7f]/g, "")) cells.push({ ch, pen });
+    }
+    while (cells.length > cols) {
+      const space = cells.slice(0, cols + 1).findLastIndex((c) => c.ch === " ");
+      const cut = space > cols / 2 ? space : cols;
+      lines.push(toRuns(cells.slice(0, cut)));
+      cells = cells.slice(cut === space ? cut + 1 : cut);
+    }
+    lines.push(toRuns(cells));
+  }
+  return lines;
+}
+function toRuns(cells) {
+  const runs = [];
+  cells.forEach(({ ch, pen }, col) => {
+    const last = runs.at(-1);
+    if (last && last.bold === pen.bold && last.dim === pen.dim && last.color === pen.color) last.text += ch;
+    else runs.push({ ...pen, col, text: ch });
+  });
+  return runs;
+}
+
+// src/render/html.ts
+var escapeHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+var CLASS_OF_COLOR = {
+  "#3fb950": "direct",
+  "#56d4dd": "likely",
+  "#d29922": "possible",
+  "#6e7681": "unknown",
+  "#d2a8ff": "flag"
+};
+function ansiToHtml(ansi) {
+  return parseAnsi(ansi, Number.MAX_SAFE_INTEGER).map(
+    (line) => line.map((run) => {
+      const classes = [run.color ? CLASS_OF_COLOR[run.color] : "", run.bold ? "b" : "", run.dim ? "d" : ""].filter(Boolean);
+      const text = escapeHtml(run.text);
+      return classes.length ? `<span class="${classes.join(" ")}">${text}</span>` : text;
+    }).join("")
+  ).join("\n");
+}
+var gradeClass = (g) => g.toLowerCase();
+var time = (us) => us ? new Date(Math.floor(us / 1e3)).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "";
+function renderReport(r) {
+  const g = r.graph;
+  const sessionId = g.actions[0]?.scope.sessionId ?? "";
+  const anchor = (id) => `a-${id.replace(/[^\w-]/g, "_")}`;
+  const byAction = new Map(r.findings.map((f) => [f.action.id, f]));
+  const external = r.findings.filter((f) => f.externalUpstream).length;
+  const fileEffects = g.effects.filter((e) => e.kind === "file").length;
+  const first = g.timeUs.length ? Math.min(...g.timeUs) : 0;
+  const last = g.timeUs.length ? Math.max(...g.timeUs) : 0;
+  const card = (value, label, tone = "") => `<div class="card ${tone}"><div class="num">${value}</div><div class="label">${label}</div></div>`;
+  const risks2 = r.findings.length ? r.findings.map((f) => {
+    const mark = f.externalUpstream ? "\u25B2" : f.requested === "NOT_NAMED" ? "\u25B3" : "\xB7";
+    const asked = f.requested === "NAMED" ? "named by you" : f.requested === "NOT_NAMED" ? "not named by you" : f.requested.toLowerCase().replace(/_/g, " ");
+    return `<a class="finding${f.externalUpstream ? " ext" : ""}" href="#${anchor(f.action.id)}"><span class="mark">${mark}</span><code>${escapeHtml(clip(summary(f.action, g), 140))}</code><span class="kinds">${escapeHtml(f.kinds.join(" \xB7 "))}</span><span class="pill${f.requested === "NOT_NAMED" ? " flag" : ""}">${asked}</span>${f.externalUpstream ? '<span class="pill ext">traces to external content</span>' : ""}</a>`;
+  }).join("\n") : '<p class="muted">None found in this session.</p>';
+  const items = [];
+  for (const p of g.prompts) {
+    const who = p.from === "task" ? '<span class="pill">background task report, not your words</span>' : '<span class="pill you">your prompt</span>';
+    items.push({ seq: p.seq, html: `<h3 class="turn"><span class="label">${escapeHtml(p.label)}</span>${who}<span class="prompt">${escapeHtml(clip(p.text, 240))}</span></h3>` });
+  }
+  for (const i of g.inputs.filter((x) => x.origin === "instructions")) {
+    items.push({ seq: i.availableAt, html: `<div class="row loaded"><span class="seq">${i.availableAt}</span><span class="kind">LOADED</span><code>${escapeHtml(clip(i.label, 140))}</code><span class="muted">${escapeHtml(originWording(i))}</span></div>` });
+  }
+  for (const a of g.actions) {
+    const e = r.explanations.get(a.id);
+    const f = byAction.get(a.id);
+    const tone = [f ? "sensitive" : "", f?.externalUpstream ? "ext" : "", a.status === "failed" || a.status === "interrupted" ? "failed" : ""].filter(Boolean).join(" ");
+    const pills = [
+      e ? `<span class="grade ${gradeClass(e.chainGrade)}">${e.chainGrade}</span>` : "",
+      e?.requested.verdict === "NOT_NAMED" ? '<span class="pill flag">not named by you</span>' : e?.requested.verdict === "NAMED" ? '<span class="pill">named by you</span>' : "",
+      f ? `<span class="pill ${f.externalUpstream ? "ext" : "flag"}">${escapeHtml(f.kinds.join(" \xB7 "))}</span>` : "",
+      a.scope.agentId ? `<span class="pill">subagent ${escapeHtml(callId(a.scope.agentId))}</span>` : "",
+      a.status === "failed" || a.status === "interrupted" ? `<span class="pill flag">${a.status}</span>` : ""
+    ].join("");
+    const head = `<span class="seq">${a.preSeq}</span><span class="kind">${escapeHtml(kindOf(a))}</span><code>${escapeHtml(clip(summary(a, g), 140))}</code>${pills}`;
+    items.push({
+      seq: a.preSeq,
+      html: e ? `<details class="${["row", tone].filter(Boolean).join(" ")}" id="${anchor(a.id)}"><summary>${head}</summary><pre class="term">${ansiToHtml(renderWhy(e, g, void 0, COLOR))}</pre></details>` : `<div class="${["row", tone].filter(Boolean).join(" ")}" id="${anchor(a.id)}">${head}</div>`
+    });
+  }
+  items.sort((x, y) => x.seq - y.seq);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Contrail ${escapeHtml(r.version)}">
+<title>Contrail report \xB7 session ${escapeHtml(sessionId.slice(0, 8))}</title>
+<style>${CSS}</style>
+</head>
+<body>
+<header>
+  <div class="brand">${LOGO_MARK}<span>contrail</span></div>
+  <h1>Session ${escapeHtml(sessionId.slice(0, 8))}</h1>
+  <p class="meta"><code>${escapeHtml(clip(g.env.cwd, 160))}</code> \xB7 ${escapeHtml(time(first))} to ${escapeHtml(time(last))}</p>
+  <nav><a href="#risks">Sensitive actions</a><a href="#timeline">Timeline</a><a href="#trails">Trails</a></nav>
+</header>
+<main>
+<section class="cards">
+  ${card(g.prompts.length, "turns")}
+  ${card(g.actions.length, "tool calls")}
+  ${card(fileEffects, "file changes")}
+  ${card(r.findings.length, "sensitive actions", r.findings.length ? "warn" : "")}
+  ${card(external, "trace to external content", external ? "alert" : "")}
+</section>
+
+<section id="risks">
+  <h2>Sensitive actions</h2>
+  <div class="findings">${risks2}</div>
+  <details class="full"><summary>Full risks report</summary><pre class="term">${ansiToHtml(renderRisks(r.findings, { actions: g.actions.length, sessions: 1 }, /* @__PURE__ */ new Map([[sessionId, g]]), COLOR))}</pre></details>
+</section>
+
+<section id="timeline">
+  <h2>Timeline</h2>
+  <p class="muted">Open any call for its full trail: where each value in it first appeared, who wrote that source, and how strong each link is.</p>
+  ${items.map((i) => i.html).join("\n  ")}
+</section>
+
+<section id="trails">
+  <h2>Trails</h2>
+  <p class="muted">Each call sits under the call whose output first held its headline value.</p>
+  <pre class="term">${ansiToHtml(renderTree(g, r.forest, r.omitted, COLOR))}</pre>
+</section>
+</main>
+<footer>
+  <p><b>Data provenance, not the agent's reasons.</b> A grade says where a value first appeared in the agent's context, not what the agent intended. Every report lists what Contrail could not see.</p>
+  <p>Generated by Contrail ${escapeHtml(r.version)} on ${escapeHtml(r.generatedAt.toISOString().slice(0, 10))} from local data. This file loads nothing and makes no network requests.</p>
+</footer>
+</body>
+</html>
+`;
+}
+var LOGO_MARK = `<svg width="64" height="22" viewBox="0 0 64 22" aria-hidden="true"><g stroke-linecap="round" fill="none"><line x1="2" y1="17" x2="11" y2="15.5" stroke="#6e7681" stroke-width="2.5"/><line x1="15" y1="14.8" x2="24" y2="13.3" stroke="#d29922" stroke-width="3"/><line x1="28" y1="12.6" x2="37" y2="11.1" stroke="#56d4dd" stroke-width="3.5"/><line x1="41" y1="10.4" x2="49" y2="9" stroke="#3fb950" stroke-width="4"/></g><circle cx="56" cy="7.8" r="4.5" fill="#3fb950"/></svg>`;
+var CSS = `
+:root { --bg: #ffffff; --panel: #f6f8fa; --border: #d0d7de; --fg: #1f2328; --muted: #59636e; --term-bg: #0d1117; --term-fg: #c9d1d9;
+  --direct: #1a7f37; --likely: #0a7d86; --possible: #9a6700; --unknown: #6e7781; --flag: #8250df; --alert: #cf222e; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #e6edf3; --muted: #8d96a0;
+  --direct: #3fb950; --likely: #56d4dd; --possible: #d29922; --unknown: #8b949e; --flag: #d2a8ff; --alert: #f85149; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+header, main, footer { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+header { padding-top: 28px; }
+.brand { display: flex; align-items: center; gap: 10px; font: 700 20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+h1 { margin: 14px 0 2px; font-size: 26px; }
+h2 { margin: 36px 0 12px; font-size: 20px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.meta, .muted { color: var(--muted); }
+nav { display: flex; gap: 18px; margin: 10px 0 0; }
+nav a, a { color: var(--likely); text-decoration: none; }
+code, .kind, .seq, .grade { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 22px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.card .num { font-size: 28px; font-weight: 700; }
+.card .label { color: var(--muted); font-size: 13px; }
+.card.warn .num { color: var(--possible); }
+.card.alert .num { color: var(--alert); }
+.findings { display: grid; gap: 8px; }
+.finding { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--fg); background: var(--panel); }
+.finding.ext { border-color: var(--flag); }
+.finding .mark { color: var(--flag); font-weight: 700; }
+.finding .kinds { color: var(--likely); font-weight: 600; font-size: 13px; }
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); white-space: nowrap; }
+.pill.flag { color: var(--flag); border-color: var(--flag); }
+.pill.ext { color: var(--alert); border-color: var(--alert); }
+.pill.you { color: var(--direct); border-color: var(--direct); }
+.grade { font-weight: 700; padding: 0 6px; border-radius: 4px; }
+.grade.direct { color: var(--direct); } .grade.likely { color: var(--likely); } .grade.possible { color: var(--possible); } .grade.unknown { color: var(--unknown); }
+.turn { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 26px 0 8px; font-size: 16px; }
+.turn .label { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.turn .prompt { font-weight: 600; }
+.row { border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; background: var(--bg); }
+.row > summary, div.row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; list-style: none; }
+div.row { cursor: default; }
+.row > summary::-webkit-details-marker { display: none; }
+.row > summary::before { content: '\u25B8'; color: var(--muted); }
+.row[open] > summary::before { content: '\u25BE'; }
+.row.loaded { opacity: 0.8; }
+.row.sensitive { border-left: 3px solid var(--possible); }
+.row.ext { border-left: 3px solid var(--alert); }
+.row.failed code { text-decoration: line-through; opacity: 0.7; }
+.row:target { outline: 2px solid var(--likely); }
+.seq { color: var(--muted); min-width: 2.5em; }
+.kind { font-weight: 700; min-width: 5.5em; }
+.row code { word-break: break-all; }
+pre.term { margin: 0; padding: 14px 16px; background: var(--term-bg); color: var(--term-fg); border-radius: 0 0 8px 8px; overflow-x: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; }
+#trails pre.term, details.full pre.term { border-radius: 8px; }
+details.full { margin-top: 12px; }
+details.full > summary { cursor: pointer; color: var(--muted); }
+.term .b { font-weight: 700; } .term .d { opacity: 0.65; }
+.term .direct { color: #3fb950; } .term .likely { color: #56d4dd; } .term .possible { color: #d29922; } .term .unknown { color: #6e7681; } .term .flag { color: #d2a8ff; }
+footer { margin: 48px auto 40px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+`;
+
+// src/render/otel.ts
+import { createHash as createHash2 } from "node:crypto";
+var SPAN_KIND_INTERNAL = 1;
+var STATUS_ERROR = 2;
+function attrs(o) {
+  const out = [];
+  for (const [key, v] of Object.entries(o)) {
+    if (v === null || v === void 0 || v === "") continue;
+    if (typeof v === "boolean") out.push({ key, value: { boolValue: v } });
+    else if (typeof v === "number") out.push({ key, value: { intValue: String(Math.trunc(v)) } });
+    else out.push({ key, value: { stringValue: v } });
+  }
+  return out;
+}
+var hexId = (kind, value, length) => {
+  const hex = createHash2("sha256").update(`${kind}:${value}`).digest("hex").slice(0, length);
+  return /^0+$/.test(hex) ? `1${hex.slice(1)}` : hex;
+};
+var nanos = (us) => (BigInt(Math.round(us)) * 1000n).toString();
+function toOtlp(g, explanations, findings, version) {
+  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? "unknown";
+  const traceId = hexId("trace", sessionId, 32);
+  const rootId = hexId("session", sessionId, 16);
+  const actionSpan = (id) => hexId("action", `${sessionId}:${id}`, 16);
+  const turnSpan = (promptId) => hexId("turn", `${sessionId}:${promptId}`, 16);
+  const at = (seq) => g.timeUs[Math.max(0, Math.min(g.timeUs.length - 1, seq - 1))] ?? 0;
+  const first = g.timeUs.length ? Math.min(...g.timeUs) : 0;
+  const last = g.timeUs.length ? Math.max(...g.timeUs) : 0;
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  const actionIds = new Set(g.actions.map((a) => a.id));
+  const byAction = new Map(findings.map((f) => [f.action.id, f]));
+  const spans = [
+    {
+      traceId,
+      spanId: rootId,
+      name: `claude-code session ${sessionId.slice(0, 8)}`,
+      kind: SPAN_KIND_INTERNAL,
+      startTimeUnixNano: nanos(first),
+      endTimeUnixNano: nanos(last),
+      attributes: attrs({ "session.id": sessionId, "contrail.cwd": g.env.cwd, "contrail.turns": g.prompts.length, "contrail.tool_calls": g.actions.length })
+    }
+  ];
+  g.prompts.forEach((p, i) => {
+    const next = g.prompts[i + 1];
+    spans.push({
+      traceId,
+      spanId: turnSpan(p.promptId),
+      parentSpanId: rootId,
+      name: `turn ${p.label}`,
+      kind: SPAN_KIND_INTERNAL,
+      startTimeUnixNano: nanos(at(p.seq)),
+      endTimeUnixNano: nanos(next ? at(next.seq - 1) : last),
+      attributes: attrs({
+        "contrail.prompt.label": p.label,
+        "contrail.prompt.from": p.from === "task" ? "background task report" : "you",
+        "contrail.prompt.text": clip(p.text, 500)
+      })
+    });
+  });
+  for (const a of g.actions) {
+    const e = explanations.get(a.id);
+    const head = e ? headlineTrace(e) : void 0;
+    const link = head?.links.find((l) => l.grade !== "UNKNOWN");
+    const source = link?.to ? inputs.get(link.to) : void 0;
+    const finding = byAction.get(a.id);
+    const start = at(a.preSeq);
+    const end = Math.max(start, at(a.postSeq ?? a.preSeq));
+    const parent = a.promptId && g.prompts.some((p) => p.promptId === a.promptId) ? turnSpan(a.promptId) : rootId;
+    spans.push({
+      traceId,
+      spanId: actionSpan(a.id),
+      parentSpanId: parent,
+      name: clip(`${a.tool} ${describe(a, g)}`, 120),
+      kind: SPAN_KIND_INTERNAL,
+      startTimeUnixNano: nanos(start),
+      endTimeUnixNano: nanos(end),
+      attributes: attrs({
+        "contrail.tool": a.tool,
+        "contrail.tool_use_id": a.id,
+        "contrail.agent_id": a.scope.agentId,
+        "contrail.seq": a.preSeq,
+        "contrail.requested": e?.requested.verdict,
+        "contrail.grade": e?.chainGrade,
+        "contrail.value": head ? clip(head.token.text, 200) : null,
+        "contrail.source": source ? clip(source.label, 200) : null,
+        "contrail.origin": source?.origin,
+        "contrail.trust": source?.trust,
+        "contrail.sensitive": finding?.kinds.join(","),
+        "contrail.external_upstream": finding ? finding.externalUpstream : null
+      }),
+      events: g.effects.filter((fx) => fx.actionId === a.id).map((fx) => ({
+        timeUnixNano: nanos(end),
+        name: "contrail.effect",
+        attributes: attrs({ "contrail.effect.kind": fx.kind, "contrail.effect.target": clip(fx.target, 200), "contrail.effect.evidence": fx.evidence })
+      })),
+      links: provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan),
+      ...a.status === "failed" || a.status === "interrupted" ? { status: { code: STATUS_ERROR, message: a.status } } : {}
+    });
+  }
+  return {
+    resourceSpans: [
+      {
+        resource: { attributes: attrs({ "service.name": "claude-code", "contrail.version": version }) },
+        scopeSpans: [{ scope: { name: "contrail", version }, spans }]
+      }
+    ]
+  };
+}
+function provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan) {
+  if (!e) return [];
+  const order = { DIRECT: 0, LIKELY: 1, POSSIBLE: 2, UNKNOWN: 3 };
+  const links = /* @__PURE__ */ new Map();
+  for (const t of e.traces) {
+    for (const l of t.links) {
+      const source = l.to ? inputs.get(l.to) : void 0;
+      if (!source || l.grade === "UNKNOWN") continue;
+      const spanId = source.producedBy && source.producedBy !== a.id && actionIds.has(source.producedBy) ? actionSpan(source.producedBy) : source.origin === "prompt" && source.promptId ? turnSpan(source.promptId) : null;
+      if (!spanId) continue;
+      const seen = links.get(spanId);
+      if (!seen || order[l.grade] < order[seen.grade]) links.set(spanId, { spanId, grade: l.grade, value: t.token.text, source, rule: l.rule });
+    }
+  }
+  return [...links.values()].sort((x, y) => order[x.grade] - order[y.grade]).map((l) => ({
+    traceId,
+    spanId: l.spanId,
+    attributes: attrs({
+      "contrail.link": "value_from",
+      "contrail.grade": l.grade,
+      "contrail.rule": l.rule,
+      "contrail.value": clip(l.value, 200),
+      "contrail.source": clip(l.source.label, 200),
+      "contrail.trust": l.source.trust
+    })
+  }));
 }
 
 // src/store/retention.ts
@@ -3068,7 +3539,7 @@ async function openBun(path) {
 }
 
 // src/version.ts
-var VERSION = "0.2.0";
+var VERSION = "0.3.0";
 
 // src/cli.ts
 var FILTERS = ["writes", "shell", "network", "mcp", "subagents", "instructions"];
@@ -3082,6 +3553,8 @@ var OPTIONS = {
   limit: { type: "string" },
   all: { type: "boolean" },
   tree: { type: "boolean" },
+  otel: { type: "boolean" },
+  output: { type: "string", short: "o" },
   "from-hook": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -3092,6 +3565,7 @@ var USAGE = `contrail ${VERSION}: the observable trail behind Claude Code action
 Usage:
   contrail why <path>               the trail behind the latest agent change to a file
   contrail why "<command text>"     the trail behind the latest shell command containing the text
+  contrail why <call id>            the trail behind one tool call, as reports print its id
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source
@@ -3101,8 +3575,12 @@ Usage:
                                     sensitive actions, those tracing to web or MCP content first
   contrail sessions [--limit N] [--all]
                                     recent sessions at a glance
-  contrail export [<session> | last]
-                                    a session's recorded events as JSON
+  contrail export [<session> | last] [--otel]
+                                    a session's recorded events as JSON, or as OpenTelemetry traces
+  contrail report [<session> | last] [-o file.html]
+                                    a session as one self-contained HTML page
+  contrail find "<value>" [--all]   every recorded input that held a value, and every call that used it
+  contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
@@ -3146,6 +3624,9 @@ ${USAGE}`);
     risks: () => risks(flags, io, style),
     sessions: () => sessions(flags, io, style),
     export: (args) => exportSession(args, flags, io),
+    report: (args) => report(args, flags, io),
+    statusline: () => statusline(flags, io),
+    find: (args) => find(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io)
@@ -3195,7 +3676,7 @@ async function withStore(flags, io, use) {
 }
 async function why(args, flags, io, s) {
   if (args[0] === "commit") return whyCommit(args.slice(1), flags, io, s);
-  const target = parseTarget(flags.stdin ? [readFileSync4(0, "utf8")] : args, io.cwd);
+  const target = parseTarget(flags.stdin ? [readStdin(io)] : args, io.cwd);
   if (target.kind === "command" && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(" ").slice(1), flags, io, s);
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findTarget(db, target, repoKey);
@@ -3338,13 +3819,88 @@ async function sessions(flags, io, s) {
   });
 }
 async function exportSession(args, flags, io) {
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const id = pickSession(db, args[0] ?? flags.session, repoKey);
+    if (flags.otel) {
+      const graph = loadGraph(db, id, io.home, hashToken);
+      const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map((a) => [a.id, explain(a.id, graph)]));
+      io.out(`${JSON.stringify(toOtlp(graph, explanations, findingsFor(graph), VERSION))}
+`);
+      return 0;
+    }
     const events = loadRows(db, id).map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
     io.out(`${JSON.stringify({ contrail: VERSION, schema: SCHEMA_VERSION, session: id, events }, null, 2)}
 `);
     return 0;
   });
+}
+async function report(args, flags, io) {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const id = pickSession(db, args[0] ?? flags.session, repoKey);
+    const graph = loadGraph(db, id, io.home, hashToken);
+    const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map((a) => [a.id, explain(a.id, graph)]));
+    const html = renderReport({
+      graph,
+      explanations,
+      findings: rankFindings(findingsFor(graph)),
+      forest: trailForest(graph, explanations),
+      omitted: graph.actions.length - explanations.size,
+      version: VERSION,
+      generatedAt: /* @__PURE__ */ new Date()
+    });
+    const path = flags.output;
+    if (!path) {
+      io.out(html);
+      return 0;
+    }
+    writeFileSync2(path, html, { mode: 384 });
+    io.out(`Wrote ${path}
+`);
+    return 0;
+  });
+}
+async function find(args, flags, io, s) {
+  const value = (flags.stdin ? readStdin(io) : args.join(" ")).trim();
+  if (!value) throw new ContrailError('Usage: contrail find "<value>" [--all]');
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const sessions2 = flags.session ? [pickSession(db, flags.session, repoKey)] : recentSessions(db, repoKey, flags.all ? 500 : 50, flags.all === true).map((r) => r.id);
+    const hits = sessions2.map((id) => {
+      const graph = loadGraph(db, id, io.home, hashToken);
+      return { graph, sightings: findValue(graph, value) };
+    });
+    if (flags.json) {
+      const json = hits.filter((h) => h.sightings.length).map((h) => ({
+        session: h.graph.actions[0]?.scope.sessionId ?? null,
+        sightings: h.sightings.map(
+          (x) => x.source ? { seq: x.seq, held: { source: x.source.input.label, trust: x.source.input.trust, origin: x.source.input.origin, line: x.source.line } } : { seq: x.seq, used: { action: x.use.action.id, tool: x.use.action.tool, argPath: x.use.argPath, sensitive: x.use.kinds } }
+        )
+      }));
+      io.out(`${JSON.stringify({ value, sessions: json }, null, 2)}
+`);
+    } else {
+      io.out(renderFind(value, hits, sessions2.length, s));
+    }
+    return 0;
+  });
+}
+var readStdin = (io) => io.stdin ? io.stdin() : readFileSync4(0, "utf8");
+async function statusline(flags, io) {
+  const s = io.env.NO_COLOR ? PLAIN : COLOR;
+  try {
+    const input = JSON.parse(readStdin(io) || "{}");
+    const sessionId = typeof input.session_id === "string" ? input.session_id : void 0;
+    const line = await withStore(flags, { ...io, cwd: typeof input.cwd === "string" ? input.cwd : io.cwd }, ({ db, repoKey, hashToken }) => {
+      if (!sessionId || !db.get("SELECT 1 FROM events WHERE session_id = ? LIMIT 1", sessionId)) return renderStatusline(null, [], s);
+      const graph = loadGraph(db, pickSession(db, sessionId, repoKey), io.home, hashToken);
+      return renderStatusline(graph, findingsFor(graph), s);
+    });
+    io.out(`${line}
+`);
+  } catch {
+    io.out(`${s.dim("contrail")}
+`);
+  }
+  return 0;
 }
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
@@ -3399,6 +3955,7 @@ async function doctor(flags, io) {
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1e3)).toISOString() : "never"}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ""}`,
       `content          ${config.storeContent ? "stored as redacted text" : "stored as keyed hashes only (store_content: false)"}`,
+      `launcher         ${existsSync3(join5(dataDir, "bin", "contrail")) ? join5(dataDir, "bin", "contrail") : "written at the next session start"}`,
       ...hook ? [`capture hook     ${hook} ms per event (median of 5)`] : [],
       stats.events === 0 && backlog === 0 ? "No events yet. Run a Claude Code session with the plugin enabled, then check again." : "Recording and queries work."
     ];

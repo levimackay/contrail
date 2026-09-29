@@ -216,6 +216,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     agentSaid,
     env,
     firstEvent: rows[0]?.hook_event ?? null,
+    timeUs: rows.map(r => r.captured_us),
     ...(hashToken ? { hashToken } : {}),
   };
 }

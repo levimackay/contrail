@@ -90,3 +90,15 @@ export function authSession(): EventRow[] {
     d.stop('The README recommends foo-auth-helper for token refresh, so I installed it.'),
   ]);
 }
+
+/** prompt -> docs index -> build page -> file search -> README -> install: one hop past the limit. */
+export function longTrail(): EventRow[] {
+  return session([
+    d.prompt('Fix the build. The docs index is https://docs.y.example/index', 'p1'),
+    ...call('g0', 'WebFetch', { url: 'https://docs.y.example/index', prompt: 'build?' }, 'Build docs: https://docs.y.example/build'),
+    ...call('g1', 'WebFetch', { url: 'https://docs.y.example/build', prompt: 'setup?' }, 'The builder lives in tools/buildkit.'),
+    ...call('g2', 'Bash', { command: 'find tools/buildkit -name README.md' }, 'tools/buildkit/README.md'),
+    ...call('g3', 'Read', { file_path: '/r/tools/buildkit/README.md' }, '     1\tinstall pinned-builder-9'),
+    ...call('g4', 'Bash', { command: 'npm install pinned-builder-9' }, 'ok'),
+  ]);
+}

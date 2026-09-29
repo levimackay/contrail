@@ -45,12 +45,29 @@ function traceAt(
     links,
     upstream: null,
   };
-  if (depth >= MAX_DEPTH) return trace;
-
   const best = links.find(l => l.grade === 'LIKELY') ?? links.find(l => l.firstSeen);
   const source = best?.to ? g.inputs.find(i => i.id === best.to) : undefined;
-  if (source) trace.upstream = followSource(token, source, g, depth + 1, visited);
+  if (!source) return trace;
+  if (depth >= MAX_DEPTH) {
+    const next = nextStep(token, source, g, visited);
+    if (next !== undefined) trace.truncated = { next };
+    return trace;
+  }
+  trace.upstream = followSource(token, source, g, depth + 1, visited);
   return trace;
+}
+
+/**
+ * What followSource would step into, without following it: the call whose own trail continues
+ * from the source, null when there is a step but no single call to start it from (a compaction
+ * summary, a subagent's report), or undefined when the trail really starts here.
+ */
+function nextStep(token: Token, source: Input, g: Graph, visited: Set<string>): string | null | undefined {
+  if (source.origin === 'compaction') return visited.has(source.id) ? undefined : null;
+  if (source.relays) return source.producedBy && !visited.has(`relay:${source.id}`) ? null : undefined;
+  const writer = source.origin === 'file' ? agentWriter(token, source, g) : undefined;
+  if (writer && !visited.has(writer.id)) return writer.id;
+  return source.producedBy && !visited.has(source.producedBy) && g.actions.some(a => a.id === source.producedBy) ? source.producedBy : undefined;
 }
 
 /**

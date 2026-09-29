@@ -1,6 +1,6 @@
 {
   "name": "contrail",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Shows the observable trail behind Claude Code's edits, commands and commits, graded by evidence.",
   "license": "MIT",

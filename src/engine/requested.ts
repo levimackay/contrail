@@ -47,13 +47,14 @@ export function requested(action: Action, tokens: Token[], sentences: Sentence[]
   if (negated) {
     return { verdict: 'NAMED_NEGATED', grade: 'POSSIBLE', searched, sentence: negated.sentence, matched: negated.token.text };
   }
-  const first = kept[0]!;
+  // Quote your most recent words about it: "commit it" over the task you set two turns ago.
+  const latest = kept.reduce((a, b) => (b.sentence.seq > a.sentence.seq ? b : a));
   const verdict = kept.length === groups.size && kept.every(k => k.strong) ? 'NAMED' : 'PARTLY_NAMED';
   return {
     verdict,
     grade: verdict === 'NAMED' ? 'LIKELY' : 'POSSIBLE',
     searched,
-    sentence: first.sentence,
-    matched: first.token.text,
+    sentence: latest.sentence,
+    matched: latest.token.text,
   };
 }

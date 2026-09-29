@@ -63,3 +63,11 @@ test('names that merely contain a negator are not negations', () => {
   const r = requested(create, [mkToken('src/app/not-found.tsx')], [say('p1', 3, 'Create src/app/not-found.tsx with a no-cache header')]);
   assert.equal(r.verdict, 'NAMED');
 });
+
+test('the quoted sentence is your latest words about the action', () => {
+  const commit = mkAction({ id: 't9', preSeq: 44 });
+  const tokens = [mkToken('src/report.js', { group: 0 }), mkToken('report', { group: 0, derived: true }), mkToken('commit', { group: 1, shaped: false })];
+  const r = requested(commit, tokens, [say('p1', 3, 'the report is wrong'), say('p2', 40, 'looks good, commit it')]);
+  assert.equal(r.verdict, 'PARTLY_NAMED');
+  assert.equal(r.sentence?.text, 'looks good, commit it');
+});

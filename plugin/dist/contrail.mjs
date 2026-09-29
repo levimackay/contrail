@@ -853,11 +853,11 @@ function segments(command) {
     let redirectNext = false;
     for (const e of entries) {
       if (typeof e === "string") {
-        if (redirectNext === ">&" && /^(\d{1,4}|-)$/.test(e)) {
+        if ((redirectNext === ">&" || redirectNext === "<&") && /^(\d{1,4}|-)$/.test(e)) {
           redirectNext = false;
           continue;
         }
-        (redirectNext ? cur.redirects : cur.words).push(e);
+        (redirectNext === ">" || redirectNext === ">&" ? cur.redirects : cur.words).push(e);
         redirectNext = false;
         continue;
       }
@@ -871,6 +871,10 @@ function segments(command) {
         continue;
       }
       if (e.op === "<") continue;
+      if (e.op === "<&") {
+        redirectNext = "<&";
+        continue;
+      }
       if (cur.words.length || cur.redirects.length) out.push(cur);
       cur = { words: [], redirects: [] };
     }
@@ -909,6 +913,7 @@ function logicalLines(command) {
 function withoutFdNumbers(line) {
   let out = "";
   let quote2 = null;
+  let wordStart = true;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
     if (quote2) {
@@ -917,15 +922,23 @@ function withoutFdNumbers(line) {
         out += ch + (line[++i] ?? "");
         continue;
       }
-    } else if (ch === "'" || ch === '"') {
+      out += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
       quote2 = ch;
+      wordStart = false;
     } else if (ch === "\\") {
       out += ch + (line[++i] ?? "");
+      wordStart = false;
       continue;
-    } else if ((i === 0 || /\s/.test(line[i - 1])) && /^\d{1,4}[<>]/.test(line.slice(i, i + 5))) {
+    } else if (wordStart && /^\d{1,4}[<>]/.test(line.slice(i, i + 5))) {
       while (/\d/.test(line[i])) i++;
       i--;
+      wordStart = false;
       continue;
+    } else {
+      wordStart = /[\s;|&(]/.test(ch);
     }
     out += ch;
   }

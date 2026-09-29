@@ -88,3 +88,9 @@ test('wrappers and their options are not the command', async () => {
   assert.deepEqual(unwrapCommand(['nice', '-n', '10', 'make']), ['make']);
   assert.deepEqual(unwrapCommand(['git', 'status']), ['git', 'status']);
 });
+
+test('an escaped space keeps a digit inside the word before a redirect', async () => {
+  const { shellSegments } = await import('./tokens.ts');
+  assert.deepEqual(shellSegments('echo a\\ 2>x'), [{ words: ['echo', 'a 2'], redirects: ['x'] }]);
+  assert.deepEqual(shellSegments('cmd 3<&0 arg'), [{ words: ['cmd', 'arg'], redirects: [] }]);
+});

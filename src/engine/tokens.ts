@@ -235,15 +235,15 @@ function segments(command: string): Array<{ words: string[]; redirects: string[]
       entries = line.split(/\s+/).filter(Boolean);
     }
     let cur = { words: [] as string[], redirects: [] as string[] };
-    let redirectNext: false | '>' | '>&' = false;
+    let redirectNext: false | '>' | '>&' | '<&' = false;
     for (const e of entries) {
       if (typeof e === 'string') {
         // >&2, >&1 and >&- duplicate or close a descriptor; only >&word names a file.
-        if (redirectNext === '>&' && /^(\d{1,4}|-)$/.test(e)) {
+        if ((redirectNext === '>&' || redirectNext === '<&') && /^(\d{1,4}|-)$/.test(e)) {
           redirectNext = false;
           continue;
         }
-        (redirectNext ? cur.redirects : cur.words).push(e);
+        (redirectNext === '>' || redirectNext === '>&' ? cur.redirects : cur.words).push(e);
         redirectNext = false;
         continue;
       }
@@ -257,6 +257,10 @@ function segments(command: string): Array<{ words: string[]; redirects: string[]
         continue;
       }
       if (e.op === '<') continue;
+      if (e.op === '<&') {
+        redirectNext = '<&';
+        continue;
+      }
       if (cur.words.length || cur.redirects.length) out.push(cur);
       cur = { words: [], redirects: [] };
     }
@@ -302,6 +306,7 @@ function logicalLines(command: string): string[] {
 function withoutFdNumbers(line: string): string {
   let out = '';
   let quote: string | null = null;
+  let wordStart = true; // after unescaped whitespace or ; | & (
   for (let i = 0; i < line.length; i++) {
     const ch = line[i]!;
     if (quote) {
@@ -310,15 +315,23 @@ function withoutFdNumbers(line: string): string {
         out += ch + (line[++i] ?? '');
         continue;
       }
-    } else if (ch === "'" || ch === '"') {
+      out += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
       quote = ch;
+      wordStart = false;
     } else if (ch === '\\') {
       out += ch + (line[++i] ?? '');
+      wordStart = false;
       continue;
-    } else if ((i === 0 || /\s/.test(line[i - 1]!)) && /^\d{1,4}[<>]/.test(line.slice(i, i + 5))) {
+    } else if (wordStart && /^\d{1,4}[<>]/.test(line.slice(i, i + 5))) {
       while (/\d/.test(line[i]!)) i++;
       i--;
+      wordStart = false;
       continue;
+    } else {
+      wordStart = /[\s;|&(]/.test(ch);
     }
     out += ch;
   }

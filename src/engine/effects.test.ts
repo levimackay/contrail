@@ -42,6 +42,10 @@ test('descriptor redirects are not files, and their numbers are not arguments', 
   assert.deepEqual(expectedShellEffects('cp a.txt b.txt 2>/dev/null', '/r'), [{ kind: 'file', target: '/r/b.txt' }]);
   assert.deepEqual(expectedShellEffects('make >& build.log', '/r'), [{ kind: 'file', target: '/r/build.log' }]);
   assert.deepEqual(expectedShellEffects('echo "2>&1 stays text" > out.txt', '/r'), [{ kind: 'file', target: '/r/out.txt' }]);
+  assert.deepEqual(expectedShellEffects('true&&2>/dev/null git status', '/r'), []);
+  assert.deepEqual(expectedShellEffects('ls|2>err.log sort', '/r'), [{ kind: 'file', target: '/r/err.log' }]);
+  assert.deepEqual(expectedShellEffects('cmd 3<&0 arg', '/r'), []);
+  assert.equal(commitByTime(100, [{ command: 'true&&2>/dev/null git commit -m x', preUs: 99e6, postUs: 101e6 }]).candidates, 1);
 });
 
 test('network commands are expected to reach the host they name', () => {

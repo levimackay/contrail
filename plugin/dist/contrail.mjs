@@ -2555,7 +2555,9 @@ function renderWhy(e, g, note, s = PLAIN) {
     !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
   );
   out.push("", s.bold(HEADING));
-  const shown = bestPerGroup(e.traces);
+  const best = bestPerGroup(e.traces);
+  const credited = new Set(best.filter((t) => t.token.role !== "hint").flatMap((t) => t.links.filter((l) => l.grade !== "UNKNOWN").map((l) => l.to)));
+  const shown = best.filter((t) => t.token.role !== "hint" || t.links.some((l) => l.grade !== "UNKNOWN" && !credited.has(l.to)));
   const found = shown.filter((t) => t.links.some((l) => l.grade !== "UNKNOWN"));
   const unfound = shown.filter((t) => !found.includes(t));
   for (const t of found) trace(t, 1, out, inputs, s);

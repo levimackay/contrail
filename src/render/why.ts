@@ -42,7 +42,11 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
   out.push('', s.bold(HEADING));
 
   // A path, its basename and its stem are alternatives for one target: show only the best of each group.
-  const shown = bestPerGroup(e.traces);
+  // A hint (a directory in a path, a word of a message) is shown only when it adds a source
+  // the targets do not already credit, or a value no target covers.
+  const best = bestPerGroup(e.traces);
+  const credited = new Set(best.filter(t => t.token.role !== 'hint').flatMap(t => t.links.filter(l => l.grade !== 'UNKNOWN').map(l => l.to)));
+  const shown = best.filter(t => t.token.role !== 'hint' || t.links.some(l => l.grade !== 'UNKNOWN' && !credited.has(l.to)));
   const found = shown.filter(t => t.links.some(l => l.grade !== 'UNKNOWN'));
   const unfound = shown.filter(t => !found.includes(t));
   for (const t of found) trace(t, 1, out, inputs, s);

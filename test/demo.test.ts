@@ -258,3 +258,11 @@ test('find lists every input that held a value and every call that used it, in o
   assert.match((await run(['find', 'nothing-here'])).out, /in 0 of 2 sessions[\s\S]*no observed source is not the same as no source/);
   assert.equal((await run(['find'])).code, 1);
 });
+
+test('why shows a directory hint only when it adds a source the full path does not', async () => {
+  const upload = (await run(['why', 'cat ~/.aws/credentials'])).out;
+  assert.match(upload, /\n {2}~\/\.aws\/credentials {2}\(\$\.command\)/);
+  assert.doesNotMatch(upload, /\n {2}\.aws {2}\(/, '.aws repeats the same page line');
+  const edit = (await run(['why', 'auth-service/src/session.ts'])).out;
+  assert.match(edit, /\n {2}auth-service {2}\(\$\.file_path, first used in t1 at seq 3\)\n {4}LIKELY {3}only observed in CLAUDE\.md:4/, 'a directory named in CLAUDE.md is a different source, so it stays');
+});

@@ -2,7 +2,7 @@ import { stringLeaves } from '../util.ts';
 import { availableTo, findInInput, firstUse } from './context.ts';
 import { gradeSources } from './grade.ts';
 import { sameScope, scopeKey } from './scope.ts';
-import { findMention, findNormalized, normalize } from './text.ts';
+import { findMention, normalize } from './text.ts';
 import { extractTokens } from './tokens.ts';
 import type { Action, Graph, Input, Scope, Token, TokenTrace } from './types.ts';
 

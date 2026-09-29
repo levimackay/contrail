@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { explain } from './engine/explain.ts';
@@ -21,7 +21,7 @@ export interface Io {
   home: string;
 }
 
-type Flags = { json?: boolean; data?: string; 'from-hook'?: boolean; help?: boolean; version?: boolean };
+type Flags = { json?: boolean; data?: string; stdin?: boolean; 'from-hook'?: boolean; help?: boolean; version?: boolean };
 
 export const USAGE = `contrail ${VERSION}: the observable trail behind Claude Code actions
 
@@ -35,6 +35,7 @@ Usage:
 Options:
   --json          print the explanation as JSON
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
+  --stdin         read the why target from standard input (used by the /contrail:why skill)
   -h, --help      show this help
   -v, --version   show the version
 `;
@@ -49,6 +50,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       options: {
         json: { type: 'boolean' },
         data: { type: 'string' },
+        stdin: { type: 'boolean' },
         'from-hook': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
@@ -96,14 +98,20 @@ export async function main(argv: string[], io: Io): Promise<number> {
 
 async function openStore(flags: Flags, io: Io): Promise<{ db: Db; dataDir: string }> {
   const dataDir = resolveDataDir(flags.data, io.env, io.home);
-  mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
-  const db = await openDb(join(dataDir, 'contrail.db'));
+  let db: Db;
+  try {
+    mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+    db = await openDb(join(dataDir, 'contrail.db'));
+  } catch (e) {
+    if (e instanceof ContrailError) throw e;
+    throw new ContrailError(`Cannot use the data directory ${dataDir}: ${(e as Error).message}`);
+  }
   migrate(db);
   return { db, dataDir };
 }
 
 async function why(args: string[], flags: Flags, io: Io): Promise<number> {
-  const target = parseTarget(args, io.cwd);
+  const target = parseTarget(flags.stdin ? [readFileSync(0, 'utf8')] : args, io.cwd);
   const { db, dataDir } = await openStore(flags, io);
   try {
     const repoKeyOf = makeRepoKeyOf();

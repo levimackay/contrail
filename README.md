@@ -138,6 +138,7 @@ contrail why <target> [--json] [--data <dir>]
 |---|---|
 | `--json` | Print the explanation as JSON instead of text. |
 | `--data <dir>` | Read the Contrail data directory at `<dir>` instead of the default location. |
+| `--stdin` | Read the target from standard input. The skill uses this so your text is never interpreted by a shell. |
 
 Commands in the current release:
 
@@ -164,7 +165,7 @@ Every line names the rule that produced it (`[R3]`), so a grade can always be tr
 
 ## The `/contrail:why` skill
 
-`/contrail:why <args>` runs the CLI with the same targets and prints its output verbatim in a code block. Claude adds nothing to it.
+`/contrail:why <args>` runs the CLI with the same targets and prints its output verbatim in a code block. Claude adds nothing to it. Your arguments reach the CLI through a quoted heredoc on standard input (`--stdin`), so text like `npm install foo; rm -rf x` is searched for, never run.
 
 That is deliberate. The CLI output is the source of truth, and it keeps the model from "improving" an explanation into something more confident than the evidence. The skill is manual-only (`disable-model-invocation: true`): Claude never runs it on its own, only when you type it.
 
@@ -274,20 +275,19 @@ Contrail stores what your agent read. It is built so that it does not become a l
 - **Local only.** No network calls and no telemetry.
 - **Outside your repo.** Data lives in the plugin's data directory, so it is never part of your repository and it survives deleting a worktree.
 - **Redaction before storage.** Secrets are replaced with `[REDACTED:<rule>]` before anything is written to the database, for example `OPENAI_API_KEY=[REDACTED:env-secret]`. Redaction walks the decoded string values of each payload rather than the serialized JSON, because escape sequences would otherwise defeat pattern boundaries. The rules cover:
-  - PEM private-key blocks
-  - AWS access keys
-  - GitHub tokens
-  - `sk-` and `sk-ant-` API keys
-  - Slack and Stripe tokens
-  - Google API keys
-  - JWTs
-  - `Authorization`, `Proxy-Authorization` and `X-Api-Key` headers
-  - passwords in URL userinfo
-  - sensitive `KEY=VALUE` pairs (`secret`, `token`, `passw`, `api_key`, `access_key`, `private_key`, `credential`)
+  - PEM and PGP private-key blocks, including truncated ones
+  - AWS, GitHub, GitLab, npm, Hugging Face, OpenAI, Anthropic, Slack, Stripe, SendGrid and Google credentials
+  - Slack and Discord webhook URLs, Azure SAS signatures and JWTs
+  - `Authorization`, `Proxy-Authorization`, `X-Api-Key` and `Cookie` / `Set-Cookie` headers
+  - passwords in URL userinfo, `--password` flags, `curl -u user:pass` and `mysql -p…`
+  - sensitive `KEY=VALUE` pairs (`secret`, `token`, `password`, `pwd`, `api_key`, `access_key`, `private_key`, `credential`), quoted or bare
+  - any string stored under a secret-named JSON key, such as `{"password": "…"}` or `{"key": "DB_PASSWORD", "value": "…"}`
 
-  Placeholders such as `${VAR}`, `<...>` and `xxxx` are left alone.
+  Placeholders such as `${VAR}`, `<...>` and `xxxx`, and code that only names a secret (`getToken()`, `process.env.API_KEY`), are left alone. Every pattern is bounded, so a long run of text cannot make redaction backtrack; strings are capped before they are scanned.
 - **No entropy scanning.** High-entropy detection flags nearly every git SHA, UUID and tool id, and those are exactly the keys Contrail joins on. The rules match known secret shapes and keyword-named values instead.
-- **Bounded content.** Strings are capped at 256 KB. Edit `originalFile` contents and images are dropped, keeping only a sha256.
+- **Bounded content.** Strings are capped at 256 KB. Edit `originalFile` contents and images are dropped, keeping only a sha256. A payload that cannot be processed is stored as a failure and never blocks later events.
+- **Only instruction files are read from disk.** When Claude Code reports a loaded `CLAUDE.md` or `.claude/rules` file, Contrail reads that file (regular files only, within the size cap). If it changed after it loaded, its text is not used, because it is no longer what the agent saw.
+- **Safe to print.** Reports strip control characters and backticks from recorded text, so a recorded string cannot restyle your terminal or turn into a command when a report is shown inside Claude Code.
 - **A short unredacted window.** Each hook event is first written to a spool file, unredacted, with mode 0600. Ingest redacts it into the database and deletes the file. Ingest runs after each turn (an async `Stop` hook) and before every `contrail` command, so unredacted text exists for about one turn. That is the same trust boundary as Claude Code's own plaintext session transcripts.
 - **Permissions.** The data directory is 0700 and its files are 0600.
 - **Uninstall deletes the data**, unless you pass `--keep-data`.

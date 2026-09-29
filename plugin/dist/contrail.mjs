@@ -437,7 +437,7 @@ var require_shell_quote = __commonJS({
 import { homedir } from "node:os";
 
 // src/cli.ts
-import { mkdirSync, readdirSync as readdirSync3 } from "node:fs";
+import { mkdirSync, readdirSync as readdirSync3, readFileSync as readFileSync2 } from "node:fs";
 import { basename as basename2, join as join3 } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -519,7 +519,7 @@ function quote(input, token) {
 }
 
 // src/engine/requested.ts
-var NEGATOR = /\b(not|never|no|without|avoid|stop|skip|instead of|rather than)\b|n't\b/i;
+var NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
 function splitSentences(text) {
   return text.replace(/```[\s\S]*?(?:```|$)/g, "\n").split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
 }
@@ -613,7 +613,7 @@ function changedFiles(response, cwd) {
   return arr(field(diff, "changedFiles")).map((f) => typeof f === "string" ? f : str(f, "path") ?? str(f, "filePath") ?? str(f, "file")).filter((f) => Boolean(f)).map((f) => isAbsolute(f) || !cwd ? f : resolve(cwd, f));
 }
 function clip(s, max) {
-  const one = s.replace(/\s+/g, " ").trim();
+  const one = s.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/`/g, "'").replace(/\s+/g, " ").trim();
   return one.length <= max ? one : one.slice(0, max - 1) + "\u2026";
 }
 
@@ -757,6 +757,7 @@ var WRAPPERS = /* @__PURE__ */ new Set(["sudo", "env", "time", "nohup", "command
 var URL_RE = /https?:\/\/[^\s'"<>)\]]+/g;
 var WORD_RE = /[A-Za-z0-9_@][A-Za-z0-9_\-./@:]*[A-Za-z0-9_]/g;
 var MAX_HINTS = 20;
+var MAX_TARGETS = 40;
 function extractTokens(action, env) {
   const b = collector(env);
   const input = action.input;
@@ -803,6 +804,7 @@ function collector(env) {
     [...env.cwd.split("/"), ...env.home.split("/"), env.user].filter(Boolean).map((s) => s.toLowerCase())
   );
   let hintCount = 0;
+  let targetCount = 0;
   const passes = (raw) => {
     const lower = raw.toLowerCase();
     return raw.length >= 4 && /[a-z]/i.test(raw) && !raw.startsWith("-") && !raw.startsWith("[REDACTED") && !STOP.has(lower) && !noise.has(lower);
@@ -817,7 +819,7 @@ function collector(env) {
   const api = {
     /** `exempt` skips the word filters, for values that are explicit on purpose (packages, URLs, skills). */
     target(text, group, argPath, exempt = false) {
-      if (exempt ? text.length >= 2 : passes(text)) push(text, "target", group, argPath);
+      if (targetCount < MAX_TARGETS && (exempt ? text.length >= 2 : passes(text)) && push(text, "target", group, argPath)) targetCount++;
     },
     hint(text, argPath) {
       if (hintCount < MAX_HINTS && passes(text) && isShaped(text) && push(text, "hint", null, argPath)) hintCount++;
@@ -834,7 +836,8 @@ function collector(env) {
       const abs = isAbsolute2(p) ? p : resolve2(env.cwd || "/", p);
       if (abs === env.cwd || abs === env.home || abs === "/") return;
       const rel = displayPath(abs, env.cwd, env.home);
-      push(rel, "target", group, argPath);
+      if (targetCount >= MAX_TARGETS) return;
+      if (push(rel, "target", group, argPath)) targetCount++;
       const base = basename(abs);
       if (!GENERIC_BASENAMES.has(base.toLowerCase())) {
         if (base !== rel && passes(base)) push(base, "target", group, argPath);
@@ -895,7 +898,7 @@ function bash(command, b) {
 }
 function segments(command) {
   const out = [];
-  for (const line of command.split("\n")) {
+  for (const line of withoutHeredocs(logicalLines(command))) {
     let entries;
     try {
       entries = (0, import_shell_quote.parse)(line, (key) => `$${key}`);
@@ -924,6 +927,48 @@ function segments(command) {
       cur = { words: [], redirects: [] };
     }
     if (cur.words.length || cur.redirects.length) out.push(cur);
+  }
+  return out;
+}
+function logicalLines(command) {
+  const out = [];
+  let cur = "";
+  let quote2 = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (quote2) {
+      if (ch === quote2) quote2 = null;
+      else if (ch === "\\" && quote2 === '"') {
+        cur += ch + (command[++i] ?? "");
+        continue;
+      }
+    } else if (ch === "'" || ch === '"') {
+      quote2 = ch;
+    } else if (ch === "\\" && command[i + 1] === "\n") {
+      i++;
+      cur += " ";
+      continue;
+    } else if (ch === "\n") {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+function withoutHeredocs(lines) {
+  const out = [];
+  let end = null;
+  for (const line of lines) {
+    if (end !== null) {
+      if (line.trim() === end) end = null;
+      continue;
+    }
+    out.push(line);
+    const heredoc = /<<-?\s*(['"]?)([A-Za-z_][\w-]*)\1/.exec(line);
+    if (heredoc) end = heredoc[2];
   }
   return out;
 }
@@ -998,8 +1043,10 @@ function traceToken(token, action, g, depth = 0, visited = /* @__PURE__ */ new S
   if (next) trace2.upstream = { via: producer, trace: next };
   return trace2;
 }
+var UPSTREAM_TOKENS = 8;
 function headline(action, g, depth, visited) {
-  const traces = extractTokens(action, g.env).map((t) => traceToken(t, action, g, depth, visited));
+  const tokens = extractTokens(action, g.env).sort((a, b) => Number(a.role === "hint") - Number(b.role === "hint")).slice(0, UPSTREAM_TOKENS);
+  const traces = tokens.map((t) => traceToken(t, action, g, depth, new Set(visited)));
   const found = (t) => t.links.some((l) => l.grade !== "UNKNOWN");
   return traces.find((t) => t.token.role === "target" && found(t)) ?? traces.find(found) ?? traces[0] ?? null;
 }
@@ -1018,8 +1065,7 @@ function explain(actionId, g) {
   const turn = prompt ? { type: "in_turn", from: action.id, to: `prompt:${prompt.promptId}`, grade: "DIRECT", rule: "R1", recorded: true } : null;
   const tokens = extractTokens(action, g.env);
   const sentences = g.prompts.flatMap((p) => splitSentences(p.text).map((text) => ({ promptId: p.promptId, seq: p.seq, text })));
-  const visited = /* @__PURE__ */ new Set([action.id]);
-  const traces = tokens.map((t) => traceToken(t, action, g, 0, visited));
+  const traces = tokens.map((t) => traceToken(t, action, g, 0, /* @__PURE__ */ new Set([action.id])));
   const effects = g.effects.filter((e) => e.actionId === action.id).map((e) => ({ type: "changed", from: action.id, to: e.id, grade: "DIRECT", rule: "R1", recorded: true }));
   return {
     action,
@@ -1223,7 +1269,7 @@ function buildGraph(rows, who) {
       origin: "instructions",
       trust: str(ins.p, "memory_type") === "Project" ? "local" : "config",
       ref: shown,
-      label: extra?.changedSinceLoad === true ? `${shown} (changed on disk since it loaded)` : shown,
+      label: extra?.changedSinceLoad === true ? `${shown} (changed after it loaded; its text is not used)` : shown,
       text: str(extra, "text") ?? "",
       truncated: (str(extra, "text") ?? "").includes("[contrail: truncated"),
       fidelity: "read-at-ingest",
@@ -1274,14 +1320,14 @@ function templateTrust(source) {
 }
 function outputInput(a, saw, env) {
   if (NO_OUTPUT_TOOLS.has(a.tool) || a.postSeq === null) return null;
-  const text = saw?.text ?? toText(a.response);
+  const text = saw?.text || toText(a.response);
   return {
     id: `out:${a.id}`,
     scope: a.scope,
     ...classify(a, env),
     text,
     truncated: text.includes("[contrail: truncated"),
-    fidelity: saw ? "as-seen" : "reported",
+    fidelity: saw?.text ? "as-seen" : "reported",
     availableAt: saw?.seq ?? a.postSeq,
     producedBy: a.id,
     promptId: a.promptId
@@ -1358,52 +1404,101 @@ import { join } from "node:path";
 
 // src/ingest/redact.ts
 var tag = (id) => `[REDACTED:${id}]`;
-var NOT_A_SECRET = /^(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<[^>]*>|x{3,}|\*{3,}|\.{3}|changeme|your[-_a-z]*|.*[([].*|[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+|\d+)$/i;
-var whole = (id) => () => tag(id);
+var PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w*\}?|<[^>]*>|x{3,}|\*{3,}|\.{3}|changeme|your[-_a-z]*)$/i;
+var CODE_REF = /^(?:[A-Za-z_][\w.]*(?:\(.*\)|\[.*\]|\[)|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|\d{1,6})$/;
+var namesSecret = (v) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.startsWith("[REDACTED");
+var SECRET_NAME = /secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie/i;
 var RULES = [
   {
     id: "private-key",
-    re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
-    replace: whole("private-key")
+    // Unterminated keys (truncated output) take only whole base64 lines, so the text after them survives.
+    re: /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,65536}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----|(?:\r?\n[A-Za-z0-9+/=]{1,128}(?=\r?\n|$)){0,1024})/g
   },
-  { id: "aws-access-key", re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g, replace: whole("aws-access-key") },
+  { id: "aws-access-key", re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
+  { id: "github-token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g },
+  { id: "gitlab-token", re: /\bglpat-[A-Za-z0-9_-]{20,64}/g },
+  { id: "npm-token", re: /\bnpm_[A-Za-z0-9]{36}\b/g },
+  { id: "huggingface-token", re: /\bhf_[A-Za-z0-9]{30,64}\b/g },
+  { id: "anthropic-key", re: /\bsk-ant-[A-Za-z0-9_-]{20,256}/g },
   {
-    id: "github-token",
-    re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g,
-    replace: whole("github-token")
+    id: "openai-key",
+    re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,256}/g,
+    // Real keys mix digits and capitals; a kebab-case CSS class does not.
+    replace: (m) => /\d/.test(m) && /[A-Z]/.test(m) ? tag("openai-key") : m
   },
-  { id: "anthropic-key", re: /\bsk-ant-[A-Za-z0-9_-]{20,}/g, replace: whole("anthropic-key") },
-  { id: "openai-key", re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}/g, replace: whole("openai-key") },
-  { id: "slack-token", re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, replace: whole("slack-token") },
-  { id: "stripe-key", re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g, replace: whole("stripe-key") },
-  { id: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{35}/g, replace: whole("google-api-key") },
-  { id: "jwt", re: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, replace: whole("jwt") },
+  { id: "slack-token", re: /\bxox[abposr]-[A-Za-z0-9-]{10,256}/g },
+  {
+    id: "webhook-url",
+    re: /https:\/\/(?:hooks\.slack\.com\/services|(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks)\/[A-Za-z0-9/_-]{8,256}/g
+  },
+  { id: "stripe-key", re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,256}/g },
+  { id: "stripe-webhook-secret", re: /\bwhsec_[A-Za-z0-9]{24,256}/g },
+  { id: "sendgrid-key", re: /\bSG\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{16,128}/g },
+  { id: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{35}/g },
+  { id: "jwt", re: /\beyJ[A-Za-z0-9_-]{8,8192}\.eyJ[A-Za-z0-9_-]{8,8192}\.[A-Za-z0-9_-]{8,8192}/g },
+  { id: "azure-sas", re: /([?&]sig=)[A-Za-z0-9%+/=]{16,512}/g, replace: (_m, prefix) => `${prefix}${tag("azure-sas")}` },
   {
     id: "auth-header",
-    re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s*[:=]\s*["']?)((?:bearer|basic|token)\s+)?([^\s"',;]+)/gi,
-    replace: (m, name, sep, scheme, value) => NOT_A_SECRET.test(value) || value.startsWith("[REDACTED") ? m : `${name}${sep}${scheme ?? ""}${tag("auth-header")}`
+    re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s{0,4}[:=]\s{0,4}["']?)((?:bearer|basic|token)\s{1,4})?([^\s"',;]{1,4096})/gi,
+    replace: (m, name, sep, scheme, value) => PLACEHOLDER.test(value) || value.startsWith("[REDACTED") ? m : `${name}${sep}${scheme ?? ""}${tag("auth-header")}`
+  },
+  {
+    id: "cookie",
+    re: /\b((?:set-)?cookie)(\s{0,4}:\s{0,4})[^\r\n]{1,4096}/gi,
+    replace: (_m, name, sep) => `${name}${sep}${tag("cookie")}`
   },
   {
     id: "url-password",
-    re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s@/]+)@/gi,
-    replace: (m, prefix, password) => NOT_A_SECRET.test(password) ? m : `${prefix}${tag("url-password")}@`
+    // Greedy up to the last @ so a password containing @ is fully removed; container digests are not credentials.
+    re: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/]{0,256}:)([^\s/]{1,256})@(?!sha256:)/gi,
+    replace: (m, prefix, password) => PLACEHOLDER.test(password) ? m : `${prefix}${tag("url-password")}@`
+  },
+  {
+    id: "cli-password",
+    re: /((?:^|\s)--(?:password|passwd|pass)(?:=|\s{1,4}))(["']?)([^\s"']{1,256})/g,
+    replace: (m, flag, quote2, value) => PLACEHOLDER.test(value) ? m : `${flag}${quote2}${tag("cli-password")}`
+  },
+  {
+    id: "cli-password",
+    re: /((?:^|\s)(?:-u|--user)(?:=|\s{1,4})["']?[^\s:"']{1,128}:)([^\s"']{1,256})/g,
+    replace: (_m, prefix) => `${prefix}${tag("cli-password")}`
+  },
+  {
+    id: "cli-password",
+    re: /(\bmysql(?:dump|admin)?\b[^\n]{0,200}?\s-p)([^\s-][^\s]{2,255})/g,
+    replace: (_m, prefix) => `${prefix}${tag("cli-password")}`
   },
   {
     id: "env-secret",
-    re: /\b([A-Za-z0-9_.-]*(?:secret|token|passw(?:or)?d?|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_]*)(["']?\s*[:=]\s*)(["']?)([^\s"',;]{6,})/gi,
-    replace: (m, key, sep, quote2, value) => NOT_A_SECRET.test(value) || value.startsWith("[REDACTED") ? m : `${key}${sep}${quote2 ?? ""}${tag("env-secret")}`
+    re: /\b([A-Za-z0-9_.-]{0,64}(?:secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_]{0,64})(["']?\s{0,4}[:=]\s{0,4})(?:(["'])([^"'\n]{6,512})\3|([^\s"',;]{6,512}))/gi,
+    replace: (m, key, sep, quote2, quoted, bare) => {
+      const value = quoted ?? bare ?? "";
+      if (namesSecret(value)) return m;
+      return quote2 ? `${key}${sep}${quote2}${tag("env-secret")}${quote2}` : `${key}${sep}${tag("env-secret")}`;
+    }
   }
 ];
 function redactString(s) {
   let out = s;
-  for (const rule of RULES) out = out.replace(rule.re, rule.replace);
+  for (const rule of RULES) {
+    const replace = rule.replace ?? (() => tag(rule.id));
+    out = out.replace(rule.re, replace);
+  }
   return out;
 }
-function redactValue(value) {
-  if (typeof value === "string") return redactString(value);
-  if (Array.isArray(value)) return value.map(redactValue);
+function redactValue(value, key = "") {
+  if (typeof value === "string") {
+    if (key && SECRET_NAME.test(key) && value.length >= 6 && !namesSecret(value)) return tag("secret-field");
+    return redactString(value);
+  }
+  if (Array.isArray(value)) return value.map((v) => redactValue(v));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValue(v)]));
+    const o = value;
+    const pairName = typeof o.key === "string" ? o.key : typeof o.name === "string" ? o.name : "";
+    const secretPair = pairName !== "" && SECRET_NAME.test(pairName);
+    return Object.fromEntries(
+      Object.entries(o).map(([k, v]) => [k, redactValue(v, secretPair && k === "value" ? "secret" : k)])
+    );
   }
   return value;
 }
@@ -1436,7 +1531,13 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now()) {
     } catch {
       continue;
     }
-    const row = toRow(name, raw, Number(mtimeNs / 1000n), repoKeyOf);
+    const capturedUs = Number(mtimeNs / 1000n);
+    let row;
+    try {
+      row = toRow(name, raw, capturedUs, repoKeyOf);
+    } catch (e) {
+      row = failedRow(capturedUs, `${name}: ${e.message}`);
+    }
     if (row.parseError) report.parseErrors++;
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -1481,20 +1582,7 @@ function toRow(name, raw, capturedUs, repoKeyOf) {
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return {
-      capturedUs,
-      sessionId: null,
-      promptId: null,
-      agentId: null,
-      hookEvent: "unparsed",
-      toolName: null,
-      toolUseId: null,
-      cwd: null,
-      repoKey: null,
-      touches: [],
-      payload: JSON.stringify({ raw: capString(redactString(raw)) }),
-      parseError: `${name}: ${e.message}`
-    };
+    return { ...failedRow(capturedUs, `${name}: ${e.message}`), payload: JSON.stringify({ raw: redactString(capString(raw)) }) };
   }
   const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
   const hookEvent = str(p, "hook_event_name") ?? "unknown";
@@ -1510,18 +1598,41 @@ function toRow(name, raw, capturedUs, repoKeyOf) {
     toolUseId: str(p, "tool_use_id") ?? null,
     cwd,
     repoKey: cwd ? repoKeyOf(cwd) : null,
-    payload: JSON.stringify(capValue(redactValue(dropBulky(p)))),
+    // Cap before redacting, so no pattern ever scans more than STRING_CAP characters.
+    payload: JSON.stringify(redactValue(capValue(dropBulky(p)))),
     parseError: null,
     touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
   };
 }
+function failedRow(capturedUs, parseError) {
+  return {
+    capturedUs,
+    sessionId: null,
+    promptId: null,
+    agentId: null,
+    hookEvent: "unparsed",
+    toolName: null,
+    toolUseId: null,
+    cwd: null,
+    repoKey: null,
+    touches: [],
+    payload: "{}",
+    parseError
+  };
+}
+var INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$/i;
 function attachInstructionText(p, capturedUs) {
   const path = str(p, "file_path");
-  if (!path) return;
+  if (!path || !INSTRUCTION_FILE.test(path)) return;
   try {
-    const text = readFileSync(path, "utf8");
-    const changedSinceLoad = statSync(path).mtimeMs * 1e3 > capturedUs;
-    p._contrail = { text, sha256: sha256(text), changedSinceLoad };
+    const st = statSync(path);
+    if (!st.isFile() || st.size > STRING_CAP) {
+      p._contrail = { skipped: st.isFile() ? "larger than the storage cap" : "not a regular file" };
+      return;
+    }
+    const changedSinceLoad = st.mtimeMs * 1e3 > capturedUs;
+    const text = changedSinceLoad ? "" : readFileSync(path, "utf8");
+    p._contrail = { text, sha256: text ? sha256(text) : null, changedSinceLoad };
   } catch {
     p._contrail ??= { missing: true };
   }
@@ -1632,14 +1743,20 @@ Set CONTRAIL_HOME to pick one.`);
 import { existsSync as existsSync2, realpathSync as realpathSync2 } from "node:fs";
 import { resolve as resolve3 } from "node:path";
 function parseTarget(args, cwd) {
-  const text = args.join(" ").trim();
+  const text = unquote(args.join(" ").trim());
   if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | last>');
   if (text === "last") return { kind: "last" };
   const abs = resolve3(cwd, text);
   if (!/\s/.test(text) && (existsSync2(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) return { kind: "path", path: abs, shown: text };
   return { kind: "command", text };
 }
+function unquote(s) {
+  const m = /^(["'])(.*)\1$/s.exec(s);
+  return m ? m[2].trim() : s;
+}
 var WRITE_OR_EXTERNAL = `(tool_name IN ('Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash', 'WebFetch') OR tool_name LIKE 'mcp%')`;
+var COMMAND = `COALESCE(json_extract(payload, '$.tool_input.command'), '')`;
+var NOT_CONTRAIL = `NOT (${COMMAND} LIKE '%bin/contrail%' OR ${COMMAND} LIKE 'contrail %')`;
 function findTarget(db, target, repoKey) {
   let rows;
   if (target.kind === "path") {
@@ -1659,7 +1776,7 @@ function findTarget(db, target, repoKey) {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
         WHERE hook_event = 'PreToolUse' AND tool_name = 'Bash'
-          AND instr(json_extract(payload, '$.tool_input.command'), ?) > 0
+          AND instr(${COMMAND}, ?) > 0 AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC`,
       target.text
     );
@@ -1667,7 +1784,7 @@ function findTarget(db, target, repoKey) {
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND repo_key = ? AND ${WRITE_OR_EXTERNAL}
+        WHERE hook_event = 'PreToolUse' AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey
     );
@@ -1915,6 +2032,7 @@ Usage:
 Options:
   --json          print the explanation as JSON
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
+  --stdin         read the why target from standard input (used by the /contrail:why skill)
   -h, --help      show this help
   -v, --version   show the version
 `;
@@ -1928,6 +2046,7 @@ async function main(argv, io) {
       options: {
         json: { type: "boolean" },
         data: { type: "string" },
+        stdin: { type: "boolean" },
         "from-hook": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" }
@@ -1980,13 +2099,19 @@ ${e.stack ?? String(e)}
 }
 async function openStore(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home);
-  mkdirSync(join3(dataDir, "spool"), { recursive: true, mode: 448 });
-  const db = await openDb(join3(dataDir, "contrail.db"));
+  let db;
+  try {
+    mkdirSync(join3(dataDir, "spool"), { recursive: true, mode: 448 });
+    db = await openDb(join3(dataDir, "contrail.db"));
+  } catch (e) {
+    if (e instanceof ContrailError) throw e;
+    throw new ContrailError(`Cannot use the data directory ${dataDir}: ${e.message}`);
+  }
   migrate(db);
   return { db, dataDir };
 }
 async function why(args, flags, io) {
-  const target = parseTarget(args, io.cwd);
+  const target = parseTarget(flags.stdin ? [readFileSync2(0, "utf8")] : args, io.cwd);
   const { db, dataDir } = await openStore(flags, io);
   try {
     const repoKeyOf = makeRepoKeyOf();

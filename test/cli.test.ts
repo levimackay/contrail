@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { main, type Io } from '../src/cli.ts';
-import { authSession, CLAUDE_MD } from './fixtures/synthetic.ts';
+import { authSession, CLAUDE_MD, d, session } from './fixtures/synthetic.ts';
 
 /** Writes a recorded session into a spool the way the capture hook would, in order. */
 function spoolFrom(rows = authSession()): string {
@@ -81,4 +82,27 @@ test('help and unknown commands', async () => {
   const bad = await run(['frobnicate']);
   assert.equal(bad.code, 2);
   assert.match(bad.err, /unknown command "frobnicate"/);
+});
+
+test('a later "contrail why" run by the agent never answers itself', async () => {
+  const rows = authSession();
+  const own = session([d.pre('t9', 'Bash', { command: 'sh /x/plugin/bin/contrail why "npm install foo-auth-helper"' })]);
+  const data = spoolFrom([...rows, { ...own[0]!, id: 99, captured_us: 99_000, session_id: 's1' }]);
+  const r = await run(['why', 'npm install foo-auth-helper', '--data', data]);
+  assert.match(r.out, /^Bash {2}npm install foo-auth-helper/);
+});
+
+test('--stdin takes the target as typed into the skill, quotes and all', () => {
+  const data = spoolFrom();
+  const launcher = new URL('../plugin/bin/contrail', import.meta.url).pathname;
+  spawnSync('npm', ['run', 'build', '--silent'], { cwd: new URL('..', import.meta.url).pathname });
+  const r = spawnSync('sh', [launcher, 'why', '--data', data, '--stdin'], { input: '"npm install foo-auth-helper"\n', encoding: 'utf8', cwd: '/' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /only observed in auth-service\/README\.md:83/);
+});
+
+test('an unwritable data directory is a clear error, not a crash', { skip: process.getuid?.() === 0 }, async () => {
+  const r = await run(['doctor', '--data', '/System/contrail-cannot-write-here']);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /^contrail: Cannot use the data directory/);
 });

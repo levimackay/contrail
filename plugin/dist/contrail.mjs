@@ -1813,8 +1813,8 @@ function buildGraph(rows, who) {
       }
       case "PostToolBatch":
         for (const call of arr(p.tool_calls)) {
-          const callId = str(call, "tool_use_id");
-          if (callId) modelSaw.set(callId, { seq, text: toText(field(call, "tool_response")) });
+          const callId2 = str(call, "tool_use_id");
+          if (callId2) modelSaw.set(callId2, { seq, text: toText(field(call, "tool_response")) });
         }
         break;
       case "PostCompact":
@@ -2183,6 +2183,9 @@ function styleFor(env, isTTY) {
   if (env.FORCE_COLOR && env.FORCE_COLOR !== "0") return COLOR;
   return isTTY ? COLOR : PLAIN;
 }
+function callId(id) {
+  return id.length > 12 ? `${id.slice(0, 5)}\u2026${id.slice(-5)}` : id;
+}
 
 // src/render/why.ts
 var HEADING = "Where the values came from (data provenance, not the agent's reasons)";
@@ -2198,7 +2201,7 @@ function renderWhy(e, g, note, s = PLAIN) {
   out.push(`${s.bold(a.tool)}  ${s.bold(describe(a, g))}`);
   out.push(
     s.dim(
-      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${a.id} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${a.scope.agentId}` : "main agent"}${a.status === "ok" ? "" : ` \xB7 ${a.status.toUpperCase()}`}`
+      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${a.scope.agentId}` : "main agent"}${a.status === "ok" ? "" : ` \xB7 ${a.status.toUpperCase()}`}`
     )
   );
   if (note) out.push(s.dim(`  ${note}`));
@@ -2241,7 +2244,7 @@ function renderWhy(e, g, note, s = PLAIN) {
 }
 function trace(t, depth, out, inputs, s) {
   const pad3 = "  ".repeat(depth);
-  const firstUse2 = t.firstUse ? `, first used in ${t.firstUse.actionId} at seq ${t.firstUse.preSeq}` : "";
+  const firstUse2 = t.firstUse ? `, first used in ${callId(t.firstUse.actionId)} at seq ${t.firstUse.preSeq}` : "";
   out.push(`${pad3}${s.accent(t.token.text)}  ${s.dim(`(${t.token.argPath}${firstUse2})`)}`);
   for (const l of t.links) {
     if (!l.to) {
@@ -2254,12 +2257,12 @@ function trace(t, depth, out, inputs, s) {
     out.push(`${pad3}  ${s.grade(l.grade)}${sourceWording(l, where)}  ${s.dim(`[${l.rule}]`)}`);
     if (l.quote?.text) out.push(`${pad3}           ${s.dim(l.quote.line != null ? `${l.quote.line}\u2502` : "\u2502")} ${clip(l.quote.text, 100)}`);
     const origin = originWording(src);
-    out.push(`${pad3}           ${src.trust === "external" ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` \xB7 returned by ${src.producedBy} (seq ${src.availableAt})` : "")}`);
+    out.push(`${pad3}           ${src.trust === "external" ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` \xB7 returned by ${callId(src.producedBy)} (seq ${src.availableAt})` : "")}`);
   }
   if (t.links.every((l) => l.grade === "UNKNOWN") && depth > 1) out.push(s.dim(`${pad3}  the trail starts here: the reason is not observable`));
   if (t.upstream) {
     const u = t.upstream;
-    const heading = u.kind === "call" ? `how the agent came to call ${u.via?.tool} ${u.via?.id}:` : u.kind === "conduit" ? `that text was written by the agent (${u.via?.tool} ${u.via?.id}); following the same value back:` : "a compaction summary is agent-written; the same value before the compaction:";
+    const heading = u.kind === "call" ? `how the agent came to call ${u.via?.tool} ${callId(u.via?.id ?? "")}:` : u.kind === "conduit" ? `that text was written by the agent (${u.via?.tool} ${callId(u.via?.id ?? "")}); following the same value back:` : "a compaction summary is agent-written; the same value before the compaction:";
     out.push(s.dim(`${pad3}  ${heading}`));
     trace(u.trace, depth + 2, out, inputs, s);
   }
@@ -2473,7 +2476,7 @@ function renderRisks(findings, scanned, g, s = PLAIN) {
     out.push("", `${mark} ${s.bold(describe(f.action, graph))}`);
     const asked = f.requested === "NAMED" ? "named by you" : f.requested === "NOT_NAMED" ? s.flag("not named by you") : f.requested.toLowerCase().replace(/_/g, " ");
     const prompt = graph.prompts.find((p) => p.promptId === f.action.promptId);
-    out.push(`  ${s.accent(f.kinds.join(" \xB7 "))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)} \xB7 ${prompt?.label ?? "no turn"} \xB7 ${f.action.id}`)}`);
+    out.push(`  ${s.accent(f.kinds.join(" \xB7 "))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)} \xB7 ${prompt?.label ?? "no turn"} \xB7 ${callId(f.action.id)}`)}`);
     const external = f.sources.filter((x) => x.input.trust === "external");
     const shown = (external.length ? external : f.sources).slice(0, 3);
     if (!shown.length) {
@@ -2503,11 +2506,11 @@ function renderCommit(r, g, s = PLAIN) {
   if (r.via === "time") {
     const at = r.commitSec ? new Date(r.commitSec * 1e3).toISOString().slice(11, 19) : "that second";
     out.push(
-      `  ${s.grade("LIKELY")}made by ${action.tool} ${action.id} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim("[R9]")}`,
+      `  ${s.grade("LIKELY")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim("[R9]")}`,
       `           ${s.dim("git printed no commit line for this command, so the join is on time, not on git's output")}`
     );
   } else {
-    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${action.id} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
+    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
   }
   const verdict = e.requested.verdict;
   const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : "";
@@ -2530,7 +2533,7 @@ function renderCommit(r, g, s = PLAIN) {
     }
     const w = f.writer;
     out.push(
-      `  ${s.grade(f.grade)}${shown}  \u2190 ${w.action.tool} ${w.action.id} ${clip(describe(w.action, g), 44)}  ${w.named ? s.dim("named by you") : s.flag("not named by you")}  ${s.dim("[R7]")}`
+      `  ${s.grade(f.grade)}${shown}  \u2190 ${w.action.tool} ${callId(w.action.id)} ${clip(describe(w.action, g), 44)}  ${w.named ? s.dim("named by you") : s.flag("not named by you")}  ${s.dim("[R7]")}`
     );
   }
   const unnamed = r.files.filter((f) => f.writer && !f.writer.named).length;

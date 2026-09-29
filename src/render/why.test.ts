@@ -45,3 +45,9 @@ test('Contrail never uses causal or accusatory wording of its own', () => {
     assert.ok(!own.includes(word), `report uses "${word}"`);
   }
 });
+
+test('long tool call ids are shortened in reports, never in JSON', async () => {
+  const { callId } = await import('./style.ts');
+  assert.equal(callId('toolu_01XWNSRthmT3jfsUEY1ALhq1'), 'toolu…ALhq1');
+  assert.equal(callId('t4'), 't4');
+});

@@ -2,7 +2,7 @@ import type { CommitFile } from '../engine/effects.ts';
 import type { Finding } from '../engine/risks.ts';
 import type { Action, Commit, Explanation, Graph, Grade, Input, TokenTrace } from '../engine/types.ts';
 import { clip, displayPath } from '../util.ts';
-import { PLAIN, type Style } from './style.ts';
+import { callId, PLAIN, type Style } from './style.ts';
 import { describe, originWording } from './why.ts';
 
 export interface SessionSummary {
@@ -159,7 +159,7 @@ export function renderRisks(findings: Finding[], scanned: { actions: number; ses
     out.push('', `${mark} ${s.bold(describe(f.action, graph))}`);
     const asked = f.requested === 'NAMED' ? 'named by you' : f.requested === 'NOT_NAMED' ? s.flag('not named by you') : f.requested.toLowerCase().replace(/_/g, ' ');
     const prompt = graph.prompts.find(p => p.promptId === f.action.promptId);
-    out.push(`  ${s.accent(f.kinds.join(' · '))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)} · ${prompt?.label ?? 'no turn'} · ${f.action.id}`)}`);
+    out.push(`  ${s.accent(f.kinds.join(' · '))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)} · ${prompt?.label ?? 'no turn'} · ${callId(f.action.id)}`)}`);
     const external = f.sources.filter(x => x.input.trust === 'external');
     const shown = (external.length ? external : f.sources).slice(0, 3);
     if (!shown.length) {
@@ -200,11 +200,11 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
   if (r.via === 'time') {
     const at = r.commitSec ? new Date(r.commitSec * 1000).toISOString().slice(11, 19) : 'that second';
     out.push(
-      `  ${s.grade('LIKELY')}made by ${action.tool} ${action.id} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim('[R9]')}`,
+      `  ${s.grade('LIKELY')}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim('[R9]')}`,
       `           ${s.dim('git printed no commit line for this command, so the join is on time, not on git\'s output')}`,
     );
   } else {
-    out.push(`  ${s.grade('DIRECT')}made by ${action.tool} ${action.id} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim('[R1]')}`);
+    out.push(`  ${s.grade('DIRECT')}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim('[R1]')}`);
   }
   const verdict = e.requested.verdict;
   const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : '';
@@ -227,7 +227,7 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
     }
     const w = f.writer;
     out.push(
-      `  ${s.grade(f.grade as Grade)}${shown}  ← ${w.action.tool} ${w.action.id} ${clip(describe(w.action, g), 44)}  ${w.named ? s.dim('named by you') : s.flag('not named by you')}  ${s.dim('[R7]')}`,
+      `  ${s.grade(f.grade as Grade)}${shown}  ← ${w.action.tool} ${callId(w.action.id)} ${clip(describe(w.action, g), 44)}  ${w.named ? s.dim('named by you') : s.flag('not named by you')}  ${s.dim('[R7]')}`,
     );
   }
   const unnamed = r.files.filter(f => f.writer && !f.writer.named).length;

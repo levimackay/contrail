@@ -1,7 +1,7 @@
 import type { Action, Effect, Explanation, Graph, Input, Link, TokenTrace } from '../engine/types.ts';
 import { bestPerGroup } from '../engine/explain.ts';
 import { clip, displayPath, str } from '../util.ts';
-import { PLAIN, type Style } from './style.ts';
+import { callId, PLAIN, type Style } from './style.ts';
 
 /**
  * All of Contrail's wording lives in render/. Two rules hold everywhere: it reports where
@@ -24,7 +24,7 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
   out.push(`${s.bold(a.tool)}  ${s.bold(describe(a, g))}`);
   out.push(
     s.dim(
-      `  session ${a.scope.sessionId.slice(0, 8)} · ${prompt ? `turn ${prompt.label}` : 'turn not recorded'} · ${a.id} · seq ${a.preSeq}` +
+      `  session ${a.scope.sessionId.slice(0, 8)} · ${prompt ? `turn ${prompt.label}` : 'turn not recorded'} · ${callId(a.id)} · seq ${a.preSeq}` +
         ` · ${a.scope.agentId ? `subagent ${a.scope.agentId}` : 'main agent'}${a.status === 'ok' ? '' : ` · ${a.status.toUpperCase()}`}`,
     ),
   );
@@ -75,7 +75,7 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
 
 function trace(t: TokenTrace, depth: number, out: string[], inputs: Map<string, Input>, s: Style): void {
   const pad = '  '.repeat(depth);
-  const firstUse = t.firstUse ? `, first used in ${t.firstUse.actionId} at seq ${t.firstUse.preSeq}` : '';
+  const firstUse = t.firstUse ? `, first used in ${callId(t.firstUse.actionId)} at seq ${t.firstUse.preSeq}` : '';
   out.push(`${pad}${s.accent(t.token.text)}  ${s.dim(`(${t.token.argPath}${firstUse})`)}`);
 
   for (const l of t.links) {
@@ -89,7 +89,7 @@ function trace(t: TokenTrace, depth: number, out: string[], inputs: Map<string, 
     out.push(`${pad}  ${s.grade(l.grade)}${sourceWording(l, where)}  ${s.dim(`[${l.rule}]`)}`);
     if (l.quote?.text) out.push(`${pad}           ${s.dim(l.quote.line != null ? `${l.quote.line}│` : '│')} ${clip(l.quote.text, 100)}`);
     const origin = originWording(src);
-    out.push(`${pad}           ${src.trust === 'external' ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` · returned by ${src.producedBy} (seq ${src.availableAt})` : '')}`);
+    out.push(`${pad}           ${src.trust === 'external' ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` · returned by ${callId(src.producedBy)} (seq ${src.availableAt})` : '')}`);
   }
   if (t.links.every(l => l.grade === 'UNKNOWN') && depth > 1) out.push(s.dim(`${pad}  the trail starts here: the reason is not observable`));
 
@@ -97,9 +97,9 @@ function trace(t: TokenTrace, depth: number, out: string[], inputs: Map<string, 
     const u = t.upstream;
     const heading =
       u.kind === 'call'
-        ? `how the agent came to call ${u.via?.tool} ${u.via?.id}:`
+        ? `how the agent came to call ${u.via?.tool} ${callId(u.via?.id ?? '')}:`
         : u.kind === 'conduit'
-          ? `that text was written by the agent (${u.via?.tool} ${u.via?.id}); following the same value back:`
+          ? `that text was written by the agent (${u.via?.tool} ${callId(u.via?.id ?? '')}); following the same value back:`
           : 'a compaction summary is agent-written; the same value before the compaction:';
     out.push(s.dim(`${pad}  ${heading}`));
     trace(u.trace, depth + 2, out, inputs, s);

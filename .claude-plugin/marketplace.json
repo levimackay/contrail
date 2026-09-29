@@ -1,0 +1,15 @@
+{
+  "name": "contrail",
+  "description": "Contrail: the observable trail behind Claude Code actions, graded by evidence.",
+  "owner": {
+    "name": "Levi Mackay",
+    "url": "https://github.com/levimackay"
+  },
+  "plugins": [
+    {
+      "name": "contrail",
+      "source": "./plugin",
+      "description": "Shows the observable trail behind Claude Code's edits and commands, with every link graded by evidence."
+    }
+  ]
+}

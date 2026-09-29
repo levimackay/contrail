@@ -1,0 +1,26 @@
+{
+  "name": "contrail",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shows the observable trail behind Claude Code's edits, commands and commits, graded by evidence.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test 'src/**/*.test.ts' 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --external:bun:sqlite --legal-comments=none --outfile=plugin/dist/contrail.mjs",
+    "check": "npm run typecheck && npm test && npm run build && git diff --exit-code plugin/dist/"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@types/shell-quote": "^1.7.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "shell-quote": "^1.10.0"
+  }
+}

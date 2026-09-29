@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="972" height="352" viewBox="0 0 972 352" role="img" aria-label="contrail why commit 2e5aafc">
+  <rect x="0.5" y="0.5" width="971" height="351" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <path d="M0.5 36 V10.5 A10 10 0 0 1 10.5 0.5 H961.5 A10 10 0 0 1 971.5 10.5 V36 Z" fill="#161b22"/>
+  <line x1="0.5" y1="36" x2="971.5" y2="36" stroke="#30363d"/>
+  <circle cx="20" cy="18" r="6" fill="#ff5f57"/><circle cx="40" cy="18" r="6" fill="#febc2e"/><circle cx="60" cy="18" r="6" fill="#28c840"/>
+  <text x="486" y="22" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#7d8590">contrail why commit 2e5aafc</text>
+  <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#c9d1d9" style="white-space: pre" xml:space="preserve">
+    <text y="61" style="white-space: pre"><tspan x="18.0" fill="#7d8590">$</tspan><tspan x="25.8"> </tspan><tspan x="33.6" font-weight="bold">contrail why commit 2e5aafc</tspan></text>
+    <text y="79" style="white-space: pre"><tspan x="18.0" font-weight="bold">Commit</tspan><tspan x="64.8"> </tspan><tspan x="72.6" fill="#56d4dd" font-weight="bold">2e5aafc</tspan><tspan x="127.2"> on main  </tspan><tspan x="205.2" font-weight="bold">&quot;fix(auth): refresh tokens before they expire&quot;</tspan></text>
+    <text y="97" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#3fb950" font-weight="bold">DIRECT</tspan><tspan x="80.4">   made by Bash t7 (seq 23): [main 2e5aafc] fix(auth): refresh tokens before they expire  </tspan><tspan x="782.4" fill="#7d8590">[R1]</tspan></text>
+    <text y="115" style="white-space: pre"><tspan x="18.0">Requested?  </tspan><tspan x="111.6" font-weight="bold">NAMED</tspan><tspan x="150.6"> &quot;looks good, commit it&quot;  </tspan><tspan x="353.4" fill="#7d8590">[R8 LIKELY]</tspan></text>
+    <text y="133" style="white-space: pre"><tspan x="18.0">Turn        </tspan><tspan x="111.6" fill="#3fb950" font-weight="bold">DIRECT</tspan><tspan x="158.4">   ran while answering p2: &quot;looks good, commit it&quot;  </tspan><tspan x="564.0" fill="#7d8590">[R1]</tspan></text>
+    <text y="169" style="white-space: pre"><tspan x="18.0" font-weight="bold">What the commit contains</tspan><tspan x="205.2" fill="#7d8590"> (file list from git now, joined to the agent's changes by path)</tspan></text>
+    <text y="187" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#56d4dd" font-weight="bold">LIKELY</tspan><tspan x="80.4">   auth-service/src/session.ts  ← Edit t5 auth-service/src/session.ts  </tspan><tspan x="634.2" fill="#d2a8ff" font-weight="bold">not named by you</tspan><tspan x="759.0">  </tspan><tspan x="774.6" fill="#7d8590">[R7]</tspan></text>
+    <text y="205" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#d29922">POSSIBLE</tspan><tspan x="96.0"> package-lock.json            ← Bash t4 npm install jwt-decode  </tspan><tspan x="595.2" fill="#d2a8ff" font-weight="bold">not named by you</tspan><tspan x="720.0">  </tspan><tspan x="735.6" fill="#7d8590">[R7]</tspan></text>
+    <text y="223" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#d29922">POSSIBLE</tspan><tspan x="96.0"> package.json                 ← Bash t4 npm install jwt-decode  </tspan><tspan x="595.2" fill="#d2a8ff" font-weight="bold">not named by you</tspan><tspan x="720.0">  </tspan><tspan x="735.6" fill="#7d8590">[R7]</tspan></text>
+    <text y="241" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#6e7681">UNKNOWN</tspan><tspan x="88.2">  docs/CHANGELOG.md            </tspan><tspan x="330.0" fill="#7d8590">no agent change recorded in this session (you, another process, or an earlier</tspan></text>
+    <text y="259" style="white-space: pre"><tspan x="18.0" fill="#7d8590">session)</tspan></text>
+    <text y="295" style="white-space: pre"><tspan x="18.0" fill="#7d8590">LIKELY, not DIRECT: git lists the file and the agent changed it earlier; whether that exact change is what was committed</tspan></text>
+    <text y="313" style="white-space: pre"><tspan x="18.0" fill="#7d8590">is not observed.</tspan></text>
+    <text y="331" style="white-space: pre"><tspan x="18.0">3 of 4 files hold agent changes you did not name. </tspan><tspan x="408.0" fill="#7d8590">Run contrail why &lt;file&gt; for the trail behind each one.</tspan></text>
+  </g>
+</svg>

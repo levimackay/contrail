@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { findMention, isShaped, lineOf, normalize } from './text.ts';
+
+test('normalize lowercases, folds compatibility forms and strips invisible characters', () => {
+  assert.equal(normalize('Foo​-Auth'), 'foo-auth');
+  assert.equal(normalize('ＦＯＯ'), 'foo');
+  assert.equal(normalize('a‮b﻿c'), 'abc');
+});
+
+test('isShaped separates name-like tokens from plain words', () => {
+  assert.equal(isShaped('foo-auth-helper'), true);
+  assert.equal(isShaped('retryWithJitter'), true);
+  assert.equal(isShaped('src/auth.ts'), true);
+  assert.equal(isShaped('v2'), true);
+  assert.equal(isShaped('express'), false);
+  assert.equal(isShaped('Express'), false);
+});
+
+test('findMention matches whole tokens only', () => {
+  assert.equal(findMention('use foo-auth-helper for token refresh', 'foo-auth-helper'), 4);
+  assert.equal(findMention('use foo-auth-helper-v2', 'foo-auth-helper'), -1);
+  assert.equal(findMention('my_foo-auth-helper', 'foo-auth-helper'), -1);
+  assert.equal(findMention('Use FOO-Auth-Helper.', 'foo-auth-helper'), 4);
+  assert.equal(findMention('see /r/src/auth.ts:41', 'src/auth.ts'), 7);
+});
+
+test('findMention sees through hidden characters and never matches empty tokens', () => {
+  assert.equal(findMention('x foo​-auth-helper', 'foo-auth-helper'), 2);
+  assert.equal(findMention('anything', ''), -1);
+  assert.equal(findMention('', 'foo'), -1);
+});
+
+test('lineOf reads the line number the Read tool printed', () => {
+  const text = '    82\tsetup\n    83\tuse foo-auth-helper for token refresh\n';
+  assert.deepEqual(lineOf(text, findMention(text, 'foo-auth-helper')), { line: 83, text: 'use foo-auth-helper for token refresh' });
+  const arrow = '    83→use foo-auth-helper';
+  assert.deepEqual(lineOf(arrow, findMention(arrow, 'foo-auth-helper')), { line: 83, text: 'use foo-auth-helper' });
+});
+
+test('lineOf falls back to the position in the text, and single lines have no number', () => {
+  const text = 'a\nb\nuse foo-auth-helper\n';
+  assert.deepEqual(lineOf(text, findMention(text, 'foo-auth-helper')), { line: 3, text: 'use foo-auth-helper' });
+  assert.deepEqual(lineOf('install foo-auth-helper', 8), { line: null, text: 'install foo-auth-helper' });
+});

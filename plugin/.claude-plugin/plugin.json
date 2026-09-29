@@ -1,0 +1,10 @@
+{
+  "name": "contrail",
+  "version": "0.2.0",
+  "description": "Shows the observable trail behind Claude Code's edits and commands, with every link graded by evidence.",
+  "author": { "name": "Levi Mackay", "url": "https://github.com/levimackay" },
+  "homepage": "https://github.com/levimackay/contrail",
+  "repository": "https://github.com/levimackay/contrail",
+  "license": "MIT",
+  "keywords": ["provenance", "audit", "hooks", "observability"]
+}

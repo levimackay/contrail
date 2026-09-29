@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="965" height="640" viewBox="0 0 965 640" role="img" aria-label="contrail why &quot;npm install jwt-decode&quot;">
+  <rect x="0.5" y="0.5" width="964" height="639" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <path d="M0.5 36 V10.5 A10 10 0 0 1 10.5 0.5 H954.5 A10 10 0 0 1 964.5 10.5 V36 Z" fill="#161b22"/>
+  <line x1="0.5" y1="36" x2="964.5" y2="36" stroke="#30363d"/>
+  <circle cx="20" cy="18" r="6" fill="#ff5f57"/><circle cx="40" cy="18" r="6" fill="#febc2e"/><circle cx="60" cy="18" r="6" fill="#28c840"/>
+  <text x="482.5" y="22" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#7d8590">contrail why &quot;npm install jwt-decode&quot;</text>
+  <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#c9d1d9" style="white-space: pre" xml:space="preserve">
+    <text y="61" style="white-space: pre"><tspan x="18.0" fill="#7d8590">$</tspan><tspan x="25.8"> </tspan><tspan x="33.6" font-weight="bold">contrail why &quot;npm install jwt-decode&quot;</tspan></text>
+    <text y="79" style="white-space: pre"><tspan x="18.0" font-weight="bold">Bash</tspan><tspan x="49.2">  </tspan><tspan x="64.8" font-weight="bold">npm install jwt-decode</tspan></text>
+    <text y="97" style="white-space: pre"><tspan x="18.0" fill="#7d8590">  session 4f2a91c7 · turn p1 · t4 · seq 12 · main agent</tspan></text>
+    <text y="133" style="white-space: pre"><tspan x="18.0">Requested?  </tspan><tspan x="111.6" fill="#d2a8ff" font-weight="bold">NOT NAMED</tspan><tspan x="181.8"> (the agent chose this). None of your 2 sentences this session name it.  </tspan><tspan x="751.2" fill="#7d8590">[R8]</tspan></text>
+    <text y="151" style="white-space: pre"><tspan x="18.0">Turn        </tspan><tspan x="111.6" fill="#3fb950" font-weight="bold">DIRECT</tspan><tspan x="158.4">   ran while answering p1: &quot;Users are getting logged out after 30 minutes. Figure out why and fix…&quot; </tspan></text>
+    <text y="169" style="white-space: pre"><tspan x="18.0" fill="#7d8590">[R1]</tspan></text>
+    <text y="205" style="white-space: pre"><tspan x="18.0" font-weight="bold">Where the values came from (data provenance, not the agent's reasons)</tspan></text>
+    <text y="223" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#56d4dd" font-weight="bold">jwt-decode</tspan><tspan x="111.6">  </tspan><tspan x="127.2" fill="#7d8590">($.command)</tspan></text>
+    <text y="241" style="white-space: pre"><tspan x="18.0">    </tspan><tspan x="49.2" fill="#56d4dd" font-weight="bold">LIKELY</tspan><tspan x="96.0">   only observed in auth-service/README.md:13  </tspan><tspan x="462.6" fill="#7d8590">[R3]</tspan></text>
+    <text y="259" style="white-space: pre"><tspan x="18.0">             </tspan><tspan x="119.4" fill="#7d8590">13│</tspan><tspan x="142.8"> Decode them with jwt-decode rather than parsing the payload by hand.</tspan></text>
+    <text y="277" style="white-space: pre"><tspan x="18.0">             </tspan><tspan x="119.4" fill="#7d8590">repo file (local) · returned by t1 (seq 5)</tspan></text>
+    <text y="295" style="white-space: pre"><tspan x="18.0" fill="#7d8590">    how the agent came to call Read t1:</tspan></text>
+    <text y="313" style="white-space: pre"><tspan x="18.0">      </tspan><tspan x="64.8" fill="#56d4dd" font-weight="bold">auth-service</tspan><tspan x="158.4">  </tspan><tspan x="174.0" fill="#7d8590">($.file_path)</tspan></text>
+    <text y="331" style="white-space: pre"><tspan x="18.0">        </tspan><tspan x="80.4" fill="#56d4dd" font-weight="bold">LIKELY</tspan><tspan x="127.2">   only observed in CLAUDE.md:4  </tspan><tspan x="384.6" fill="#7d8590">[R3]</tspan></text>
+    <text y="349" style="white-space: pre"><tspan x="18.0">                 </tspan><tspan x="150.6" fill="#7d8590">4│</tspan><tspan x="166.2"> When auth breaks, check auth-service first.</tspan></text>
+    <text y="367" style="white-space: pre"><tspan x="18.0">                 </tspan><tspan x="150.6" fill="#7d8590">repo instructions (repo content, not you)</tspan></text>
+    <text y="385" style="white-space: pre"><tspan x="18.0" fill="#7d8590">  (searched 5 inputs in this agent's context before seq 12)</tspan></text>
+    <text y="421" style="white-space: pre"><tspan x="18.0" font-weight="bold">Effects</tspan></text>
+    <text y="439" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#d29922">POSSIBLE</tspan><tspan x="96.0"> package.json       expected for this kind of command, not observed  </tspan><tspan x="634.2" fill="#7d8590">[R6 expected]</tspan></text>
+    <text y="457" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#d29922">POSSIBLE</tspan><tspan x="96.0"> package-lock.json  expected for this kind of command, not observed  </tspan><tspan x="634.2" fill="#7d8590">[R6 expected]</tspan></text>
+    <text y="493" style="white-space: pre"><tspan x="18.0" font-weight="bold">Weakest link on this trail:</tspan><tspan x="228.6"> </tspan><tspan x="236.4" fill="#56d4dd" font-weight="bold">LIKELY</tspan></text>
+    <text y="511" style="white-space: pre"><tspan x="18.0" fill="#7d8590">LIKELY means &quot;this value first appeared in the agent's context from this source&quot;, not &quot;this source made the agent act&quot;.</tspan></text>
+    <text y="529" style="white-space: pre"><tspan x="18.0" fill="#7d8590">Not observable: the agent's reasons for this action.</tspan></text>
+    <text y="547" style="white-space: pre"><tspan x="18.0" fill="#7d8590">Agent said (shown for context, never used as evidence): &quot;shouldRefresh compared exp (seconds) with Date.now()</tspan></text>
+    <text y="565" style="white-space: pre"><tspan x="18.0" fill="#7d8590">(milliseconds), so every token looked expired. I decoded the token with jwt-decode, as the auth-service README</tspan></text>
+    <text y="583" style="white-space: pre"><tspan x="18.0" fill="#7d8590">recommends, and fixed the units. Tests pass.&quot;</tspan></text>
+    <text y="601" style="white-space: pre"><tspan x="18.0" fill="#7d8590">Blind spots: model knowledge and reasoning; system prompt; AGENTS.md; context injected by other hooks. No observed</tspan></text>
+    <text y="619" style="white-space: pre"><tspan x="18.0" fill="#7d8590">source is not the same as no source.</tspan></text>
+  </g>
+</svg>

@@ -2617,7 +2617,7 @@ async function openBun(path) {
 }
 
 // src/version.ts
-var VERSION = "0.1.0";
+var VERSION = "0.2.0";
 
 // src/cli.ts
 var FILTERS = ["writes", "shell", "network", "mcp", "subagents", "instructions"];

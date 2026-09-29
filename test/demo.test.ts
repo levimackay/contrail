@@ -112,3 +112,17 @@ test('a version 1 database upgrades to the current schema with its rows intact',
   assert.deepEqual(db.all<{ path: string }>('SELECT path FROM touches ORDER BY path').map(r => r.path), ['/r/a.ts', '/r/package.json']);
   db.close();
 });
+
+test('no report uses causal or accusatory wording of its own', async () => {
+  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['sessions']];
+  for (const argv of views) {
+    const own = (await run(argv)).out
+      .split('\n')
+      .filter(line => !/^\s*(\d+)?│/.test(line.trim()) && !line.startsWith('Agent said') && !line.includes('"'))
+      .join('\n')
+      .toLowerCase();
+    for (const word of ['because', 'caused', 'led to', 'decided', 'tainted', 'malicious']) {
+      assert.ok(!own.includes(word), `contrail ${argv.join(' ')} says "${word}"`);
+    }
+  }
+});

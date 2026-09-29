@@ -272,6 +272,8 @@ A **conduit** is text the agent wrote. It is never an origin: Contrail follows t
 
 Hook fields were checked against the Claude Code documentation for 2.1.283 to 2.1.284. Unknown or missing fields produce fewer links and an explicit "not observed" note, never a crash.
 
+Live sessions on Claude Code 2.1.284 (Linux, default permission mode) have exercised prompts, instruction loads, Read, Grep, Glob, Bash (including heredoc writes and `git commit -q`), Write, failed tool calls, background subagents and their `<task-notification>` reports, `SessionEnd`, and all three skills. WebFetch, WebSearch, MCP results, compaction and `bashEditDiff` are so far covered only by scripted sessions built from the documented payload shapes.
+
 **What it records:**
 
 | Signal | Hook |

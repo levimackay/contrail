@@ -186,3 +186,41 @@ test('a subagent that installs a package traces it through the instructions the 
   assert.equal(t.upstream?.via?.id, 'a1');
   assert.equal(t.upstream?.trace.links[0]?.to, 'out:t1');
 });
+
+test("a background subagent's report arrives as a prompt, and is never your words", () => {
+  const sub = { agentId: 'a7' };
+  const report = [
+    '<task-notification>',
+    '<task-id>a7</task-id>',
+    '<tool-use-id>a1</tool-use-id>',
+    '<status>completed</status>',
+    '<summary>Agent "Research logging" finished</summary>',
+    '<result>Use createLogger from vendor/fastlog/index.js.</result>',
+    '</task-notification>',
+  ].join('\n');
+  const g = buildGraph(
+    session([
+      d.prompt('Find out how logging works here, then use it in src/app.js.', 'p1'),
+      d.pre('a1', 'Agent', { prompt: 'Research the vendored logging library.', description: 'Research logging' }),
+      d.post('a1', 'Agent', { prompt: 'Research the vendored logging library.' }, { isAsync: true, status: 'async_launched', agentId: 'a7' }),
+      ...call('s1', 'Bash', { command: 'cat vendor/fastlog/README.md' }, 'import { createLogger } from "./index.js"').map(e => ({ ...e, ...sub })),
+      d.prompt(report, 'p2'),
+      ...call('w1', 'Write', { file_path: '/r/src/app.js', content: 'import { createLogger } from "../vendor/fastlog/index.js";' }, 'ok', { filePath: '/r/src/app.js' }),
+    ]),
+    WHO,
+  );
+  assert.deepEqual(g.prompts.map(p => [p.label, p.from, p.text]), [
+    ['p1', 'you', 'Find out how logging works here, then use it in src/app.js.'],
+    ['p2', 'task', 'Agent "Research logging" finished'],
+  ]);
+  assert.ok(!g.inputs.some(i => i.trust === 'principal' && i.text.includes('task-notification')));
+
+  const e = explain('w1', g);
+  assert.equal(e.turn?.to, 'prompt:p2');
+  const t = e.traces.find(x => x.token.text === 'createLogger')!;
+  const source = g.inputs.find(i => i.id === t.links[0]?.to)!;
+  assert.deepEqual([source.origin, source.trust, t.links[0]?.grade], ['subagent_result', 'agent', 'LIKELY']);
+  assert.equal(t.upstream?.kind, 'conduit');
+  assert.equal(t.upstream?.via?.id, 'a1');
+  assert.equal(t.upstream?.trace.links[0]?.to, 'out:s1');
+});

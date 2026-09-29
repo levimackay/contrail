@@ -45,10 +45,4 @@ export function styleFor(env: NodeJS.ProcessEnv, isTTY: boolean): Style {
   return isTTY ? COLOR : PLAIN;
 }
 
-/**
- * A tool call id short enough to read in a report line: toolu_01XWNSRthmT3jfsUEY1ALhq1 → toolu…ALhq1.
- * Within one session the tail is distinct in practice, and the seq beside it is exact. JSON keeps the full id.
- */
-export function callId(id: string): string {
-  return id.length > 12 ? `${id.slice(0, 5)}…${id.slice(-5)}` : id;
-}
+export { callId } from '../util.ts';

@@ -295,7 +295,7 @@ async function sessions(flags: Flags, io: Io, s: Style): Promise<number> {
       return { ...r, graph, flagged: findingsFor(graph).filter(f => f.externalUpstream).length };
     });
     if (flags.json) {
-      io.out(`${JSON.stringify(summaries.map(x => ({ id: x.id, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts[0]?.text ?? null })), null, 2)}\n`);
+      io.out(`${JSON.stringify(summaries.map(x => ({ id: x.id, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts.find(p => p.from === 'you')?.text ?? null })), null, 2)}\n`);
     } else {
       io.out(renderSessions(summaries, s));
     }

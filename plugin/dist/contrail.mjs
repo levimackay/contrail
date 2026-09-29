@@ -499,6 +499,9 @@ function clip(s, max) {
   const one = s.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/`/g, "'").replace(/\s+/g, " ").trim();
   return one.length <= max ? one : one.slice(0, max - 1) + "\u2026";
 }
+function callId(id) {
+  return id.length > 12 ? `${id.slice(0, 5)}\u2026${id.slice(-5)}` : id;
+}
 
 // src/engine/tokens.ts
 var import_shell_quote = __toESM(require_shell_quote(), 1);
@@ -1188,6 +1191,13 @@ function followSource(token, source, g, depth, visited) {
     const before = traceAt(token, { scope: source.scope, seq: source.availableAt }, source.id, null, g, depth, visited);
     return { kind: "compaction", via: null, trace: before };
   }
+  if (source.relays) {
+    const via = source.producedBy ? g.actions.find((a) => a.id === source.producedBy) : void 0;
+    const key = `relay:${source.id}`;
+    if (!via || visited.has(key)) return null;
+    visited.add(key);
+    return { kind: "conduit", via, trace: traceAt(token, { scope: source.relays, seq: source.availableAt }, source.id, null, g, depth, visited) };
+  }
   const writer = source.origin === "file" ? agentWriter(token, source, g) : void 0;
   if (writer && !visited.has(writer.id)) {
     visited.add(writer.id);
@@ -1227,7 +1237,7 @@ function explain(actionId, g) {
   const prompt = g.prompts.find((p) => p.promptId === action.promptId);
   const turn = prompt ? { type: "in_turn", from: action.id, to: `prompt:${prompt.promptId}`, grade: "DIRECT", rule: "R1", recorded: true } : null;
   const tokens = extractTokens(action, g.env);
-  const sentences = g.prompts.flatMap((p) => splitSentences(p.text).map((text) => ({ promptId: p.promptId, seq: p.seq, text })));
+  const sentences = g.prompts.filter((p) => p.from === "you").flatMap((p) => splitSentences(p.text).map((text) => ({ promptId: p.promptId, seq: p.seq, text })));
   const traces = tokens.map((t) => traceToken(t, action, g, 0, /* @__PURE__ */ new Set([action.id])));
   const effects = g.effects.filter((e) => e.actionId === action.id).map(
     (e) => e.evidence === "expected" ? { type: "changed", from: action.id, to: e.id, grade: "POSSIBLE", rule: "R6", recorded: false } : { type: "changed", from: action.id, to: e.id, grade: "DIRECT", rule: "R1", recorded: true }
@@ -1254,7 +1264,7 @@ function chainGrade(traces) {
 }
 function blindSpots(action, g) {
   const spots = [...BASE_BLIND_SPOTS];
-  const mentions = g.prompts.filter((p) => p.seq < action.preSeq).flatMap((p) => [...p.text.matchAll(/(?:^|\s)@([\w.~/-]+)/g)].map((m) => m[1]));
+  const mentions = g.prompts.filter((p) => p.from === "you" && p.seq < action.preSeq).flatMap((p) => [...p.text.matchAll(/(?:^|\s)@([\w.~/-]+)/g)].map((m) => m[1]));
   if (mentions.length) spots.push(`@-mentioned: ${[...new Set(mentions)].join(", ")} (contents not observable)`);
   if (g.inputs.some((i) => i.truncated && sameScope(i.scope, action.scope) && i.availableAt < action.preSeq)) {
     spots.push("some inputs were truncated when stored");
@@ -1775,15 +1785,25 @@ function buildGraph(rows, who) {
   const expansions = /* @__PURE__ */ new Map();
   const subagentStarts = /* @__PURE__ */ new Map();
   const instructions = [];
+  const notifications = [];
   rows.forEach((row, index) => {
     const seq = index + 1;
     const p = parsePayload(row.payload);
     const scope = { sessionId: row.session_id ?? "", agentId: row.agent_id };
     const id = row.tool_use_id;
     switch (row.hook_event) {
-      case "UserPromptSubmit":
-        prompts.push({ promptId: row.prompt_id ?? `seq-${seq}`, seq, label: `p${prompts.length + 1}`, text: str(p, "prompt") ?? "" });
+      case "UserPromptSubmit": {
+        const promptId = row.prompt_id ?? `seq-${seq}`;
+        const text = str(p, "prompt") ?? "";
+        const task = taskNotification(text);
+        if (task) {
+          prompts.push({ promptId, seq, label: `p${prompts.length + 1}`, text: task.summary, from: "task" });
+          notifications.push({ seq, promptId, text, toolUseId: task.toolUseId, taskId: task.taskId });
+        } else {
+          prompts.push({ promptId, seq, label: `p${prompts.length + 1}`, text, from: "you" });
+        }
         break;
+      }
       case "UserPromptExpansion":
         if (row.prompt_id) {
           const command = `/${str(p, "command_name") ?? ""} ${str(p, "command_args") ?? ""}`.trim();
@@ -1813,8 +1833,8 @@ function buildGraph(rows, who) {
       }
       case "PostToolBatch":
         for (const call of arr(p.tool_calls)) {
-          const callId2 = str(call, "tool_use_id");
-          if (callId2) modelSaw.set(callId2, { seq, text: toText(field(call, "tool_response")) });
+          const useId = str(call, "tool_use_id");
+          if (useId) modelSaw.set(useId, { seq, text: toText(field(call, "tool_response")) });
         }
         break;
       case "PostCompact":
@@ -1850,6 +1870,7 @@ function buildGraph(rows, who) {
     }
   });
   for (const prompt of prompts) {
+    if (prompt.from === "task") continue;
     const expansion = expansions.get(prompt.promptId);
     if (expansion) {
       inputs.push({
@@ -1890,6 +1911,7 @@ function buildGraph(rows, who) {
     if (output) inputs.push(output);
     effects.push(...effectsOf(a, env));
     const agentId = (a.tool === "Agent" || a.tool === "Task") && a.status === "ok" ? str(a.response, "agentId") : void 0;
+    if (agentId && output) output.relays = { sessionId: a.scope.sessionId, agentId };
     if (agentId) {
       inputs.push({
         id: `subprompt:${agentId}`,
@@ -1897,7 +1919,7 @@ function buildGraph(rows, who) {
         origin: "subagent_prompt",
         trust: "agent",
         ref: `subprompt:${agentId}`,
-        label: `subagent instructions written in ${a.id}`,
+        label: `subagent instructions written in ${callId(a.id)}`,
         text: str(a.input, "prompt") ?? "",
         truncated: false,
         fidelity: "reported",
@@ -1907,6 +1929,7 @@ function buildGraph(rows, who) {
       });
     }
   }
+  for (const n of notifications) inputs.push(notificationInput(n, actionList, mainScope, env));
   for (const ins of instructions) {
     const path = str(ins.p, "file_path") ?? "";
     const extra = obj(ins.p, "_contrail");
@@ -1964,6 +1987,37 @@ function newAction(id, scope, row, p, seq) {
     mcpServer: mcp ? { name: str(mcp, "name") ?? "", source: str(mcp, "source") ?? "" } : null
   };
 }
+var TASK_NOTIFICATION = /^\s*<task-notification>/;
+var tag2 = (text, name) => new RegExp(`<${name}>([^<]{1,200})</${name}>`).exec(text)?.[1]?.trim() ?? null;
+function taskNotification(text) {
+  if (!TASK_NOTIFICATION.test(text)) return null;
+  const head = text.slice(0, 4e3);
+  return {
+    summary: tag2(head, "summary") ?? "a background task finished",
+    toolUseId: tag2(head, "tool-use-id"),
+    taskId: tag2(head, "task-id")
+  };
+}
+function notificationInput(n, actionList, mainScope, env) {
+  const started = actionList.find((a) => a.id === n.toolUseId);
+  const base = { id: `task:${n.seq}`, scope: mainScope, text: n.text, truncated: n.text.includes("[contrail: truncated"), fidelity: "as-seen", availableAt: n.seq, producedBy: started?.id ?? null, promptId: n.promptId };
+  if (started && (started.tool === "Agent" || started.tool === "Task")) {
+    const agentId = str(started.response, "agentId") ?? n.taskId;
+    return {
+      ...base,
+      origin: "subagent_result",
+      trust: "agent",
+      ref: `agent:${started.id}`,
+      label: `background subagent report from ${callId(started.id)}`,
+      relays: agentId ? { sessionId: started.scope.sessionId, agentId } : null
+    };
+  }
+  if (started) {
+    const c = classify(started, env);
+    return { ...base, ...c, label: `background ${c.label.replace(/^the /, "")}` };
+  }
+  return { ...base, origin: "tool_output", trust: "local", ref: `task:${n.taskId ?? n.seq}`, label: "a background task report" };
+}
 function templateTrust(source) {
   if (source === "user") return "config";
   if (source === "project") return "local";
@@ -2019,7 +2073,7 @@ function classify(a, env) {
     return { origin: "skill", trust: name.includes(":") ? "external" : "local", ref: `skill:${name}`, label: `skill ${name}` };
   }
   if (tool === "Agent" || tool === "Task") {
-    return { origin: "subagent_result", trust: "agent", ref: `agent:${a.id}`, label: `subagent report from ${a.id}` };
+    return { origin: "subagent_result", trust: "agent", ref: `agent:${a.id}`, label: `subagent report from ${callId(a.id)}` };
   }
   return { origin: "tool_output", trust: "local", ref: `tool:${a.id}`, label: `${tool} output` };
 }
@@ -2183,9 +2237,6 @@ function styleFor(env, isTTY) {
   if (env.FORCE_COLOR && env.FORCE_COLOR !== "0") return COLOR;
   return isTTY ? COLOR : PLAIN;
 }
-function callId(id) {
-  return id.length > 12 ? `${id.slice(0, 5)}\u2026${id.slice(-5)}` : id;
-}
 
 // src/render/why.ts
 var HEADING = "Where the values came from (data provenance, not the agent's reasons)";
@@ -2208,7 +2259,7 @@ function renderWhy(e, g, note, s = PLAIN) {
   out.push("");
   out.push(...requestedLines(e, s));
   out.push(
-    prompt ? `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action`
+    !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
   );
   out.push("", s.bold(HEADING));
   const shown = bestPerGroup(e.traces);
@@ -2301,23 +2352,23 @@ function originWording(i) {
 function requestedLines(e, s) {
   const r = e.requested;
   const quoted = r.sentence ? `"${clip(r.sentence.text, 80)}"` : "";
-  const tag2 = (t) => s.dim(`[${t}]`);
+  const tag3 = (t) => s.dim(`[${t}]`);
   switch (r.verdict) {
     case "NAMED":
       return [
-        `Requested?  ${s.bold("NAMED")}  ${quoted}  ${tag2(`R8 ${r.grade}`)}`,
+        `Requested?  ${s.bold("NAMED")}  ${quoted}  ${tag3(`R8 ${r.grade}`)}`,
         s.dim('            "Named" means your words contain it. It is not a judgment of intent or permission.')
       ];
     case "NAMED_NEGATED":
-      return [`Requested?  ${s.flag("NAMED, BUT YOUR LATEST MENTION IS NEGATED:")} ${quoted}  ${tag2(`R8 ${r.grade}`)}`];
+      return [`Requested?  ${s.flag("NAMED, BUT YOUR LATEST MENTION IS NEGATED:")} ${quoted}  ${tag3(`R8 ${r.grade}`)}`];
     case "PARTLY_NAMED":
-      return [`Requested?  ${s.bold("PARTLY NAMED")}  ${quoted} names ${r.matched}, not everything this action targets  ${tag2(`R8 ${r.grade}`)}`];
+      return [`Requested?  ${s.bold("PARTLY NAMED")}  ${quoted} names ${r.matched}, not everything this action targets  ${tag3(`R8 ${r.grade}`)}`];
     case "NOT_NAMED": {
       const yours = r.searched === 1 ? "Your 1 sentence this session does not" : `None of your ${r.searched} sentences this session`;
-      return [`Requested?  ${s.flag("NOT NAMED")} (the agent chose this). ${yours} name it.  ${tag2("R8")}`];
+      return [`Requested?  ${s.flag("NOT NAMED")} (the agent chose this). ${yours} name it.  ${tag3("R8")}`];
     }
     case "NOTHING_TO_MATCH":
-      return [`Requested?  nothing specific in this action to match against your words  ${tag2("R8")}`];
+      return [`Requested?  nothing specific in this action to match against your words  ${tag3("R8")}`];
   }
 }
 function describe(a, g) {
@@ -2384,7 +2435,10 @@ function renderTrace(g, explanations, filter, s = PLAIN) {
   );
   const items = [];
   if (!filter) {
-    for (const p of g.prompts) items.push({ seq: p.seq, line: () => ["", `${s.bold(p.label)}  ${s.bold(`"${clip(p.text, 100)}"`)}`] });
+    for (const p of g.prompts) {
+      const head = p.from === "task" ? `${s.dim("background task report, not your words:")} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
+      items.push({ seq: p.seq, line: () => ["", `${s.bold(p.label)}  ${head}`] });
+    }
   }
   if (!filter || filter === "instructions") {
     for (const i of g.inputs.filter((x) => x.origin === "instructions")) {
@@ -2449,7 +2503,7 @@ function renderSessions(sessions2, s = PLAIN) {
       `${count(["WEB", "MCP"])}`,
       `${subagents}`,
       `${x.flagged}`,
-      clip(g.prompts[0]?.text ?? "", 60)
+      clip(g.prompts.find((p) => p.from === "you")?.text ?? "", 60)
     ];
   });
   const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
@@ -2950,7 +3004,7 @@ async function sessions(flags, io, s) {
       return { ...r, graph, flagged: findingsFor(graph).filter((f) => f.externalUpstream).length };
     });
     if (flags.json) {
-      io.out(`${JSON.stringify(summaries.map((x) => ({ id: x.id, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts[0]?.text ?? null })), null, 2)}
+      io.out(`${JSON.stringify(summaries.map((x) => ({ id: x.id, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts.find((p) => p.from === "you")?.text ?? null })), null, 2)}
 `);
     } else {
       io.out(renderSessions(summaries, s));

@@ -76,3 +76,11 @@ export function clip(s: string, max: number): string {
     .trim();
   return one.length <= max ? one : one.slice(0, max - 1) + '…';
 }
+
+/**
+ * A tool call id short enough to read in a report line: toolu_01XWNSRthmT3jfsUEY1ALhq1 → toolu…ALhq1.
+ * Within one session the tail is distinct in practice, and the seq beside it is exact. JSON keeps the full id.
+ */
+export function callId(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 5)}…${id.slice(-5)}` : id;
+}

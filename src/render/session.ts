@@ -56,7 +56,10 @@ export function renderTrace(
   type Item = { seq: number; line: () => string[] };
   const items: Item[] = [];
   if (!filter) {
-    for (const p of g.prompts) items.push({ seq: p.seq, line: () => ['', `${s.bold(p.label)}  ${s.bold(`"${clip(p.text, 100)}"`)}`] });
+    for (const p of g.prompts) {
+      const head = p.from === 'task' ? `${s.dim('background task report, not your words:')} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
+      items.push({ seq: p.seq, line: () => ['', `${s.bold(p.label)}  ${head}`] });
+    }
   }
   if (!filter || filter === 'instructions') {
     for (const i of g.inputs.filter(x => x.origin === 'instructions')) {
@@ -129,7 +132,7 @@ export function renderSessions(sessions: SessionSummary[], s: Style = PLAIN): st
       `${count(['WEB', 'MCP'])}`,
       `${subagents}`,
       `${x.flagged}`,
-      clip(g.prompts[0]?.text ?? '', 60),
+      clip(g.prompts.find(p => p.from === 'you')?.text ?? '', 60),
     ];
   });
   const widths = head.map((h, i) => Math.max(h.length, ...rows.map(r => r[i]!.length)));

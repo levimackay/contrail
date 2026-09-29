@@ -64,6 +64,15 @@ function followSource(token: Token, source: Input, g: Graph, depth: number, visi
     return { kind: 'compaction', via: null, trace: before };
   }
 
+  // A subagent's report: look for the same value inside the subagent's own context.
+  if (source.relays) {
+    const via = source.producedBy ? g.actions.find(a => a.id === source.producedBy) : undefined;
+    const key = `relay:${source.id}`;
+    if (!via || visited.has(key)) return null;
+    visited.add(key);
+    return { kind: 'conduit', via, trace: traceAt(token, { scope: source.relays, seq: source.availableAt }, source.id, null, g, depth, visited) };
+  }
+
   const writer = source.origin === 'file' ? agentWriter(token, source, g) : undefined;
   if (writer && !visited.has(writer.id)) {
     visited.add(writer.id);

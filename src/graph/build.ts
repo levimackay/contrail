@@ -1,7 +1,7 @@
 import { scopeKey, sameScope } from '../engine/scope.ts';
 import type { Action, Effect, Env, Graph, Input, Origin, Prompt, Scope, Trust } from '../engine/types.ts';
 import { expectedShellEffects, parseCommitSha } from '../engine/effects.ts';
-import { arr, changedFiles, clip, displayPath, field, hostPath, obj, str, toText } from '../util.ts';
+import { arr, callId, changedFiles, clip, displayPath, field, hostPath, obj, str, toText } from '../util.ts';
 
 /** One row of the events table. */
 export interface EventRow {
@@ -42,6 +42,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
   const expansions = new Map<string, { command: string; source: string }>();
   const subagentStarts = new Map<string, number>();
   const instructions: Array<{ seq: number; scope: Scope; p: Record<string, unknown>; promptId: string | null }> = [];
+  const notifications: Array<{ seq: number; promptId: string; text: string; toolUseId: string | null; taskId: string | null }> = [];
 
   rows.forEach((row, index) => {
     const seq = index + 1;
@@ -50,9 +51,19 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     const id = row.tool_use_id;
 
     switch (row.hook_event) {
-      case 'UserPromptSubmit':
-        prompts.push({ promptId: row.prompt_id ?? `seq-${seq}`, seq, label: `p${prompts.length + 1}`, text: str(p, 'prompt') ?? '' });
+      case 'UserPromptSubmit': {
+        const promptId = row.prompt_id ?? `seq-${seq}`;
+        const text = str(p, 'prompt') ?? '';
+        const task = taskNotification(text);
+        if (task) {
+          // Claude Code delivers a background task's report as a prompt. It is not your words.
+          prompts.push({ promptId, seq, label: `p${prompts.length + 1}`, text: task.summary, from: 'task' });
+          notifications.push({ seq, promptId, text, toolUseId: task.toolUseId, taskId: task.taskId });
+        } else {
+          prompts.push({ promptId, seq, label: `p${prompts.length + 1}`, text, from: 'you' });
+        }
         break;
+      }
       case 'UserPromptExpansion':
         if (row.prompt_id) {
           const command = `/${str(p, 'command_name') ?? ''} ${str(p, 'command_args') ?? ''}`.trim();
@@ -82,8 +93,8 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
       }
       case 'PostToolBatch':
         for (const call of arr(p.tool_calls)) {
-          const callId = str(call, 'tool_use_id');
-          if (callId) modelSaw.set(callId, { seq, text: toText(field(call, 'tool_response')) });
+          const useId = str(call, 'tool_use_id');
+          if (useId) modelSaw.set(useId, { seq, text: toText(field(call, 'tool_response')) });
         }
         break;
       case 'PostCompact':
@@ -111,6 +122,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
   });
 
   for (const prompt of prompts) {
+    if (prompt.from === 'task') continue;
     const expansion = expansions.get(prompt.promptId);
     if (expansion) {
       // The expanded template is not your words; the command you typed is.
@@ -136,16 +148,19 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     effects.push(...effectsOf(a, env));
 
     const agentId = (a.tool === 'Agent' || a.tool === 'Task') && a.status === 'ok' ? str(a.response, 'agentId') : undefined;
+    if (agentId && output) output.relays = { sessionId: a.scope.sessionId, agentId };
     if (agentId) {
       // What the parent agent wrote to the subagent: the subagent's first input, and a conduit.
       inputs.push({
         id: `subprompt:${agentId}`, scope: { sessionId: a.scope.sessionId, agentId }, origin: 'subagent_prompt',
-        trust: 'agent', ref: `subprompt:${agentId}`, label: `subagent instructions written in ${a.id}`,
+        trust: 'agent', ref: `subprompt:${agentId}`, label: `subagent instructions written in ${callId(a.id)}`,
         text: str(a.input, 'prompt') ?? '', truncated: false, fidelity: 'reported',
         availableAt: subagentStarts.get(agentId) ?? a.preSeq, producedBy: a.id, promptId: a.promptId,
       });
     }
   }
+
+  for (const n of notifications) inputs.push(notificationInput(n, actionList, mainScope, env));
 
   for (const ins of instructions) {
     const path = str(ins.p, 'file_path') ?? '';
@@ -202,6 +217,43 @@ function newAction(id: string, scope: Scope, row: EventRow, p: Record<string, un
     status: 'pending',
     mcpServer: mcp ? { name: str(mcp, 'name') ?? '', source: str(mcp, 'source') ?? '' } : null,
   };
+}
+
+const TASK_NOTIFICATION = /^\s*<task-notification>/;
+const tag = (text: string, name: string) => new RegExp(`<${name}>([^<]{1,200})</${name}>`).exec(text)?.[1]?.trim() ?? null;
+
+/** A <task-notification> prompt: the report of a background subagent or shell command. */
+function taskNotification(text: string): { summary: string; toolUseId: string | null; taskId: string | null } | null {
+  if (!TASK_NOTIFICATION.test(text)) return null;
+  const head = text.slice(0, 4000);
+  return {
+    summary: tag(head, 'summary') ?? 'a background task finished',
+    toolUseId: tag(head, 'tool-use-id'),
+    taskId: tag(head, 'task-id'),
+  };
+}
+
+/** The report as an input, labeled by the call that started the task: never yours. */
+function notificationInput(
+  n: { seq: number; promptId: string; text: string; toolUseId: string | null; taskId: string | null },
+  actionList: Action[],
+  mainScope: Scope,
+  env: Env,
+): Input {
+  const started = actionList.find(a => a.id === n.toolUseId);
+  const base = { id: `task:${n.seq}`, scope: mainScope, text: n.text, truncated: n.text.includes('[contrail: truncated'), fidelity: 'as-seen' as const, availableAt: n.seq, producedBy: started?.id ?? null, promptId: n.promptId };
+  if (started && (started.tool === 'Agent' || started.tool === 'Task')) {
+    const agentId = str(started.response, 'agentId') ?? n.taskId;
+    return {
+      ...base, origin: 'subagent_result', trust: 'agent', ref: `agent:${started.id}`, label: `background subagent report from ${callId(started.id)}`,
+      relays: agentId ? { sessionId: started.scope.sessionId, agentId } : null,
+    };
+  }
+  if (started) {
+    const c = classify(started, env);
+    return { ...base, ...c, label: `background ${c.label.replace(/^the /, '')}` };
+  }
+  return { ...base, origin: 'tool_output', trust: 'local', ref: `task:${n.taskId ?? n.seq}`, label: 'a background task report' };
 }
 
 function templateTrust(source: string): Trust {
@@ -262,7 +314,7 @@ function classify(a: Action, env: Env): { origin: Origin; trust: Trust; ref: str
     return { origin: 'skill', trust: name.includes(':') ? 'external' : 'local', ref: `skill:${name}`, label: `skill ${name}` };
   }
   if (tool === 'Agent' || tool === 'Task') {
-    return { origin: 'subagent_result', trust: 'agent', ref: `agent:${a.id}`, label: `subagent report from ${a.id}` };
+    return { origin: 'subagent_result', trust: 'agent', ref: `agent:${a.id}`, label: `subagent report from ${callId(a.id)}` };
   }
   return { origin: 'tool_output', trust: 'local', ref: `tool:${a.id}`, label: `${tool} output` };
 }

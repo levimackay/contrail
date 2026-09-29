@@ -33,9 +33,11 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
 
   out.push(...requestedLines(e, s));
   out.push(
-    prompt
-      ? `Turn        ${s.grade('DIRECT')}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim('[R1]')}`
-      : `Turn        ${s.grade('UNKNOWN')}no prompt was recorded for this action`,
+    !prompt
+      ? `Turn        ${s.grade('UNKNOWN')}no prompt was recorded for this action`
+      : prompt.from === 'task'
+        ? `Turn        ${s.grade('DIRECT')}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim('[R1]')}`
+        : `Turn        ${s.grade('DIRECT')}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim('[R1]')}`,
   );
   out.push('', s.bold(HEADING));
 

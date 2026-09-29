@@ -65,6 +65,8 @@ export interface Input {
   /** The tool call that returned this text, if any. */
   producedBy: string | null;
   promptId: string | null;
+  /** For a subagent's report: the subagent's own context, where the values in it came from. */
+  relays?: Scope | null;
 }
 
 /** Something an action changed. */
@@ -142,8 +144,13 @@ export interface Prompt {
   seq: number;
   /** p1, p2, … in session order */
   label: string;
-  /** your words; for a slash command, the command you typed */
+  /** your words; for a slash command, the command you typed; for a task report, its summary */
   text: string;
+  /**
+   * you: you typed it. task: Claude Code started the turn itself to deliver a background task's
+   * report (a <task-notification>). A task turn is never your words.
+   */
+  from: 'you' | 'task';
 }
 
 export interface Graph {

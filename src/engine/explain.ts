@@ -26,7 +26,7 @@ export function explain(actionId: string, g: Graph): Explanation {
     : null;
 
   const tokens = extractTokens(action, g.env);
-  const sentences = g.prompts.flatMap(p => splitSentences(p.text).map(text => ({ promptId: p.promptId, seq: p.seq, text })));
+  const sentences = g.prompts.filter(p => p.from === 'you').flatMap(p => splitSentences(p.text).map(text => ({ promptId: p.promptId, seq: p.seq, text })));
   const traces = tokens.map(t => traceToken(t, action, g, 0, new Set([action.id])));
 
   const effects: Link[] = g.effects
@@ -65,7 +65,7 @@ export function blindSpots(action: Action, g: Graph): string[] {
   const spots = [...BASE_BLIND_SPOTS];
 
   const mentions = g.prompts
-    .filter(p => p.seq < action.preSeq)
+    .filter(p => p.from === 'you' && p.seq < action.preSeq)
     .flatMap(p => [...p.text.matchAll(/(?:^|\s)@([\w.~/-]+)/g)].map(m => m[1]!));
   if (mentions.length) spots.push(`@-mentioned: ${[...new Set(mentions)].join(', ')} (contents not observable)`);
 

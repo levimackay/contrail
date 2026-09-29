@@ -164,7 +164,7 @@ What a commit contains, joined to the agent changes behind each file.
 
 ![contrail why commit](docs/why-commit.svg)
 
-Contrail finds the recorded shell command whose output was git's own `[branch sha] subject` line, which makes the commit itself DIRECT. It then asks git for the commit's file list and joins each file by path to the latest agent change before the commit. A file the agent changed is LIKELY, not DIRECT: git lists the file and the agent changed it earlier, but whether that exact change is what was committed is not observed. A file changed only by an expected effect is POSSIBLE. A file with no recorded agent change is UNKNOWN: you, another process, or an earlier session. Above, `docs/CHANGELOG.md` is in the commit but the agent never touched it.
+Contrail finds the recorded shell command whose output was git's own `[branch sha] subject` line, which makes the commit itself DIRECT. Agents often commit with `git commit -q`, which prints no such line. Then Contrail asks git when it dated the commit and looks for the one recorded `git commit` whose hooks bracket that second. That join is LIKELY, not DIRECT, and if two commits were running at once it attributes neither. It then asks git for the commit's file list and joins each file by path to the latest agent change before the commit. A file the agent changed is LIKELY, not DIRECT: git lists the file and the agent changed it earlier, but whether that exact change is what was committed is not observed. A file changed only by an expected effect is POSSIBLE. A file with no recorded agent change is UNKNOWN: you, another process, or an earlier session. Above, `docs/CHANGELOG.md` is in the commit but the agent never touched it.
 
 Commits made outside Claude Code's shell tool are not recorded, so `why commit` reports them as not found. It needs to run inside the repository so git can list the files.
 
@@ -183,7 +183,7 @@ Global options: `--json` (why, trace, risks, sessions), `--data <dir>` to read a
 
 | Grade | Meaning |
 |---|---|
-| DIRECT | Claude Code recorded the join itself: an equality on hook fields such as `prompt_id`, `tool_use_id`, `tool_response.filePath`, `bashEditDiff`, or git's commit line in a command's output. No text matching is involved. |
+| DIRECT | Claude Code recorded the join itself: an equality on hook fields such as `prompt_id`, `tool_use_id`, `tool_response.filePath`, `bashEditDiff`, or git's commit line in a command's output. No text matching or timing is involved. |
 | LIKELY | Exactly one observed input held this name-like token before the agent first used it. |
 | POSSIBLE | Two or three inputs held it, or it is a plain word, or an effect is only expected. |
 | UNKNOWN | No observed input holds it, or four or more do (too common to attribute). Always printed with the number of inputs searched and the blind spots. |
@@ -200,6 +200,7 @@ The rules:
 | R6 | Effects a command is expected to have (an installer and its lockfile, a redirect target, the host a `curl` names). POSSIBLE, worded "expected, not observed". |
 | R7 | A commit's files joined to earlier agent changes. LIKELY at best. |
 | R8 | Whether your own sentences name the action's target. |
+| R9 | A commit joined to the one recorded `git commit` running in the second git dated it, when git printed no commit line (`git commit -q`). LIKELY at best; two or more candidates attribute nothing. |
 
 ### Data provenance, not the agent's reasons
 
@@ -274,6 +275,7 @@ Hook fields were checked against the Claude Code documentation for 2.1.283 to 2.
 | The exact text the model received from a batch of tool calls | `PostToolBatch` |
 | Failed tool calls | `PostToolUseFailure` |
 | Compaction boundaries and summaries | `PostCompact` |
+| The end of a session, which also drains the spool | `SessionEnd` |
 | Subagent scope | `SubagentStart`, `SubagentStop`, and `agent_id` on hook payloads |
 | The end of a turn, shown as "agent said" and never as evidence | `Stop` |
 
@@ -310,7 +312,7 @@ Contrail stores what your agent read. It is built so that it does not become the
 - **Bounded content.** Strings are capped at 256 KB. Edit `originalFile` contents and images are dropped. A payload that cannot be processed is stored as a failure and never blocks later events.
 - **Only instruction files are read from disk.** When Claude Code reports a loaded `CLAUDE.md` or `.claude/rules` file, Contrail reads that file (regular files only, within the size cap). If it changed after it loaded, its text is not kept, because it is no longer what the agent saw.
 - **Safe to print.** Reports strip control characters and backticks from recorded text, so a recorded string cannot restyle your terminal or turn into a command when a report is shown inside Claude Code.
-- **A short unredacted window.** Each hook event is first written to a spool file, unredacted, with mode 0600. Ingest redacts it into the database and deletes the file. Ingest runs after each turn (an async `Stop` hook) and before every `contrail` command, so unredacted text exists for about one turn. That is the same trust boundary as Claude Code's own plaintext session transcripts.
+- **A short unredacted window.** Each hook event is first written to a spool file, unredacted, with mode 0600. Ingest redacts it into the database and deletes the file. Ingest runs after each turn (an async `Stop` hook), again when the session ends (a synchronous `SessionEnd` hook, since Claude Code may not finish an async hook on exit), and before every `contrail` command. So unredacted text exists for about one turn, and never outlasts the session unless ingest cannot run. That is the same trust boundary as Claude Code's own plaintext session transcripts.
 - **Permissions.** The data directory is 0700 and its files are 0600.
 - **Retention.** Sessions older than 90 days are removed, and the oldest go first when the database passes 1024 MB. Both are configurable (below).
 - **Uninstall deletes the data**, unless you pass `--keep-data`.

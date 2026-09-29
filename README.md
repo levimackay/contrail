@@ -105,20 +105,42 @@ It is not a transcript viewer, a token tracker or a security scanner. It has one
 | [`contrail sessions`](#contrail-sessions) | Recent sessions at a glance |
 | [`contrail export [<session> \| last] [--otel]`](#export-to-opentelemetry) | A session's recorded (redacted) events as JSON, or as OpenTelemetry traces |
 | [`contrail report [<session>] [-o file.html]`](#contrail-report) | A session as one self-contained HTML page |
-| `contrail doctor` | Checks the install and times the capture hook on this machine |
+| [`contrail statusline`](#status-line) | One line for Claude Code's status bar |
+| `contrail doctor` | Checks the install, prints the launcher path, and times the capture hook |
 | `contrail prune` | Applies retention now and compacts the database |
 | `contrail ingest` | Moves spooled events into the database (it also runs automatically) |
 
 Options: `--json` for machine-readable output (why, trace, risks, sessions), `--session <id>` (a prefix is enough), `--data <dir>` to read another data directory, `-h` and `-v`.
 
-Inside Claude Code, the `/contrail:why`, `/contrail:risks`, `/contrail:trace` and `/contrail:report` skills run the same CLI. From a terminal, alias the launcher inside the installed plugin, replacing `<version>` with the directory under `~/.claude/plugins/cache/contrail/contrail/`:
+Inside Claude Code, the `/contrail:why`, `/contrail:risks`, `/contrail:trace` and `/contrail:report` skills run the same CLI. From a terminal, use the launcher Contrail keeps in its data directory. Its path stays the same across plugin updates, and `contrail doctor` prints it:
 
 ```sh
-alias contrail="$HOME/.claude/plugins/cache/contrail/contrail/<version>/bin/contrail"
+alias contrail="sh $(echo ~/.claude/plugins/data/contrail-*/bin/contrail)"
 contrail why last
 ```
 
-The path contains the plugin version, so update the alias after the plugin updates. From a clone of this repository, run `sh plugin/bin/contrail` instead.
+The launcher is written when a Claude Code session starts with the plugin enabled. From a clone of this repository, run `sh plugin/bin/contrail` instead.
+
+### Status line
+
+Contrail can show the current session in Claude Code's status bar: how many sensitive actions trace to external content, how many you did not name, and how many calls were recorded.
+
+```text
+contrail ▲ 2 from external content · 5 calls
+```
+
+Add it to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "sh ~/.claude/plugins/data/contrail-contrail/bin/contrail statusline"
+  }
+}
+```
+
+Use the launcher path `contrail doctor` prints if yours differs. The command reads the session Claude Code passes on stdin, takes about 75 ms, and never fails: if anything goes wrong it prints just `contrail`. To keep an existing status line, call `contrail statusline` from your own script and print both.
 
 ### `contrail why`
 
@@ -589,6 +611,7 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 
 - [x] OpenTelemetry export: sessions as OTLP traces, with grades as attributes and provenance as span links
 - [x] `contrail report` and `/contrail:report`: a session as one self-contained HTML page
+- [x] `contrail statusline`, and a launcher at a stable path for aliases and the status bar
 
 **Planned**
 

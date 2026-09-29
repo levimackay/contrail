@@ -8,6 +8,8 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 - `contrail export --otel`: a session as OpenTelemetry traces (OTLP/JSON). Sessions, turns and tool calls become spans with real times, Contrail's grades and trust labels become `contrail.*` attributes, provenance edges become span links, and effects become span events.
 - `contrail report` and the `/contrail:report` skill: a session as one self-contained HTML page with summary cards, sensitive actions, the timeline, and every call's full trail. It loads nothing and runs no script, and it is written with mode 0600.
+- `contrail statusline`: the current session in Claude Code's status bar, from the JSON Claude Code passes on stdin. It never fails; on any error it prints just the name.
+- A launcher at a stable path, `<data directory>/bin/contrail`, kept up to date by the SessionStart hook, so a shell alias or status-line command survives plugin updates. `contrail doctor` prints it.
 - A changelog, security policy, contributing guide, and issue and pull request templates.
 
 ## [0.2.0] - 2026-09-29

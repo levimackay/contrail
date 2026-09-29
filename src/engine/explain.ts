@@ -1,0 +1,82 @@
+import { maxGrade, minGrade } from './grade.ts';
+import { requested, splitSentences } from './requested.ts';
+import { sameScope, scopeKey } from './scope.ts';
+import { extractTokens } from './tokens.ts';
+import { traceToken } from './trace.ts';
+import type { Action, Explanation, Grade, Graph, Link, TokenTrace } from './types.ts';
+
+export const BASE_BLIND_SPOTS = [
+  'model knowledge and reasoning',
+  'system prompt',
+  'AGENTS.md',
+  'context injected by other hooks',
+];
+
+/**
+ * Everything Contrail can observe about one action. Pure: reads the graph, never
+ * the agent's own narration, so what the agent says about itself cannot change a grade.
+ */
+export function explain(actionId: string, g: Graph): Explanation {
+  const action = g.actions.find(a => a.id === actionId);
+  if (!action) throw new Error(`No recorded action ${actionId}`);
+
+  const prompt = g.prompts.find(p => p.promptId === action.promptId);
+  const turn: Link | null = prompt
+    ? { type: 'in_turn', from: action.id, to: `prompt:${prompt.promptId}`, grade: 'DIRECT', rule: 'R1', recorded: true }
+    : null;
+
+  const tokens = extractTokens(action, g.env);
+  const sentences = g.prompts.flatMap(p => splitSentences(p.text).map(text => ({ promptId: p.promptId, seq: p.seq, text })));
+  const visited = new Set([action.id]);
+  const traces = tokens.map(t => traceToken(t, action, g, 0, visited));
+
+  const effects: Link[] = g.effects
+    .filter(e => e.actionId === action.id)
+    .map(e => ({ type: 'changed', from: action.id, to: e.id, grade: 'DIRECT', rule: 'R1', recorded: true }));
+
+  return {
+    action,
+    turn,
+    requested: requested(action, tokens, sentences),
+    traces,
+    effects,
+    chainGrade: chainGrade(traces),
+    blindSpots: blindSpots(action, g),
+  };
+}
+
+/** The weakest link along the headline trail, counting only hops where a source was found. */
+export function chainGrade(traces: TokenTrace[]): Grade {
+  const found = (t: TokenTrace) => t.links.some(l => l.grade !== 'UNKNOWN');
+  const head = traces.find(t => t.token.role === 'target' && found(t)) ?? traces.find(found);
+  if (!head) return 'UNKNOWN';
+  const grades: Grade[] = [];
+  for (let t: TokenTrace | undefined = head; t && found(t); t = t.upstream?.trace) {
+    grades.push(maxGrade(t.links.map(l => l.grade)));
+  }
+  return minGrade(grades);
+}
+
+/** What Contrail could not see for this action. Always includes the permanent blind spots. */
+export function blindSpots(action: Action, g: Graph): string[] {
+  const spots = [...BASE_BLIND_SPOTS];
+
+  const mentions = g.prompts
+    .filter(p => p.seq < action.preSeq)
+    .flatMap(p => [...p.text.matchAll(/(?:^|\s)@([\w.~/-]+)/g)].map(m => m[1]!));
+  if (mentions.length) spots.push(`@-mentioned: ${[...new Set(mentions)].join(', ')} (contents not observable)`);
+
+  if (g.inputs.some(i => i.truncated && sameScope(i.scope, action.scope) && i.availableAt < action.preSeq)) {
+    spots.push('some inputs were truncated when stored');
+  }
+
+  const compactions = (g.compactSeqs[scopeKey(action.scope)] ?? []).filter(s => s < action.preSeq);
+  if (compactions.length) {
+    spots.push(`context compacted at seq ${compactions.join(', ')}; earlier inputs are only visible through the summary`);
+  }
+
+  const knownStarts = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'InstructionsLoaded'];
+  if (g.firstEvent && !knownStarts.includes(g.firstEvent)) spots.push('the start of this session was not recorded');
+
+  return spots;
+}

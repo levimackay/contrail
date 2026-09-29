@@ -327,7 +327,7 @@ Contrail stores what your agent read. It is built so that it does not become the
 - **Retention.** Sessions older than 90 days are removed, and the oldest go first when the database passes 1024 MB. Both are configurable (below).
 - **Uninstall deletes the data**, unless you pass `--keep-data`.
 
-Redaction is pattern-based, so it misses secrets it has no rule for. Treat `contrail.db` as sensitive.
+Redaction is pattern-based, so it misses secrets it has no rule for. Treat `contrail.db` as sensitive, or set [`store_content: false`](#storing-no-text-the-agent-read) so it holds no text the agent read.
 
 ## Architecture
 
@@ -388,10 +388,26 @@ contrail/
 The CLI resolves the data directory in this order: `--data`, `CONTRAIL_HOME`, `--plugin-data` (which the skills pass), `CLAUDE_PLUGIN_DATA` (which Claude Code sets for plugin processes), then the single directory matching `~/.claude/plugins/data/contrail-*`. The capture hook also puts `CONTRAIL_HOME` first, so if you set it, recording, the skills and the CLI all use it. It holds `contrail.db`, the `spool/` directory and an optional `config.json`:
 
 ```json
-{ "retention_days": 90, "max_db_mb": 1024 }
+{ "retention_days": 90, "max_db_mb": 1024, "store_content": true }
 ```
 
 Missing or invalid values fall back to these defaults, and `contrail doctor` reports a `config.json` it cannot parse.
+
+### Storing no text the agent read
+
+Set `"store_content": false` and Contrail stores no text the agent read. That covers tool results, file and page contents, instruction and skill files, compaction summaries and background task reports. The agent's own messages and edit patches are dropped.
+
+Grading still works:
+
+- At ingest, every span of that text that a traced value could match (a path, URL, package or name) is replaced with a keyed hash (HMAC-SHA256, 48 bits, with a random key in `content.key`, mode 0600, in the data directory). The hashes stay on their original lines.
+- A value is found by hashing it with the same key, so grades and line numbers come out the same as with text stored. Quotes read `(text not stored)`.
+
+The trade-offs:
+
+- A value containing a space cannot be matched.
+- Anyone who has both `contrail.db` and `content.key` can confirm a guessed value. They cannot recover the text.
+- Your prompts and each action's arguments (commands, paths, URLs) are still stored as redacted text, because they are what a report explains.
+- The setting applies to events ingested after it is set. Earlier rows keep their text until retention removes them.
 
 ## How it compares
 
@@ -442,11 +458,11 @@ These answer different questions. Contrail's is narrow on purpose.
 - [x] `why commit` for quiet commits (`git commit -q`), joined on git's commit time (R9)
 - [x] Background task reports (`<task-notification>`) labeled by the task that produced them, never as your words
 - [x] A synchronous `SessionEnd` ingest, so the unredacted spool never outlives a session
+- [x] `store_content: false`: no text the agent read is stored, only keyed hashes that keep grades and line numbers
 
 **Planned**
 
 - [ ] Optional transcript enrichment, to show what the agent said right before each action
-- [ ] `store_content: false` in `config.json`, for hash-only storage
 - [ ] OpenTelemetry export with `contrail.origin` and `contrail.grade` attributes
 
 Windows support, other agents, and an enforcement companion that consumes Contrail's graph are considered only if there is demand.

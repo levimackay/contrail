@@ -1457,6 +1457,31 @@ function rankFindings(findings) {
   return [...findings].sort((a, b) => weight(a) - weight(b) || b.action.preSeq - a.action.preSeq);
 }
 
+// src/engine/find.ts
+function findValue(g, value) {
+  const needle = normalize(value.trim());
+  if (!needle) return [];
+  const own = new Set(g.actions.filter(runsContrail).map((a) => a.id));
+  const out = [];
+  for (const input of g.inputs) {
+    if (input.producedBy && own.has(input.producedBy) || input.origin === "prompt" && /^\s*\/contrail:/.test(input.text)) continue;
+    const index = findInInput(input, needle, g.hashToken);
+    if (index < 0) continue;
+    const { line, text } = lineOf(input.text, index);
+    out.push({ seq: input.availableAt, source: { input, line, text: input.hashed ? "" : text } });
+  }
+  for (const action of g.actions) {
+    if (own.has(action.id)) continue;
+    const leaf = stringLeaves(action.input).find((l) => findNormalized(normalize(l.value), needle) >= 0);
+    if (leaf) out.push({ seq: action.preSeq, use: { action, argPath: leaf.path, kinds: sensitivity(action) } });
+  }
+  return out.sort((a, b) => a.seq - b.seq || Number(Boolean(a.use)) - Number(Boolean(b.use)));
+}
+function runsContrail(a) {
+  const command = a.tool === "Bash" ? stringLeaves(a.input).find((l) => l.path === "$.command")?.value ?? "" : "";
+  return /(^|[\s;&|(/])(bin\/contrail|contrail)\s+(why|find|trace|risks|sessions|report|export|doctor|statusline)\b/.test(command);
+}
+
 // src/engine/tree.ts
 function headlineTrace(e) {
   const found = (t) => t.links.some((l) => l.grade !== "UNKNOWN");
@@ -2798,6 +2823,40 @@ function renderStatusline(g, findings, s = PLAIN) {
   ].filter(Boolean);
   return `${name} ${parts.join(s.dim(" \xB7 "))}`;
 }
+function renderFind(value, hits, scanned, s = PLAIN) {
+  const found = hits.filter((h) => h.sightings.length);
+  const out = [`${s.bold(`"${clip(value, 80)}"`)} ${s.dim(`in ${found.length} of ${scanned} session${scanned === 1 ? "" : "s"}`)}`];
+  if (!found.length) {
+    out.push("", `  ${s.dim("No recorded input or call contains it. Matching is whole-token and literal; no observed source is not the same as no source.")}`);
+    return `${out.join("\n")}
+`;
+  }
+  for (const { graph: g, sightings } of found) {
+    const sessionId = g.actions[0]?.scope.sessionId ?? "";
+    const first = g.prompts.find((p) => p.from === "you");
+    out.push("", `${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : "")}`);
+    let seenSource = false;
+    for (const hit of sightings) {
+      if (hit.source) {
+        const src = hit.source.input;
+        const where = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ""}`;
+        const trust = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("HELD", 6)} ${where}  ${trust}${seenSource ? "" : `  ${s.accent("first seen")}`}`);
+        seenSource = true;
+        if (hit.source.text) out.push(`              ${s.dim(hit.source.line != null ? `${hit.source.line}\u2502` : "\u2502")} ${clip(hit.source.text, 96)}`);
+        else if (src.hashed) out.push(`              ${s.dim(`${hit.source.line ?? ""}\u2502 (text not stored)`)}`);
+      } else if (hit.use) {
+        const a = hit.use.action;
+        const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+        const kinds = hit.use.kinds.length ? `  ${s.flag(hit.use.kinds.join(" \xB7 "))}` : "";
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("USED", 6)} ${kindOf(a)} ${clip(summary(a, g), 80)} ${s.dim(`(${hit.use.argPath})`)}${who}${kinds}`);
+      }
+    }
+  }
+  out.push("", s.dim(`HELD: an input that held the value. USED: a call whose arguments contain it. Run ${s.bold("contrail why")} on a call for its graded trail.`));
+  return `${out.join("\n")}
+`;
+}
 function renderSessions(sessions2, s = PLAIN) {
   if (!sessions2.length) return "No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n";
   const head = ["SESSION", "LAST ACTIVE", "TURNS", "READS", "WRITES", "SHELL", "WEB/MCP", "SUBAGENTS", "FLAGGED", "FIRST PROMPT"];
@@ -3482,6 +3541,7 @@ Usage:
                                     a session's recorded events as JSON, or as OpenTelemetry traces
   contrail report [<session> | last] [-o file.html]
                                     a session as one self-contained HTML page
+  contrail find "<value>" [--all]   every recorded input that held a value, and every call that used it
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
@@ -3528,6 +3588,7 @@ ${USAGE}`);
     export: (args) => exportSession(args, flags, io),
     report: (args) => report(args, flags, io),
     statusline: () => statusline(flags, io),
+    find: (args) => find(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io)
@@ -3757,6 +3818,30 @@ async function report(args, flags, io) {
     writeFileSync2(path, html, { mode: 384 });
     io.out(`Wrote ${path}
 `);
+    return 0;
+  });
+}
+async function find(args, flags, io, s) {
+  const value = (flags.stdin ? readStdin(io) : args.join(" ")).trim();
+  if (!value) throw new ContrailError('Usage: contrail find "<value>" [--all]');
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const sessions2 = flags.session ? [pickSession(db, flags.session, repoKey)] : recentSessions(db, repoKey, flags.all ? 500 : 50, flags.all === true).map((r) => r.id);
+    const hits = sessions2.map((id) => {
+      const graph = loadGraph(db, id, io.home, hashToken);
+      return { graph, sightings: findValue(graph, value) };
+    });
+    if (flags.json) {
+      const json = hits.filter((h) => h.sightings.length).map((h) => ({
+        session: h.graph.actions[0]?.scope.sessionId ?? null,
+        sightings: h.sightings.map(
+          (x) => x.source ? { seq: x.seq, held: { source: x.source.input.label, trust: x.source.input.trust, origin: x.source.input.origin, line: x.source.line } } : { seq: x.seq, used: { action: x.use.action.id, tool: x.use.action.tool, argPath: x.use.argPath, sensitive: x.use.kinds } }
+        )
+      }));
+      io.out(`${JSON.stringify({ value, sessions: json }, null, 2)}
+`);
+    } else {
+      io.out(renderFind(value, hits, sessions2.length, s));
+    }
     return 0;
   });
 }

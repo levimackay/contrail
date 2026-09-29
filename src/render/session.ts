@@ -1,5 +1,6 @@
 import type { CommitFile } from '../engine/effects.ts';
 import type { Finding } from '../engine/risks.ts';
+import type { Sighting } from '../engine/find.ts';
 import { headlineTrace, type TreeNode, type TreeRoot } from '../engine/tree.ts';
 import type { Action, Commit, Explanation, Graph, Grade, Input } from '../engine/types.ts';
 import { clip, displayPath } from '../util.ts';
@@ -165,6 +166,40 @@ export function renderStatusline(g: Graph | null, findings: Finding[], s: Style 
     s.dim(`${g.actions.length} call${g.actions.length === 1 ? '' : 's'}`),
   ].filter(Boolean);
   return `${name} ${parts.join(s.dim(' · '))}`;
+}
+
+/** contrail find: where one value appeared, session by session, in order. */
+export function renderFind(value: string, hits: Array<{ graph: Graph; sightings: Sighting[] }>, scanned: number, s: Style = PLAIN): string {
+  const found = hits.filter(h => h.sightings.length);
+  const out = [`${s.bold(`"${clip(value, 80)}"`)} ${s.dim(`in ${found.length} of ${scanned} session${scanned === 1 ? '' : 's'}`)}`];
+  if (!found.length) {
+    out.push('', `  ${s.dim('No recorded input or call contains it. Matching is whole-token and literal; no observed source is not the same as no source.')}`);
+    return `${out.join('\n')}\n`;
+  }
+  for (const { graph: g, sightings } of found) {
+    const sessionId = g.actions[0]?.scope.sessionId ?? '';
+    const first = g.prompts.find(p => p.from === 'you');
+    out.push('', `${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : '')}`);
+    let seenSource = false;
+    for (const hit of sightings) {
+      if (hit.source) {
+        const src = hit.source.input;
+        const where = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ''}`;
+        const trust = src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+        out.push(`  ${s.dim(pad(`${hit.seq}`, 4))} ${pad('HELD', 6)} ${where}  ${trust}${seenSource ? '' : `  ${s.accent('first seen')}`}`);
+        seenSource = true;
+        if (hit.source.text) out.push(`              ${s.dim(hit.source.line != null ? `${hit.source.line}│` : '│')} ${clip(hit.source.text, 96)}`);
+        else if (src.hashed) out.push(`              ${s.dim(`${hit.source.line ?? ''}│ (text not stored)`)}`);
+      } else if (hit.use) {
+        const a = hit.use.action;
+        const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : '';
+        const kinds = hit.use.kinds.length ? `  ${s.flag(hit.use.kinds.join(' · '))}` : '';
+        out.push(`  ${s.dim(pad(`${hit.seq}`, 4))} ${pad('USED', 6)} ${kindOf(a)} ${clip(summary(a, g), 80)} ${s.dim(`(${hit.use.argPath})`)}${who}${kinds}`);
+      }
+    }
+  }
+  out.push('', s.dim(`HELD: an input that held the value. USED: a call whose arguments contain it. Run ${s.bold('contrail why')} on a call for its graded trail.`));
+  return `${out.join('\n')}\n`;
 }
 
 /** Recent sessions with what they did at a glance. */

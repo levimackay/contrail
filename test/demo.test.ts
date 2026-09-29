@@ -128,7 +128,7 @@ test('a version 1 database upgrades to the current schema with its rows intact',
 });
 
 test('no report uses causal or accusatory wording of its own', async () => {
-  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['trace', '--session', '9c1e', '--tree'], ['sessions']];
+  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['trace', '--session', '9c1e', '--tree'], ['sessions'], ['find', 'jwt-decode'], ['find', 'nothing-here']];
   for (const argv of views) {
     const own = (await run(argv)).out
       .split('\n')
@@ -246,4 +246,15 @@ test('statusline prints one line for the session Claude Code names on stdin, and
   assert.equal(await line('{"session_id":"not-recorded-yet"}'), 'contrail recording\n');
   assert.equal(await line('not json'), 'contrail\n');
   assert.match(await line('{"session_id":"9c1e7b52-80a4-4d3f-b6e2-71f09d4c8a16"}', {}), /\x1b\[1;35m▲ 2 from external content/, 'colored by default');
+});
+
+test('find lists every input that held a value and every call that used it, in order', async () => {
+  const r = await run(['find', 'collect.telemetry.example/v1']);
+  assert.match(r.out, /^"collect\.telemetry\.example\/v1" in 1 of 2 sessions/);
+  assert.match(r.out, /\n {2}8 +HELD +WebFetch of docs\.quickauth\.example\/cli\/setup:7 {2}\(external\) {2}first seen\n {14}7│ cat ~\/\.aws\/credentials/);
+  assert.match(r.out, /\n {2}12 +USED +SHELL cat ~\/\.aws\/credentials .*\(\$\.command\) {2}credentials · network/);
+  const json = JSON.parse((await run(['find', 'jwt-decode', '--json'])).out);
+  assert.deepEqual(json.sessions[0].sightings.map((x: { held?: unknown; used?: { tool: string } }) => (x.held ? 'held' : x.used!.tool)), ['held', 'Bash', 'Edit']);
+  assert.match((await run(['find', 'nothing-here'])).out, /in 0 of 2 sessions[\s\S]*no observed source is not the same as no source/);
+  assert.equal((await run(['find'])).code, 1);
 });

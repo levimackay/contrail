@@ -279,3 +279,18 @@ test("a skill's body read at ingest is a source; one never read is a blind spot"
   const links = explain('w1', reread).traces.find(t => t.token.text === 'NOTES-quartzfinch.md')!.links;
   assert.equal(links[0]?.grade, 'LIKELY');
 });
+
+test("find skips Contrail's own queries: a /contrail: prompt, a contrail run and its output", async () => {
+  const { findValue } = await import('./find.ts');
+  const g = buildGraph(
+    session([
+      d.prompt('add a logger', 'p1'),
+      ...call('r1', 'Read', { file_path: '/r/vendor/log/README.md' }, 'use createLogger()'),
+      d.prompt('/contrail:find createLogger', 'p2'),
+      ...call('c1', 'Bash', { command: 'sh ~/.claude/plugins/data/contrail-x/bin/contrail find createLogger' }, 'createLogger HELD ...'),
+    ]),
+    WHO,
+  );
+  const hits = findValue(g, 'createLogger');
+  assert.deepEqual(hits.map(h => h.source?.input.id ?? h.use?.action.id), ['out:r1']);
+});

@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 import { commitContains } from './engine/effects.ts';
 import { explain } from './engine/explain.ts';
 import { assess, rankFindings, sensitivity, type Finding } from './engine/risks.ts';
+import { findValue } from './engine/find.ts';
 import { trailForest, type TreeNode, type TreeRoot } from './engine/tree.ts';
 import type { Explanation, Graph } from './engine/types.ts';
 import { ContrailError } from './errors.ts';
@@ -17,7 +18,7 @@ import { resolveDataDir } from './paths.ts';
 import { commitFiles, findCommit } from './query/commit.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget } from './query/target.ts';
-import { EXPLAINED, matchesFilter, renderCommit, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
+import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
 import { toOtlp } from './render/otel.ts';
@@ -78,6 +79,7 @@ Usage:
                                     a session's recorded events as JSON, or as OpenTelemetry traces
   contrail report [<session> | last] [-o file.html]
                                     a session as one self-contained HTML page
+  contrail find "<value>" [--all]   every recorded input that held a value, and every call that used it
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
@@ -124,6 +126,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     export: args => exportSession(args, flags, io),
     report: args => report(args, flags, io),
     statusline: () => statusline(flags, io),
+    find: args => find(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io),
@@ -378,6 +381,36 @@ async function report(args: string[], flags: Flags, io: Io): Promise<number> {
     // The report holds what the agent read (redacted), so it gets the same 0600 as the database.
     writeFileSync(path, html, { mode: 0o600 });
     io.out(`Wrote ${path}\n`);
+    return 0;
+  });
+}
+
+async function find(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
+  const value = (flags.stdin ? readStdin(io) : args.join(' ')).trim();
+  if (!value) throw new ContrailError('Usage: contrail find "<value>" [--all]');
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const sessions = flags.session
+      ? [pickSession(db, flags.session as string, repoKey)]
+      : recentSessions(db, repoKey, flags.all ? 500 : 50, flags.all === true).map(r => r.id);
+    const hits = sessions.map(id => {
+      const graph = loadGraph(db, id, io.home, hashToken);
+      return { graph, sightings: findValue(graph, value) };
+    });
+    if (flags.json) {
+      const json = hits
+        .filter(h => h.sightings.length)
+        .map(h => ({
+          session: h.graph.actions[0]?.scope.sessionId ?? null,
+          sightings: h.sightings.map(x =>
+            x.source
+              ? { seq: x.seq, held: { source: x.source.input.label, trust: x.source.input.trust, origin: x.source.input.origin, line: x.source.line } }
+              : { seq: x.seq, used: { action: x.use!.action.id, tool: x.use!.action.tool, argPath: x.use!.argPath, sensitive: x.use!.kinds } },
+          ),
+        }));
+      io.out(`${JSON.stringify({ value, sessions: json }, null, 2)}\n`);
+    } else {
+      io.out(renderFind(value, hits, sessions.length, s));
+    }
     return 0;
   });
 }

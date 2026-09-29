@@ -4,6 +4,10 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+### Added
+
+- The `/contrail:sessions` skill: recent sessions in this repository, from inside Claude Code.
+
 ## [0.3.0] - 2026-09-29
 
 ### Added

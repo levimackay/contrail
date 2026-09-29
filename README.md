@@ -47,6 +47,7 @@ Then use Claude Code as usual. Contrail records in the background. When you want
 /contrail:why "npm install jwt-decode"   the latest command containing that text
 /contrail:risks                          sensitive actions, those tracing to web or MCP content first
 /contrail:trace                          this session as a timeline
+/contrail:sessions                       recent sessions in this repository at a glance
 /contrail:report                         this session as an HTML page you open in a browser
 /contrail:find collect.telemetry.example every input that held a value, and every call that used it
 ```
@@ -114,7 +115,7 @@ It is not a transcript viewer, a token tracker or a security scanner. It has one
 
 Options: `--json` for machine-readable output (why, trace, risks, sessions), `--session <id>` (a prefix is enough), `--data <dir>` to read another data directory, `-h` and `-v`.
 
-Inside Claude Code, the `/contrail:why`, `/contrail:risks`, `/contrail:trace`, `/contrail:find` and `/contrail:report` skills run the same CLI. From a terminal, use the launcher Contrail keeps in its data directory. Its path stays the same across plugin updates, and `contrail doctor` prints it:
+Inside Claude Code, the `/contrail:why`, `/contrail:risks`, `/contrail:trace`, `/contrail:sessions`, `/contrail:find` and `/contrail:report` skills run the same CLI. From a terminal, use the launcher Contrail keeps in its data directory. Its path stays the same across plugin updates, and `contrail doctor` prints it:
 
 ```sh
 alias contrail="sh $(echo ~/.claude/plugins/data/contrail-*/bin/contrail)"
@@ -462,7 +463,7 @@ Reports say so themselves: every one ends with its blind spots, and UNKNOWN resu
 
 Hook fields were checked against the Claude Code documentation for 2.1.283 to 2.1.284. Unknown or missing fields produce fewer links and an explicit "not observed" note, never a crash.
 
-Live sessions on Claude Code 2.1.284 (Linux, default permission mode) have exercised prompts, instruction loads, Read, Grep, Glob, Bash (including heredoc writes and `git commit -q`), Write, failed tool calls, background subagents and their `<task-notification>` reports, `PostCompact`, `SessionEnd`, a model-invoked skill, `store_content: false`, and all three skills. WebFetch, WebSearch, MCP results and `bashEditDiff` are so far covered only by scripted sessions built from the documented payload shapes.
+Live sessions on Claude Code 2.1.284 (Linux, default permission mode) have exercised prompts, instruction loads, Read, Grep, Glob, Bash (including heredoc writes and `git commit -q`), Write, failed tool calls, background subagents and their `<task-notification>` reports, `PostCompact`, `SessionEnd`, a model-invoked skill, `store_content: false`, and the why, risks, trace, sessions, find and report skills. WebFetch, WebSearch, MCP results and `bashEditDiff` are so far covered only by scripted sessions built from the documented payload shapes.
 
 </details>
 

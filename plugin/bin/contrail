@@ -1,0 +1,16 @@
+#!/bin/sh
+# Runs the Contrail CLI with Bun if it is installed, otherwise with Node 22.13+.
+here=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+app="$here/dist/contrail.mjs"
+
+if command -v bun >/dev/null 2>&1; then
+  exec bun "$app" "$@"
+fi
+if command -v node >/dev/null 2>&1; then
+  exec node --no-warnings "$app" "$@"
+fi
+
+# The Stop hook runs `ingest`; without a runtime the events simply wait in the spool.
+[ "$1" = ingest ] && exit 0
+echo "contrail: needs Node 22.13+ or Bun to answer queries. Recording still works." >&2
+exit 127

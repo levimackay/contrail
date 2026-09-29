@@ -25,7 +25,7 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
   out.push(
     s.dim(
       `  session ${a.scope.sessionId.slice(0, 8)} · ${prompt ? `turn ${prompt.label}` : 'turn not recorded'} · ${callId(a.id)} · seq ${a.preSeq}` +
-        ` · ${a.scope.agentId ? `subagent ${a.scope.agentId}` : 'main agent'}${a.status === 'ok' ? '' : ` · ${a.status.toUpperCase()}`}`,
+        ` · ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : 'main agent'}${a.status === 'ok' ? '' : ` · ${a.status.toUpperCase()}`}`,
     ),
   );
   if (note) out.push(s.dim(`  ${note}`));

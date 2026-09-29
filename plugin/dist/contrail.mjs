@@ -2255,7 +2255,7 @@ function renderWhy(e, g, note, s = PLAIN) {
   out.push(`${s.bold(a.tool)}  ${s.bold(describe(a, g))}`);
   out.push(
     s.dim(
-      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${a.scope.agentId}` : "main agent"}${a.status === "ok" ? "" : ` \xB7 ${a.status.toUpperCase()}`}`
+      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}${a.status === "ok" ? "" : ` \xB7 ${a.status.toUpperCase()}`}`
     )
   );
   if (note) out.push(s.dim(`  ${note}`));
@@ -2466,7 +2466,7 @@ function renderTrace(g, explanations, filter, s = PLAIN) {
 }
 function actionLines(a, g, e, inputs, s) {
   const kind = kindOf(a);
-  const who = a.scope.agentId ? s.dim(` [subagent ${a.scope.agentId}]`) : "";
+  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
   const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
   const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${describe(a, g)}${who}${failed}`];
   if (!e) return lines;

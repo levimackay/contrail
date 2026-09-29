@@ -85,7 +85,7 @@ export function renderTrace(
 
 function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Map<string, Input>, s: Style): string[] {
   const kind = kindOf(a);
-  const who = a.scope.agentId ? s.dim(` [subagent ${a.scope.agentId}]`) : '';
+  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : '';
   const failed = a.status === 'failed' || a.status === 'interrupted' ? s.flag(` ${a.status.toUpperCase()}`) : '';
   const lines = [`  ${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kind, 7)} ${describe(a, g)}${who}${failed}`];
   if (!e) return lines;

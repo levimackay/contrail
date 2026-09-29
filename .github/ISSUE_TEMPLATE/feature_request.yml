@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest something Contrail should show or do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What question do you want answered?
+      description: Contrail answers "what observable trail led to this action?". What would you like to ask it that it cannot answer today?
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: An example
+      description: A session, command or report where this would have helped (redact anything private).
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Fits the invariants
+      options:
+        - label: It stays observe-only and local-only, and makes no causal claims

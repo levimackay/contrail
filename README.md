@@ -412,7 +412,7 @@ Contrail stores what your agent read. It is built so that it does not become the
 - **Retention.** Sessions older than 90 days are removed, and the oldest go first when the database passes 1024 MB. Both are configurable.
 - **Uninstall deletes the data**, unless you pass `--keep-data`.
 
-Redaction is pattern-based, so it misses secrets it has no rule for. Treat `contrail.db` as sensitive, or turn on hash-only storage.
+Redaction is pattern-based, so it misses secrets it has no rule for. Treat `contrail.db` as sensitive, or turn on hash-only storage. To report a security problem, see [SECURITY.md](SECURITY.md).
 
 <details>
 <summary><b>Redaction rules and other safeguards</b></summary>
@@ -583,11 +583,7 @@ Grading rules are specified with adversarial cases that double as the regression
 
 ## Contributing
 
-Issues and pull requests are welcome. Open an issue first for anything that changes grading rules or report wording.
-
-- Keep `npm run check` green.
-- Include tests with the change. For anything that could produce a false LIKELY or DIRECT, add an adversarial case.
-- Keep the invariants: observe only, local only, no new runtime dependencies, and no causal claims in the output.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the invariants every change keeps, and how tests are written. Open an issue first for anything that changes grading rules or report wording. Report security problems privately, as described in [SECURITY.md](SECURITY.md). Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

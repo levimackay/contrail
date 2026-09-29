@@ -45,6 +45,6 @@ export function loadRows(db: Db, sessionId: string): EventRow[] {
   return db.all<EventRow>('SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name', sessionId);
 }
 
-export function loadGraph(db: Db, sessionId: string, home: string): Graph {
-  return buildGraph(loadRows(db, sessionId), { home, user: basename(home) });
+export function loadGraph(db: Db, sessionId: string, home: string, hashToken?: (span: string) => string): Graph {
+  return buildGraph(loadRows(db, sessionId), { home, user: basename(home) }, hashToken);
 }

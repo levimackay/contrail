@@ -90,6 +90,7 @@ function trace(t: TokenTrace, depth: number, out: string[], inputs: Map<string, 
     const where = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
     out.push(`${pad}  ${s.grade(l.grade)}${sourceWording(l, where)}  ${s.dim(`[${l.rule}]`)}`);
     if (l.quote?.text) out.push(`${pad}           ${s.dim(l.quote.line != null ? `${l.quote.line}│` : '│')} ${clip(l.quote.text, 100)}`);
+    else if (l.quote && src.hashed) out.push(`${pad}           ${s.dim(`${l.quote.line ?? ''}│ (text not stored)`)}`);
     const origin = originWording(src);
     out.push(`${pad}           ${src.trust === 'external' ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` · returned by ${callId(src.producedBy)} (seq ${src.availableAt})` : '')}`);
   }

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Db } from '../store/sqlite.ts';
 import { changedFiles, obj, str } from '../util.ts';
 import { expectedShellEffects } from '../engine/effects.ts';
+import { hashContent, type Hmac } from './content.ts';
 import { redactString, redactValue } from './redact.ts';
 
 /** Longest string kept per field. Long enough to hold most files an agent reads, so lineage can match. */
@@ -29,7 +30,7 @@ interface Touch {
  * Moves spool files into the events table: redact, cap, insert, then delete the file.
  * Idempotent (keyed by spool file name), so two ingests running at once are safe.
  */
-export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => string, now = Date.now()): IngestReport {
+export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => string, now = Date.now(), hmac?: Hmac): IngestReport {
   const report: IngestReport = { ingested: 0, duplicates: 0, parseErrors: 0, staleTmpRemoved: 0 };
   let names: string[];
   try {
@@ -58,7 +59,7 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
     const capturedUs = Number(mtimeNs / 1000n);
     let row: Row;
     try {
-      row = toRow(name, raw, capturedUs, repoKeyOf);
+      row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
     } catch (e) {
       // Never let one bad payload block every later event: store the failure and move on.
       row = failedRow(capturedUs, `${name}: ${(e as Error).message}`);
@@ -111,7 +112,7 @@ interface Row {
   touches: Touch[];
 }
 
-function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: string) => string): Row {
+function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: string) => string, hmac?: Hmac): Row {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -135,11 +136,18 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
     toolUseId: str(p, 'tool_use_id') ?? null,
     cwd,
     repoKey: cwd ? repoKeyOf(cwd) : null,
-    // Cap before redacting, so no pattern ever scans more than STRING_CAP characters.
-    payload: JSON.stringify(redactValue(capValue(dropBulky(p)))),
+    payload: JSON.stringify(stored(p, hookEvent, hmac)),
     parseError: null,
     touches: hookEvent === 'PostToolUse' ? touchesOf(p, cwd ?? '') : [],
   };
+}
+
+/** Cap before redacting, so no pattern ever scans more than STRING_CAP characters; hash last, when asked. */
+function stored(p: Record<string, unknown>, hookEvent: string, hmac?: Hmac): unknown {
+  const clean = redactValue(capValue(dropBulky(p))) as Record<string, unknown>;
+  if (!hmac) return clean;
+  hashContent(clean, hookEvent, hmac);
+  return capValue(clean);
 }
 
 function failedRow(capturedUs: number, parseError: string): Row {

@@ -210,6 +210,7 @@ export function renderRisks(findings: Finding[], scanned: { actions: number; ses
       const where = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ''}`;
       out.push(`    ${s.grade(link.grade)}${clip(link.token ?? '', 80)}  ← ${where}  ${input.trust === 'external' ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
       if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}│` : '│')} ${clip(link.quote.text, 96)}`);
+      else if (link.quote && input.hashed) out.push(`             ${s.dim(`${link.quote.line ?? ''}│ (text not stored)`)}`);
     }
   }
   out.push(

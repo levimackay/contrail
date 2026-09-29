@@ -10,6 +10,7 @@ import { assess, rankFindings, sensitivity, type Finding } from './engine/risks.
 import { trailForest, type TreeNode, type TreeRoot } from './engine/tree.ts';
 import type { Explanation, Graph } from './engine/types.ts';
 import { ContrailError } from './errors.ts';
+import { contentHmac } from './ingest/content.ts';
 import { ingest } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
@@ -139,6 +140,8 @@ interface Store {
   db: Db;
   dataDir: string;
   repoKey: string;
+  /** the content key's hash, when this directory has one (store_content: false, now or earlier) */
+  hashToken?: (span: string) => string;
 }
 
 async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Promise<T>): Promise<T> {
@@ -154,8 +157,10 @@ async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Pro
   try {
     migrate(db);
     const repoKeyOf = makeRepoKeyOf();
-    ingest(db, join(dataDir, 'spool'), repoKeyOf);
-    return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd) });
+    const storeContent = loadConfig(dataDir).config.storeContent;
+    const hashToken = contentHmac(dataDir, !storeContent);
+    ingest(db, join(dataDir, 'spool'), repoKeyOf, Date.now(), storeContent ? undefined : hashToken);
+    return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd), ...(hashToken ? { hashToken } : {}) });
   } finally {
     db.close();
   }
@@ -165,9 +170,9 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
   if (args[0] === 'commit') return whyCommit(args.slice(1), flags, io, s);
   const target = parseTarget(flags.stdin ? [readFileSync(0, 'utf8')] : args, io.cwd);
   if (target.kind === 'command' && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(' ').slice(1), flags, io, s);
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findTarget(db, target, repoKey);
-    const graph = loadGraph(db, hit.sessionId, io.home);
+    const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const explanation = explain(hit.toolUseId, graph);
     if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}\n`);
     else io.out(renderWhy(explanation, graph, hit.total > 1 ? `the latest of ${hit.total} recorded matches` : undefined, s));
@@ -178,9 +183,9 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
 async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
   const sha = args[0];
   if (!sha) throw new ContrailError('Usage: contrail why commit <sha>');
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findCommit(db, sha, io.cwd, repoKey);
-    const graph = loadGraph(db, hit.sessionId, io.home);
+    const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const action = graph.actions.find(a => a.id === hit.toolUseId);
     if (!action) throw new ContrailError(`The action that made commit ${sha} is missing from its session.`);
     const explanation = explain(action.id, graph);
@@ -242,8 +247,8 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
   if (chosen.length > 1) throw new ContrailError(`Pick one filter: ${chosen.map(f => `--${f}`).join(', ')}`);
   const filter = chosen[0] ?? null;
   if (flags.tree && filter) throw new ContrailError(`--tree shows the whole session; it does not combine with --${filter}.`);
-  return withStore(flags, io, ({ db, repoKey }) => {
-    const graph = loadGraph(db, pickSession(db, flags.session as string | undefined, repoKey), io.home);
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const graph = loadGraph(db, pickSession(db, flags.session as string | undefined, repoKey), io.home, hashToken);
     if (flags.tree) {
       // Every call, reads included: a read is often the parent of what came after it.
       const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map(a => [a.id, explain(a.id, graph)]));
@@ -283,7 +288,7 @@ function findingsFor(graph: Graph): Finding[] {
 }
 
 async function risks(flags: Flags, io: Io, s: Style): Promise<number> {
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const ids = flags.session
       ? [pickSession(db, flags.session as string, repoKey)]
       : recentSessions(db, repoKey, flags.all ? 10_000 : 20, flags.all === true).map(r => r.id);
@@ -291,7 +296,7 @@ async function risks(flags: Flags, io: Io, s: Style): Promise<number> {
     let actions = 0;
     const findings: Finding[] = [];
     for (const id of ids) {
-      const graph = loadGraph(db, id, io.home);
+      const graph = loadGraph(db, id, io.home, hashToken);
       graphs.set(id, graph);
       actions += graph.actions.length;
       findings.push(...findingsFor(graph));
@@ -309,10 +314,10 @@ async function risks(flags: Flags, io: Io, s: Style): Promise<number> {
 async function sessions(flags: Flags, io: Io, s: Style): Promise<number> {
   const limit = Number(flags.limit ?? 10);
   if (!Number.isInteger(limit) || limit < 1) throw new ContrailError('--limit takes a positive whole number.');
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const rows = recentSessions(db, repoKey, limit, flags.all === true);
     const summaries = rows.map(r => {
-      const graph = loadGraph(db, r.id, io.home);
+      const graph = loadGraph(db, r.id, io.home, hashToken);
       return { ...r, graph, flagged: findingsFor(graph).filter(f => f.externalUpstream).length };
     });
     if (flags.json) {
@@ -339,8 +344,9 @@ async function ingestCommand(flags: Flags, io: Io): Promise<number> {
   const db = await openDb(join(dataDir, 'contrail.db'));
   try {
     migrate(db);
-    const r = ingest(db, join(dataDir, 'spool'), makeRepoKeyOf());
-    const { sessionsRemoved } = prune(db, loadConfig(dataDir).config, Date.now());
+    const { config } = loadConfig(dataDir);
+    const r = ingest(db, join(dataDir, 'spool'), makeRepoKeyOf(), Date.now(), config.storeContent ? undefined : contentHmac(dataDir, true));
+    const { sessionsRemoved } = prune(db, config, Date.now());
     if (!flags['from-hook']) {
       io.out(
         `ingested ${r.ingested} events (${r.duplicates} already stored, ${r.parseErrors} unparseable, ${r.staleTmpRemoved} stale temp files removed); ` +
@@ -383,6 +389,7 @@ async function doctor(flags: Flags, io: Io): Promise<number> {
       `unparseable      ${stats.parseErrors ?? 0}`,
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1000)).toISOString() : 'never'}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ''}`,
+      `content          ${config.storeContent ? 'stored as redacted text' : 'stored as keyed hashes only (store_content: false)'}`,
       ...(hook ? [`capture hook     ${hook} ms per event (median of 5)`] : []),
       stats.events === 0 && backlog === 0
         ? 'No events yet. Run a Claude Code session with the plugin enabled, then check again.'

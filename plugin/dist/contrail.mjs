@@ -438,9 +438,9 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync } from "node:fs";
+import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename4, dirname as dirname2, join as join4 } from "node:path";
+import { basename as basename4, dirname as dirname2, join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -1159,6 +1159,49 @@ var sameScope = (a, b) => a.sessionId === b.sessionId && a.agentId === b.agentId
 
 // src/engine/hashed.ts
 var HASHED = "\u27E6contrail:hashed\u27E7";
+var READ_PREFIX2 = /^(\s{0,12}\d{1,9}(?:→|\t))/;
+var RUN = /[^\s"'`<>()[\]{},;|]{1,256}/g;
+var WORD = /[a-z0-9_-]/;
+var MAX_BOUNDS = 32;
+function spansOf(run) {
+  const starts = [];
+  const ends = [];
+  for (let i = 0; i < run.length; i++) {
+    const here = WORD.test(run[i]);
+    const before = i > 0 && WORD.test(run[i - 1]);
+    if (starts.length < MAX_BOUNDS && (i === 0 || here && !before || !here && run[i - 1] === "/")) starts.push(i);
+    const after = i + 1 < run.length && WORD.test(run[i + 1]);
+    if (ends.length < MAX_BOUNDS && (i + 1 === run.length || here && !after)) ends.push(i + 1);
+  }
+  const spans = [];
+  for (const s of starts) {
+    for (const e of ends) {
+      if (e <= s) continue;
+      const span = run.slice(s, e);
+      if (/[a-z0-9]/.test(span)) spans.push(span);
+    }
+  }
+  return spans;
+}
+function hashText(text, hmac) {
+  const seenSpans = /* @__PURE__ */ new Set();
+  const seenRuns = /* @__PURE__ */ new Set();
+  const lines = text.split("\n").map((raw) => {
+    const prefix = READ_PREFIX2.exec(raw)?.[1] ?? "";
+    const words2 = [];
+    for (const run of normalize(raw.slice(prefix.length)).match(RUN) ?? []) {
+      if (seenRuns.has(run)) continue;
+      seenRuns.add(run);
+      for (const span of spansOf(run)) {
+        if (seenSpans.has(span)) continue;
+        seenSpans.add(span);
+        words2.push(hmac(span));
+      }
+    }
+    return prefix + words2.join(" ");
+  });
+  return `${HASHED} ${lines.join("\n")}`;
+}
 function hashNeedle(needle, hmac) {
   return needle && !/\s/.test(needle) ? hmac(needle) : null;
 }
@@ -1447,11 +1490,84 @@ var ContrailError = class extends Error {
   name = "ContrailError";
 };
 
+// src/ingest/content.ts
+import { createHmac, randomBytes } from "node:crypto";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+var STRUCTURE = /* @__PURE__ */ new Set(["filePath", "agentId", "status", "isAsync", "success", "commandName", "code", "url", "interrupted", "isImage", "noOutputExpected", "type", "bashEditDiff", "resolvedModel", "description"]);
+var COMMIT_LINE2 = /^\[[^\]\n]{1,200}\] [^\n]{0,300}$/m;
+var TASK_HEAD = /^\s*<task-notification>[\s\S]{0,4000}?<\/summary>/;
+function contentHmac(dataDir, create) {
+  const path = join(dataDir, "content.key");
+  let key;
+  try {
+    key = readFileSync(path);
+  } catch {
+    if (!create) return void 0;
+    key = randomBytes(32);
+    writeFileSync(path, key, { mode: 384, flag: "wx" });
+    chmodSync(path, 384);
+    key = readFileSync(path);
+  }
+  return (span) => createHmac("sha256", key).update(span).digest("hex").slice(0, 12);
+}
+function hashContent(p, hookEvent, hmac) {
+  const hash = (s) => s ? hashText(s, hmac) : s;
+  const extra = p._contrail;
+  if (extra && typeof extra === "object" && typeof extra.text === "string") {
+    const e = extra;
+    e.text = hash(e.text);
+    e.sha256 = null;
+  }
+  switch (hookEvent) {
+    case "UserPromptSubmit": {
+      const prompt = typeof p.prompt === "string" ? p.prompt : "";
+      const head = TASK_HEAD.exec(prompt)?.[0];
+      if (head) p.prompt = `${head}
+${hash(prompt.slice(head.length))}`;
+      break;
+    }
+    case "PostToolUse":
+      p.tool_response = hashResponse(p.tool_response, hash);
+      break;
+    case "PostToolUseFailure":
+      if (typeof p.error === "string") p.error = hash(p.error);
+      break;
+    case "PostToolBatch":
+      if (Array.isArray(p.tool_calls)) {
+        p.tool_calls = p.tool_calls.map((c) => c && typeof c === "object" ? { ...c, tool_response: hashResponse(c.tool_response, hash) } : c);
+      }
+      break;
+    case "PostCompact":
+      if (typeof p.compact_summary === "string") p.compact_summary = hash(p.compact_summary);
+      break;
+    case "Stop":
+    case "SubagentStop":
+      if (typeof p.last_assistant_message === "string") p.last_assistant_message = "";
+      break;
+  }
+}
+function hashResponse(value, hash, key = "") {
+  if (typeof value === "string") {
+    if (STRUCTURE.has(key)) return value;
+    const commit = key === "stdout" || key === "" ? COMMIT_LINE2.exec(value)?.[0] : void 0;
+    return commit ? `${commit}
+${hash(value)}` : hash(value);
+  }
+  if (key === "bashEditDiff") return value;
+  if (key === "structuredPatch") return [];
+  if (Array.isArray(value)) return value.map((v) => hashResponse(v, hash));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, hashResponse(v, hash, k)]));
+  }
+  return value;
+}
+
 // src/ingest/ingest.ts
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { readdirSync, readFileSync as readFileSync2, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 
 // src/ingest/redact.ts
 var tag = (id) => `[REDACTED:${id}]`;
@@ -1559,7 +1675,7 @@ var STRING_CAP = 256 * 1024;
 var STALE_TMP_MS = 60 * 60 * 1e3;
 var WRITE_TOOLS = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 var READ_TOOLS = /* @__PURE__ */ new Set(["Read", "NotebookRead"]);
-function ingest(db, spoolDir, repoKeyOf, now = Date.now()) {
+function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
   const report = { ingested: 0, duplicates: 0, parseErrors: 0, staleTmpRemoved: 0 };
   let names;
   try {
@@ -1568,7 +1684,7 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now()) {
     return report;
   }
   for (const name of names) {
-    const file = join(spoolDir, name);
+    const file = join2(spoolDir, name);
     if (name.startsWith(".tmp.")) {
       if (removeIfStale(file, now)) report.staleTmpRemoved++;
       continue;
@@ -1578,14 +1694,14 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now()) {
     let mtimeNs;
     try {
       mtimeNs = statSync(file, { bigint: true }).mtimeNs;
-      raw = readFileSync(file, "utf8");
+      raw = readFileSync2(file, "utf8");
     } catch {
       continue;
     }
     const capturedUs = Number(mtimeNs / 1000n);
     let row;
     try {
-      row = toRow(name, raw, capturedUs, repoKeyOf);
+      row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
     } catch (e) {
       row = failedRow(capturedUs, `${name}: ${e.message}`);
     }
@@ -1628,7 +1744,7 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now()) {
   }
   return report;
 }
-function toRow(name, raw, capturedUs, repoKeyOf) {
+function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -1650,11 +1766,16 @@ function toRow(name, raw, capturedUs, repoKeyOf) {
     toolUseId: str(p, "tool_use_id") ?? null,
     cwd,
     repoKey: cwd ? repoKeyOf(cwd) : null,
-    // Cap before redacting, so no pattern ever scans more than STRING_CAP characters.
-    payload: JSON.stringify(redactValue(capValue(dropBulky(p)))),
+    payload: JSON.stringify(stored(p, hookEvent, hmac)),
     parseError: null,
     touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
   };
+}
+function stored(p, hookEvent, hmac) {
+  const clean = redactValue(capValue(dropBulky(p)));
+  if (!hmac) return clean;
+  hashContent(clean, hookEvent, hmac);
+  return capValue(clean);
 }
 function failedRow(capturedUs, parseError) {
   return {
@@ -1683,7 +1804,7 @@ function attachSkillText(p, capturedUs) {
   const name = str(obj(p, "tool_input"), "skill");
   const cwd = str(p, "cwd");
   if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
-  const candidates = [join(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join(cwd, ".claude", "skills", name, "SKILL.md")] : []];
+  const candidates = [join2(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join2(cwd, ".claude", "skills", name, "SKILL.md")] : []];
   const found = [...new Set(candidates)].filter((path) => {
     try {
       return statSync(path).isFile();
@@ -1703,7 +1824,7 @@ function attachFileText(p, path, capturedUs) {
       return;
     }
     const changedSinceLoad = Number(st.mtimeNs / 1000n) > capturedUs;
-    const text = changedSinceLoad ? "" : readFileSync(path, "utf8");
+    const text = changedSinceLoad ? "" : readFileSync2(path, "utf8");
     p._contrail = { text, sha256: text ? sha256(text) : null, changedSinceLoad };
   } catch {
     p._contrail ??= { missing: true };
@@ -1797,19 +1918,19 @@ function gitCommonDir(cwd) {
 
 // src/paths.ts
 import { existsSync, readdirSync as readdirSync2 } from "node:fs";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 function resolveDataDir(flag, env, home, pluginData) {
   if (flag) return flag;
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
   if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
-  const base = join2(home, ".claude", "plugins", "data");
+  const base = join3(home, ".claude", "plugins", "data");
   const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
-  if (hits.length === 1) return join2(base, hits[0]);
+  if (hits.length === 1) return join3(base, hits[0]);
   if (hits.length === 0) {
     throw new ContrailError("No recorded data found. Is the Contrail plugin installed? Set CONTRAIL_HOME to point at a data directory.");
   }
-  const list = hits.map((h) => `  ${join2(base, h)}`).join("\n");
+  const list = hits.map((h) => `  ${join3(base, h)}`).join("\n");
   throw new ContrailError(`Found ${hits.length} Contrail data directories:
 ${list}
 Set CONTRAIL_HOME to pick one.`);
@@ -2295,8 +2416,8 @@ Use more characters.`);
 function loadRows(db, sessionId) {
   return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
 }
-function loadGraph(db, sessionId, home) {
-  return buildGraph(loadRows(db, sessionId), { home, user: basename3(home) });
+function loadGraph(db, sessionId, home, hashToken) {
+  return buildGraph(loadRows(db, sessionId), { home, user: basename3(home) }, hashToken);
 }
 
 // src/query/target.ts
@@ -2453,6 +2574,7 @@ function trace(t, depth, out, inputs, s) {
     const where = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
     out.push(`${pad3}  ${s.grade(l.grade)}${sourceWording(l, where)}  ${s.dim(`[${l.rule}]`)}`);
     if (l.quote?.text) out.push(`${pad3}           ${s.dim(l.quote.line != null ? `${l.quote.line}\u2502` : "\u2502")} ${clip(l.quote.text, 100)}`);
+    else if (l.quote && src.hashed) out.push(`${pad3}           ${s.dim(`${l.quote.line ?? ""}\u2502 (text not stored)`)}`);
     const origin = originWording(src);
     out.push(`${pad3}           ${src.trust === "external" ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` \xB7 returned by ${callId(src.producedBy)} (seq ${src.availableAt})` : "")}`);
   }
@@ -2719,6 +2841,7 @@ function renderRisks(findings, scanned, g, s = PLAIN) {
       const where = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""}`;
       out.push(`    ${s.grade(link.grade)}${clip(link.token ?? "", 80)}  \u2190 ${where}  ${input.trust === "external" ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
       if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}\u2502` : "\u2502")} ${clip(link.quote.text, 96)}`);
+      else if (link.quote && input.hashed) out.push(`             ${s.dim(`${link.quote.line ?? ""}\u2502 (text not stored)`)}`);
     }
   }
   out.push(
@@ -2784,13 +2907,13 @@ function localTime(us) {
 }
 
 // src/store/retention.ts
-import { readFileSync as readFileSync2 } from "node:fs";
-import { join as join3 } from "node:path";
-var DEFAULTS = { retentionDays: 90, maxDbMb: 1024 };
+import { readFileSync as readFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
+var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true };
 function loadConfig(dataDir) {
   let raw;
   try {
-    raw = readFileSync2(join3(dataDir, "config.json"), "utf8");
+    raw = readFileSync3(join4(dataDir, "config.json"), "utf8");
   } catch {
     return { config: DEFAULTS, problem: null };
   }
@@ -2798,7 +2921,11 @@ function loadConfig(dataDir) {
     const c = JSON.parse(raw);
     const positive = (v, fallback) => typeof v === "number" && v > 0 ? v : fallback;
     return {
-      config: { retentionDays: positive(c.retention_days, DEFAULTS.retentionDays), maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb) },
+      config: {
+        retentionDays: positive(c.retention_days, DEFAULTS.retentionDays),
+        maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb),
+        storeContent: c.store_content !== false
+      },
       problem: null
     };
   } catch (e) {
@@ -3049,8 +3176,8 @@ async function withStore(flags, io, use) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   let db;
   try {
-    mkdirSync(join4(dataDir, "spool"), { recursive: true, mode: 448 });
-    db = await openDb(join4(dataDir, "contrail.db"));
+    mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
+    db = await openDb(join5(dataDir, "contrail.db"));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
     throw new ContrailError(`Cannot use the data directory ${dataDir}: ${e.message}`);
@@ -3058,19 +3185,21 @@ async function withStore(flags, io, use) {
   try {
     migrate(db);
     const repoKeyOf = makeRepoKeyOf();
-    ingest(db, join4(dataDir, "spool"), repoKeyOf);
-    return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd) });
+    const storeContent = loadConfig(dataDir).config.storeContent;
+    const hashToken = contentHmac(dataDir, !storeContent);
+    ingest(db, join5(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
+    return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd), ...hashToken ? { hashToken } : {} });
   } finally {
     db.close();
   }
 }
 async function why(args, flags, io, s) {
   if (args[0] === "commit") return whyCommit(args.slice(1), flags, io, s);
-  const target = parseTarget(flags.stdin ? [readFileSync3(0, "utf8")] : args, io.cwd);
+  const target = parseTarget(flags.stdin ? [readFileSync4(0, "utf8")] : args, io.cwd);
   if (target.kind === "command" && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(" ").slice(1), flags, io, s);
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findTarget(db, target, repoKey);
-    const graph = loadGraph(db, hit.sessionId, io.home);
+    const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const explanation = explain(hit.toolUseId, graph);
     if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}
 `);
@@ -3081,9 +3210,9 @@ async function why(args, flags, io, s) {
 async function whyCommit(args, flags, io, s) {
   const sha = args[0];
   if (!sha) throw new ContrailError("Usage: contrail why commit <sha>");
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findCommit(db, sha, io.cwd, repoKey);
-    const graph = loadGraph(db, hit.sessionId, io.home);
+    const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const action = graph.actions.find((a) => a.id === hit.toolUseId);
     if (!action) throw new ContrailError(`The action that made commit ${sha} is missing from its session.`);
     const explanation = explain(action.id, graph);
@@ -3123,7 +3252,7 @@ function realPath(path) {
     return realpathSync3(path);
   } catch {
     try {
-      return join4(realpathSync3(dirname2(path)), basename4(path));
+      return join5(realpathSync3(dirname2(path)), basename4(path));
     } catch {
       return path;
     }
@@ -3134,8 +3263,8 @@ async function trace2(flags, io, s) {
   if (chosen.length > 1) throw new ContrailError(`Pick one filter: ${chosen.map((f) => `--${f}`).join(", ")}`);
   const filter = chosen[0] ?? null;
   if (flags.tree && filter) throw new ContrailError(`--tree shows the whole session; it does not combine with --${filter}.`);
-  return withStore(flags, io, ({ db, repoKey }) => {
-    const graph = loadGraph(db, pickSession(db, flags.session, repoKey), io.home);
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const graph = loadGraph(db, pickSession(db, flags.session, repoKey), io.home, hashToken);
     if (flags.tree) {
       const explanations2 = new Map(graph.actions.slice(0, MAX_EXPLAINED).map((a) => [a.id, explain(a.id, graph)]));
       const forest = trailForest(graph, explanations2);
@@ -3169,13 +3298,13 @@ function findingsFor(graph) {
   return graph.actions.filter((a) => sensitivity(a).length).map((a) => assess(explain(a.id, graph), graph)).filter((f) => f !== null);
 }
 async function risks(flags, io, s) {
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const ids = flags.session ? [pickSession(db, flags.session, repoKey)] : recentSessions(db, repoKey, flags.all ? 1e4 : 20, flags.all === true).map((r) => r.id);
     const graphs = /* @__PURE__ */ new Map();
     let actions = 0;
     const findings = [];
     for (const id of ids) {
-      const graph = loadGraph(db, id, io.home);
+      const graph = loadGraph(db, id, io.home, hashToken);
       graphs.set(id, graph);
       actions += graph.actions.length;
       findings.push(...findingsFor(graph));
@@ -3193,10 +3322,10 @@ async function risks(flags, io, s) {
 async function sessions(flags, io, s) {
   const limit = Number(flags.limit ?? 10);
   if (!Number.isInteger(limit) || limit < 1) throw new ContrailError("--limit takes a positive whole number.");
-  return withStore(flags, io, ({ db, repoKey }) => {
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const rows = recentSessions(db, repoKey, limit, flags.all === true);
     const summaries = rows.map((r) => {
-      const graph = loadGraph(db, r.id, io.home);
+      const graph = loadGraph(db, r.id, io.home, hashToken);
       return { ...r, graph, flagged: findingsFor(graph).filter((f) => f.externalUpstream).length };
     });
     if (flags.json) {
@@ -3219,12 +3348,13 @@ async function exportSession(args, flags, io) {
 }
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
-  mkdirSync(join4(dataDir, "spool"), { recursive: true, mode: 448 });
-  const db = await openDb(join4(dataDir, "contrail.db"));
+  mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
+  const db = await openDb(join5(dataDir, "contrail.db"));
   try {
     migrate(db);
-    const r = ingest(db, join4(dataDir, "spool"), makeRepoKeyOf());
-    const { sessionsRemoved } = prune(db, loadConfig(dataDir).config, Date.now());
+    const { config } = loadConfig(dataDir);
+    const r = ingest(db, join5(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
+    const { sessionsRemoved } = prune(db, config, Date.now());
     if (!flags["from-hook"]) {
       io.out(
         `ingested ${r.ingested} events (${r.duplicates} already stored, ${r.parseErrors} unparseable, ${r.staleTmpRemoved} stale temp files removed); pruned ${sessionsRemoved} sessions
@@ -3253,7 +3383,7 @@ async function doctor(flags, io) {
   io.out(`contrail ${VERSION} on ${versions.bun ? `bun ${versions.bun}` : `node ${process.versions.node}`}
 `);
   return withStore(flags, io, ({ db, dataDir }) => {
-    const backlog = readdirSync3(join4(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
+    const backlog = readdirSync3(join5(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
     const stats = db.get(
       `SELECT COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions,
               SUM(parse_error IS NOT NULL) AS parseErrors, MAX(captured_us) AS last FROM events`
@@ -3268,6 +3398,7 @@ async function doctor(flags, io) {
       `unparseable      ${stats.parseErrors ?? 0}`,
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1e3)).toISOString() : "never"}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ""}`,
+      `content          ${config.storeContent ? "stored as redacted text" : "stored as keyed hashes only (store_content: false)"}`,
       ...hook ? [`capture hook     ${hook} ms per event (median of 5)`] : [],
       stats.events === 0 && backlog === 0 ? "No events yet. Run a Claude Code session with the plugin enabled, then check again." : "Recording and queries work."
     ];
@@ -3284,7 +3415,7 @@ function captureTiming() {
     return null;
   }
   if (!existsSync3(hook)) return null;
-  const dir = mkdtempSync(join4(tmpdir(), "contrail-doctor-"));
+  const dir = mkdtempSync(join5(tmpdir(), "contrail-doctor-"));
   try {
     const times = [];
     for (let i = 0; i < 5; i++) {

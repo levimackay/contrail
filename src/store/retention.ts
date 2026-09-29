@@ -5,9 +5,11 @@ import type { Db } from './sqlite.ts';
 export interface Config {
   retentionDays: number;
   maxDbMb: number;
+  /** false: store what the agent read as keyed hashes, never as text */
+  storeContent: boolean;
 }
 
-export const DEFAULTS: Config = { retentionDays: 90, maxDbMb: 1024 };
+export const DEFAULTS: Config = { retentionDays: 90, maxDbMb: 1024, storeContent: true };
 
 /** config.json in the data directory, e.g. {"retention_days": 30, "max_db_mb": 512}. Missing or invalid values fall back to defaults. */
 export function loadConfig(dataDir: string): { config: Config; problem: string | null } {
@@ -21,7 +23,11 @@ export function loadConfig(dataDir: string): { config: Config; problem: string |
     const c = JSON.parse(raw) as Record<string, unknown>;
     const positive = (v: unknown, fallback: number) => (typeof v === 'number' && v > 0 ? v : fallback);
     return {
-      config: { retentionDays: positive(c.retention_days, DEFAULTS.retentionDays), maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb) },
+      config: {
+        retentionDays: positive(c.retention_days, DEFAULTS.retentionDays),
+        maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb),
+        storeContent: c.store_content !== false,
+      },
       problem: null,
     };
   } catch (e) {

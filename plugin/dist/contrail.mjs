@@ -1526,12 +1526,12 @@ function attachInstructionText(p, capturedUs) {
   const path = str(p, "file_path");
   if (!path || !INSTRUCTION_FILE.test(path)) return;
   try {
-    const st = statSync(path);
-    if (!st.isFile() || st.size > STRING_CAP) {
+    const st = statSync(path, { bigint: true });
+    if (!st.isFile() || Number(st.size) > STRING_CAP) {
       p._contrail = { skipped: st.isFile() ? "larger than the storage cap" : "not a regular file" };
       return;
     }
-    const changedSinceLoad = st.mtimeMs * 1e3 > capturedUs;
+    const changedSinceLoad = Number(st.mtimeNs / 1000n) > capturedUs;
     const text = changedSinceLoad ? "" : readFileSync(path, "utf8");
     p._contrail = { text, sha256: text ? sha256(text) : null, changedSinceLoad };
   } catch {

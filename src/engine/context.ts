@@ -50,3 +50,24 @@ export function normalizedText(i: Input): string {
   }
   return n;
 }
+
+const wordCache = new WeakMap<Input, Set<string>>();
+const WORD_RUN = /[a-z0-9_-]{1,256}/g;
+
+/**
+ * Index of the token in an input's normalized text, as findNormalized, or -1.
+ * A whole-token match starts and ends on a word boundary, so every complete word inside the
+ * needle is a complete word of the text. Checking a per-input word set first skips the full
+ * scan for almost every input that cannot match; the scan still decides every match.
+ */
+export function findInInput(i: Input, needle: string): number {
+  let words = wordCache.get(i);
+  if (!words) {
+    words = new Set(normalizedText(i).match(WORD_RUN) ?? []);
+    wordCache.set(i, words);
+  }
+  for (const w of needle.match(WORD_RUN) ?? []) {
+    if (w.length < 256 && !words.has(w)) return -1;
+  }
+  return findNormalized(normalizedText(i), needle);
+}

@@ -1158,6 +1158,19 @@ function normalizedText(i) {
   }
   return n;
 }
+var wordCache = /* @__PURE__ */ new WeakMap();
+var WORD_RUN = /[a-z0-9_-]{1,256}/g;
+function findInInput(i, needle) {
+  let words2 = wordCache.get(i);
+  if (!words2) {
+    words2 = new Set(normalizedText(i).match(WORD_RUN) ?? []);
+    wordCache.set(i, words2);
+  }
+  for (const w of needle.match(WORD_RUN) ?? []) {
+    if (w.length < 256 && !words2.has(w)) return -1;
+  }
+  return findNormalized(normalizedText(i), needle);
+}
 
 // src/engine/trace.ts
 var MAX_DEPTH = 3;
@@ -1170,7 +1183,7 @@ function traceToken(token, action, g, depth = 0, visited = /* @__PURE__ */ new S
 function traceAt(token, probe, fromId, firstUseInfo, g, depth, visited) {
   const available = availableTo(probe, g.inputs, g.compactSeqs[scopeKey(probe.scope)] ?? []);
   const needle = normalize(token.text);
-  const candidates = available.filter((i) => findNormalized(normalizedText(i), needle) >= 0);
+  const candidates = available.filter((i) => findInInput(i, needle) >= 0);
   const links = gradeSources(token, candidates, fromId);
   const trace3 = {
     token,

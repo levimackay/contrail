@@ -51,3 +51,28 @@ test('firstUse ignores other scopes, later calls, and partial matches, and reads
   const later = mkAction({ id: 'later', preSeq: 20, input: { command: 'echo foo-auth-helper' } });
   assert.equal(firstUse(mkToken('foo-auth-helper'), install, [inSubagent, near, edit, install, later]).id, 'edit');
 });
+
+test('the word-set prefilter never changes whether a token is found', async () => {
+  const { findInInput } = await import('./context.ts');
+  const { findNormalized, normalize } = await import('./text.ts');
+  const { mkInput } = await import('./fixtures.ts');
+  const long = 'a'.repeat(300);
+  const texts = [
+    'use foo-auth-helper for token refresh',
+    'foo-auth-helper-v2 only',
+    `x ${long} y`,
+    `${long}b`,
+    'see ~/.aws/credentials and https://collect.example/v1?x=1',
+    'café-x and naïve_name',
+    'Ｆｏｏ－ａｕｔｈ fullwidth',
+    '',
+  ];
+  const needles = ['foo-auth-helper', 'foo-auth', 'helper', long, 'a'.repeat(256), 'a'.repeat(44), `${long}b`, '~/.aws/credentials', 'collect.example/v1', '.', 'café-x', 'naïve_name', 'foo－auth', 'y'];
+  texts.forEach((text, n) => {
+    const input = mkInput({ id: `i${n}`, text });
+    for (const raw of needles) {
+      const needle = normalize(raw);
+      assert.equal(findInInput(input, needle) >= 0, findNormalized(normalize(text), needle) >= 0, `${JSON.stringify(raw)} in ${JSON.stringify(text.slice(0, 30))}`);
+    }
+  });
+});

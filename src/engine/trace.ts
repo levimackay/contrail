@@ -1,5 +1,5 @@
 import { stringLeaves } from '../util.ts';
-import { availableTo, firstUse, normalizedText } from './context.ts';
+import { availableTo, findInInput, firstUse } from './context.ts';
 import { gradeSources } from './grade.ts';
 import { sameScope, scopeKey } from './scope.ts';
 import { findMention, findNormalized, normalize } from './text.ts';
@@ -32,7 +32,7 @@ function traceAt(
 ): TokenTrace {
   const available = availableTo(probe, g.inputs, g.compactSeqs[scopeKey(probe.scope)] ?? []);
   const needle = normalize(token.text);
-  const candidates = available.filter(i => findNormalized(normalizedText(i), needle) >= 0);
+  const candidates = available.filter(i => findInInput(i, needle) >= 0);
   const links = gradeSources(token, candidates, fromId);
   const trace: TokenTrace = {
     token,

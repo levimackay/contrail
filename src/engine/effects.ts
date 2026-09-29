@@ -4,16 +4,45 @@ import { shellSegments } from './tokens.ts';
 import type { Commit } from './types.ts';
 
 const COMMIT_LINE = /^\[([^\s\]]+)(?: \([^)]*\))? ([0-9a-f]{7,40})\] (.*)$/m;
-const GIT_COMMITS = /(^|[;&|(\s])git(?:\s+-C\s+\S+)?\s+(commit|cherry-pick|revert|merge)\b/;
+const COMMIT_SUBCOMMANDS = new Set(['commit', 'cherry-pick', 'revert', 'merge']);
 
 /**
  * R1: the commit a command made, from git's own "[branch sha] subject" line.
  * Only when the command really runs git commit, so `echo "[main 9f3c2a1] x"` proves nothing.
  */
 export function parseCommitSha(command: string, stdout: string): Commit | null {
-  if (!GIT_COMMITS.test(command)) return null;
+  if (!runsGitCommit(command)) return null;
   const m = COMMIT_LINE.exec(stdout);
   return m ? { branch: m[1]!, sha: m[2]!, subject: m[3]! } : null;
+}
+
+/** True when some segment of a shell command runs git commit (or cherry-pick, revert, merge), not just names it. */
+export function runsGitCommit(command: string): boolean {
+  return shellSegments(command).some(seg => {
+    let words = seg.words.filter(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    if (words[0] === 'sudo') words = words.slice(1);
+    if (basename(words[0] ?? '') !== 'git') return false;
+    for (let i = 1; i < words.length; i++) {
+      const w = words[i]!;
+      if (w === '-C' || w === '-c') i++;
+      else if (!w.startsWith('-')) return COMMIT_SUBCOMMANDS.has(w);
+    }
+    return false;
+  });
+}
+
+/**
+ * R9: the recorded shell command that made a commit when git printed no commit line
+ * (`git commit -q`, `-F -`, hooks that swallow output). Git dates the commit in whole seconds;
+ * a command whose hooks bracket that second, and that runs git commit, is a candidate.
+ * Exactly one candidate is LIKELY; any other count attributes nothing.
+ */
+export function commitByTime<T extends { command: string; preUs: number; postUs: number }>(
+  commitSec: number,
+  calls: T[],
+): { match: T | null; candidates: number } {
+  const hits = calls.filter(c => runsGitCommit(c.command) && Math.floor(c.preUs / 1e6) <= commitSec && commitSec <= Math.ceil(c.postUs / 1e6));
+  return { match: hits.length === 1 ? hits[0]! : null, candidates: hits.length };
 }
 
 export interface ExpectedEffect {

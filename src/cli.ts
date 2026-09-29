@@ -172,8 +172,8 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
 async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
   const sha = args[0];
   if (!sha) throw new ContrailError('Usage: contrail why commit <sha>');
-  return withStore(flags, io, ({ db }) => {
-    const hit = findCommit(db, sha);
+  return withStore(flags, io, ({ db, repoKey }) => {
+    const hit = findCommit(db, sha, io.cwd, repoKey);
     const graph = loadGraph(db, hit.sessionId, io.home);
     const action = graph.actions.find(a => a.id === hit.toolUseId);
     if (!action) throw new ContrailError(`The action that made commit ${sha} is missing from its session.`);
@@ -209,9 +209,10 @@ async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promis
         })
       : null;
     if (flags.json) {
-      io.out(`${JSON.stringify({ commit: hit.commit, madeBy: action.id, requested: explanation.requested, files: joined }, null, 2)}\n`);
+      const madeBy = { action: action.id, grade: hit.via === 'stdout' ? 'DIRECT' : 'LIKELY', rule: hit.via === 'stdout' ? 'R1' : 'R9' };
+      io.out(`${JSON.stringify({ commit: hit.commit, madeBy, requested: explanation.requested, files: joined }, null, 2)}\n`);
     } else {
-      io.out(renderCommit({ commit: hit.commit, action, explanation, files: joined }, graph, s));
+      io.out(renderCommit({ commit: hit.commit, action, explanation, files: joined, via: hit.via, commitSec: hit.commitSec }, graph, s));
     }
     return 0;
   });

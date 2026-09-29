@@ -957,11 +957,28 @@ function commitMessage(args) {
 
 // src/engine/effects.ts
 var COMMIT_LINE = /^\[([^\s\]]+)(?: \([^)]*\))? ([0-9a-f]{7,40})\] (.*)$/m;
-var GIT_COMMITS = /(^|[;&|(\s])git(?:\s+-C\s+\S+)?\s+(commit|cherry-pick|revert|merge)\b/;
+var COMMIT_SUBCOMMANDS = /* @__PURE__ */ new Set(["commit", "cherry-pick", "revert", "merge"]);
 function parseCommitSha(command, stdout) {
-  if (!GIT_COMMITS.test(command)) return null;
+  if (!runsGitCommit(command)) return null;
   const m = COMMIT_LINE.exec(stdout);
   return m ? { branch: m[1], sha: m[2], subject: m[3] } : null;
+}
+function runsGitCommit(command) {
+  return shellSegments(command).some((seg) => {
+    let words2 = seg.words.filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    if (words2[0] === "sudo") words2 = words2.slice(1);
+    if (basename2(words2[0] ?? "") !== "git") return false;
+    for (let i = 1; i < words2.length; i++) {
+      const w = words2[i];
+      if (w === "-C" || w === "-c") i++;
+      else if (!w.startsWith("-")) return COMMIT_SUBCOMMANDS.has(w);
+    }
+    return false;
+  });
+}
+function commitByTime(commitSec, calls) {
+  const hits = calls.filter((c) => runsGitCommit(c.command) && Math.floor(c.preUs / 1e6) <= commitSec && commitSec <= Math.ceil(c.postUs / 1e6));
+  return { match: hits.length === 1 ? hits[0] : null, candidates: hits.length };
 }
 var LOCKFILES = { npm: "package-lock.json", pnpm: "pnpm-lock.yaml", yarn: "yarn.lock", bun: "bun.lock" };
 var INSTALL_VERBS2 = /* @__PURE__ */ new Set(["install", "i", "add"]);
@@ -1078,26 +1095,26 @@ function requested(action, tokens, sentences) {
   if (groups.size === 0) return { verdict: "NOTHING_TO_MATCH", grade: "UNKNOWN", searched };
   const kept = [];
   for (const alternatives of groups.values()) {
-    let latest = null;
+    let latest2 = null;
     for (const s of before) {
       const hit = alternatives.find((t) => !t.derived && findMention(s.text, t.text) >= 0) ?? alternatives.find((t) => findMention(s.text, t.text) >= 0);
-      if (hit) latest = { sentence: s, token: hit, strong: !hit.derived };
+      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived };
     }
-    if (latest) kept.push(latest);
+    if (latest2) kept.push(latest2);
   }
   if (kept.length === 0) return { verdict: "NOT_NAMED", grade: "UNKNOWN", searched };
   const negated = kept.find((k) => NEGATOR.test(k.sentence.text));
   if (negated) {
     return { verdict: "NAMED_NEGATED", grade: "POSSIBLE", searched, sentence: negated.sentence, matched: negated.token.text };
   }
-  const first = kept[0];
+  const latest = kept.reduce((a, b) => b.sentence.seq > a.sentence.seq ? b : a);
   const verdict = kept.length === groups.size && kept.every((k) => k.strong) ? "NAMED" : "PARTLY_NAMED";
   return {
     verdict,
     grade: verdict === "NAMED" ? "LIKELY" : "POSSIBLE",
     searched,
-    sentence: first.sentence,
-    matched: first.token.text
+    sentence: latest.sentence,
+    matched: latest.token.text
   };
 }
 
@@ -1675,7 +1692,7 @@ Set CONTRAIL_HOME to pick one.`);
 // src/query/commit.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { resolve as resolve4 } from "node:path";
-function findCommit(db, sha) {
+function findCommit(db, sha, cwd, repoKey) {
   const wanted = sha.toLowerCase();
   if (!/^[0-9a-f]{7,40}$/.test(wanted)) throw new ContrailError(`"${sha}" is not a commit sha (7 to 40 hex characters).`);
   const rows = db.all(
@@ -1688,10 +1705,46 @@ function findCommit(db, sha) {
     const p = JSON.parse(row.payload);
     const commit = parseCommitSha(str(p.tool_input, "command") ?? "", str(p.tool_response, "stdout") ?? toText(p.tool_response));
     if (commit && (wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) {
-      return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit };
+      return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: "stdout" };
+    }
+  }
+  const info = cwd ? commitInfo(cwd, wanted) : null;
+  if (info) {
+    const window = 3600 * 1e6;
+    const calls = db.all(
+      `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
+                json_extract(payload, '$.tool_input.command') AS command
+           FROM events
+          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse')
+            AND captured_us BETWEEN ? AND ? ${repoKey ? "AND repo_key = ?" : ""}`,
+      info.sec * 1e6 - window,
+      info.sec * 1e6 + window,
+      ...repoKey ? [repoKey] : []
+    ).reduce((byId, e) => {
+      const c = byId.get(e.toolUseId) ?? { sessionId: e.sessionId, toolUseId: e.toolUseId, cwd: e.cwd, command: "", preUs: 0, postUs: 0 };
+      if (e.hook === "PreToolUse") c.preUs = e.us;
+      else c.postUs = e.us;
+      c.command ||= e.command ?? "";
+      return byId.set(e.toolUseId, c);
+    }, /* @__PURE__ */ new Map());
+    const { match, candidates } = commitByTime(info.sec, [...calls.values()].filter((c) => c.preUs && c.postUs));
+    if (match) return { sessionId: match.sessionId, toolUseId: match.toolUseId, cwd: match.cwd, commit: info.commit, via: "time", commitSec: info.sec };
+    if (candidates > 1) {
+      throw new ContrailError(`${candidates} recorded git commits were running when git dated commit ${sha}, and git printed no commit line, so Contrail cannot tell which one made it.`);
     }
   }
   throw new ContrailError(`No recorded agent action made commit ${sha}. Contrail sees commits made by Claude Code through its shell tool.`);
+}
+function commitInfo(cwd, sha) {
+  try {
+    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const [full, sec, ...subject] = run(["show", "-s", "--format=%H%n%ct%n%s", `${sha}^{commit}`]).split("\n");
+    if (!full || !sec) return null;
+    const branch = run(["for-each-ref", "--contains", full, "--format=%(refname:short)", "refs/heads"]).split("\n")[0] || "(no branch)";
+    return { commit: { branch, sha: full.slice(0, 7), subject: subject.join(" ") }, sec: Number(sec) };
+  } catch {
+    return null;
+  }
 }
 function commitFiles(cwd, sha) {
   try {
@@ -2447,7 +2500,15 @@ function renderCommit(r, g, s = PLAIN) {
   const { commit, action, explanation: e } = r;
   const prompt = g.prompts.find((p) => p.promptId === action.promptId);
   out.push(`${s.bold("Commit")} ${s.accent(commit.sha)} on ${commit.branch}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
-  out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${action.id} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
+  if (r.via === "time") {
+    const at = r.commitSec ? new Date(r.commitSec * 1e3).toISOString().slice(11, 19) : "that second";
+    out.push(
+      `  ${s.grade("LIKELY")}made by ${action.tool} ${action.id} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim("[R9]")}`,
+      `           ${s.dim("git printed no commit line for this command, so the join is on time, not on git's output")}`
+    );
+  } else {
+    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${action.id} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
+  }
   const verdict = e.requested.verdict;
   const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : "";
   out.push(`Requested?  ${verdict === "NOT_NAMED" ? s.flag("NOT NAMED") : s.bold(verdict.replace(/_/g, " "))}${said}  ${s.dim(`[R8 ${e.requested.grade}]`)}`);
@@ -2781,8 +2842,8 @@ async function why(args, flags, io, s) {
 async function whyCommit(args, flags, io, s) {
   const sha = args[0];
   if (!sha) throw new ContrailError("Usage: contrail why commit <sha>");
-  return withStore(flags, io, ({ db }) => {
-    const hit = findCommit(db, sha);
+  return withStore(flags, io, ({ db, repoKey }) => {
+    const hit = findCommit(db, sha, io.cwd, repoKey);
     const graph = loadGraph(db, hit.sessionId, io.home);
     const action = graph.actions.find((a) => a.id === hit.toolUseId);
     if (!action) throw new ContrailError(`The action that made commit ${sha} is missing from its session.`);
@@ -2809,10 +2870,11 @@ async function whyCommit(args, flags, io, s) {
       return { ...f, file, writer: { action: writer.action, named: writer.requested.verdict === "NAMED" } };
     }) : null;
     if (flags.json) {
-      io.out(`${JSON.stringify({ commit: hit.commit, madeBy: action.id, requested: explanation.requested, files: joined }, null, 2)}
+      const madeBy = { action: action.id, grade: hit.via === "stdout" ? "DIRECT" : "LIKELY", rule: hit.via === "stdout" ? "R1" : "R9" };
+      io.out(`${JSON.stringify({ commit: hit.commit, madeBy, requested: explanation.requested, files: joined }, null, 2)}
 `);
     } else {
-      io.out(renderCommit({ commit: hit.commit, action, explanation, files: joined }, graph, s));
+      io.out(renderCommit({ commit: hit.commit, action, explanation, files: joined, via: hit.via, commitSec: hit.commitSec }, graph, s));
     }
     return 0;
   });

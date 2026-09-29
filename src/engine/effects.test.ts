@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { commitContains, expectedShellEffects, parseCommitSha } from './effects.ts';
+import { commitByTime, commitContains, expectedShellEffects, parseCommitSha } from './effects.ts';
 
 test('parseCommitSha reads git\'s own commit line, only for real git commits', () => {
   assert.deepEqual(parseCommitSha('git add -A && git commit -m "x"', '[fix/auth 9f3c2a1] x\n 1 file changed'), {
@@ -11,6 +11,8 @@ test('parseCommitSha reads git\'s own commit line, only for real git commits', (
   assert.equal(parseCommitSha('git commit -m init', '[main (root-commit) 1a2b3c4] init')?.sha, '1a2b3c4');
   assert.equal(parseCommitSha('echo "[main 9f3c2a1] x"', '[main 9f3c2a1] x'), null);
   assert.equal(parseCommitSha('git status', '[main 9f3c2a1] x'), null);
+  assert.equal(parseCommitSha('echo git commit', '[main 9f3c2a1] x'), null);
+  assert.equal(parseCommitSha('git -c user.name=x commit -qm y && git log -1 --oneline', '[main 9f3c2a1] y')?.sha, '9f3c2a1');
 });
 
 test('installers are expected to change the manifest and the lockfile', () => {
@@ -63,4 +65,14 @@ test('commitContains joins each committed file to the latest agent write before 
 test('a write already covered by an earlier commit is not credited to a later one', () => {
   const writes = [{ path: '/r/a.ts', seq: 12, actionId: 'e1', expected: false }];
   assert.deepEqual(commitContains(30, ['/r/a.ts'], writes, [{ seq: 20, files: ['/r/a.ts'] }]), [{ file: '/r/a.ts', actionId: null, grade: 'UNKNOWN' }]);
+});
+
+test('commitByTime needs exactly one git commit whose hooks bracket the commit second', () => {
+  const at = (command: string, pre: number, post: number) => ({ command, preUs: pre * 1e6, postUs: post * 1e6 });
+  const commit = at('git commit -q -m x', 99.5, 100.2);
+  assert.equal(commitByTime(100, [commit, at('npm test', 99, 101)]).match, commit);
+  assert.deepEqual(commitByTime(100, [at('git commit -q -m x', 90, 95)]), { match: null, candidates: 0 });
+  assert.deepEqual(commitByTime(100, [commit, at('git commit -qam y', 98, 101)]), { match: null, candidates: 2 });
+  assert.equal(commitByTime(100, [at('echo "git commit" && git status', 99, 101)]).candidates, 0);
+  assert.equal(commitByTime(100, [at('cd app && GIT_EDITOR=true git -C . commit --no-edit', 99, 101)]).candidates, 1);
 });

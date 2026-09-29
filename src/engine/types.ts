@@ -9,7 +9,7 @@ export type Grade = 'DIRECT' | 'LIKELY' | 'POSSIBLE' | 'UNKNOWN';
 /** Who wrote a source. A label, never a grade modifier. */
 export type Trust = 'principal' | 'config' | 'local' | 'external' | 'agent';
 
-export type RuleId = 'R1' | 'R2' | 'R3' | 'R4' | 'R5' | 'R6' | 'R7' | 'R8';
+export type RuleId = 'R1' | 'R2' | 'R3' | 'R4' | 'R5' | 'R6' | 'R7' | 'R8' | 'R9';
 
 export type Origin =
   | 'prompt'

@@ -186,6 +186,9 @@ export interface CommitReport {
   action: Action;
   explanation: Explanation;
   files: Array<CommitFile & { writer?: { action: Action; named: boolean } }> | null;
+  /** how the commit was joined to the action; stdout unless git printed no commit line */
+  via?: 'stdout' | 'time';
+  commitSec?: number;
 }
 
 /** What a commit contains, joined to the agent's changes, and who asked for them. */
@@ -194,7 +197,15 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
   const { commit, action, explanation: e } = r;
   const prompt = g.prompts.find(p => p.promptId === action.promptId);
   out.push(`${s.bold('Commit')} ${s.accent(commit.sha)} on ${commit.branch}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
-  out.push(`  ${s.grade('DIRECT')}made by ${action.tool} ${action.id} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim('[R1]')}`);
+  if (r.via === 'time') {
+    const at = r.commitSec ? new Date(r.commitSec * 1000).toISOString().slice(11, 19) : 'that second';
+    out.push(
+      `  ${s.grade('LIKELY')}made by ${action.tool} ${action.id} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim('[R9]')}`,
+      `           ${s.dim('git printed no commit line for this command, so the join is on time, not on git\'s output')}`,
+    );
+  } else {
+    out.push(`  ${s.grade('DIRECT')}made by ${action.tool} ${action.id} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim('[R1]')}`);
+  }
   const verdict = e.requested.verdict;
   const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : '';
   out.push(`Requested?  ${verdict === 'NOT_NAMED' ? s.flag('NOT NAMED') : s.bold(verdict.replace(/_/g, ' '))}${said}  ${s.dim(`[R8 ${e.requested.grade}]`)}`);

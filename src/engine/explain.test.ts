@@ -224,3 +224,24 @@ test("a background subagent's report arrives as a prompt, and is never your word
   assert.equal(t.upstream?.via?.id, 'a1');
   assert.equal(t.upstream?.trace.links[0]?.to, 'out:s1');
 });
+
+test('a slash command is your words; the text it expands to is unobserved unless recorded', () => {
+  const expansion = (args: string) => ({ hook: 'UserPromptExpansion', payload: { prompt_id: 'p1', expansion_type: 'slash_command', command_name: 'deploy', command_args: args, command_source: 'project' } }) as const;
+  const typed = buildGraph(
+    session([expansion('staging'), d.prompt('/deploy staging', 'p1'), ...call('t1', 'Bash', { command: 'kubectl apply -f k8s/staging-v2.yaml' }, 'ok')]),
+    WHO,
+  );
+  assert.ok(!typed.inputs.some(i => i.origin === 'template'));
+  assert.equal(typed.inputs.find(i => i.id === 'prompt:p1')?.text, '/deploy staging');
+  assert.ok(explain('t1', typed).blindSpots.includes('the text /deploy expanded to (Claude Code records the command, not its body)'));
+
+  const body = buildGraph(
+    session([expansion('staging'), d.prompt('Apply k8s/staging-v2.yaml with kubectl.', 'p1'), ...call('t1', 'Bash', { command: 'kubectl apply -f k8s/staging-v2.yaml' }, 'ok')]),
+    WHO,
+  );
+  const template = body.inputs.find(i => i.origin === 'template')!;
+  assert.deepEqual([template.trust, body.prompts[0]?.text], ['local', '/deploy staging']);
+  const t = explain('t1', body).traces.find(x => x.token.text === 'k8s/staging-v2.yaml')!;
+  assert.equal(t.links[0]?.to, template.id);
+  assert.ok(!explain('t1', body).blindSpots.some(s => s.includes('expanded to')));
+});

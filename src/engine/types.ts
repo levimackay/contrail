@@ -151,6 +151,11 @@ export interface Prompt {
    * report (a <task-notification>). A task turn is never your words.
    */
   from: 'you' | 'task';
+  /**
+   * A slash command or skill you typed. Claude Code records the command, not the text it
+   * expands to, so the body is usually unobserved; bodyObserved says whether it was recorded.
+   */
+  command?: { text: string; bodyObserved: boolean };
 }
 
 export interface Graph {

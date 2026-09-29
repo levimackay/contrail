@@ -126,8 +126,11 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
   for (const prompt of prompts) {
     if (prompt.from === 'task') continue;
     const expansion = expansions.get(prompt.promptId);
-    if (expansion) {
-      // The expanded template is not your words; the command you typed is.
+    // Claude Code 2.1.284 records the typed command as the prompt and the expanded body nowhere.
+    // If a prompt ever does arrive expanded, keep that body as the template it is, not your words.
+    const expanded = expansion && prompt.text.trim() !== expansion.command.trim();
+    if (expansion) prompt.command = { text: expansion.command, bodyObserved: Boolean(expanded) };
+    if (expansion && expanded) {
       inputs.push({
         id: `template:${prompt.promptId}`, scope: mainScope, origin: 'template', trust: templateTrust(expansion.source),
         ref: `template:${prompt.promptId}`, label: `${expansion.command.split(' ')[0]} template`, text: prompt.text,

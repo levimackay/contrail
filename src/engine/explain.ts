@@ -73,6 +73,9 @@ export function blindSpots(action: Action, g: Graph): string[] {
     spots.push('some inputs were truncated when stored');
   }
 
+  const unseen = g.prompts.filter(p => p.command && !p.command.bodyObserved && p.seq < action.preSeq).map(p => p.command!.text.split(' ')[0]!);
+  if (unseen.length) spots.push(`the text ${[...new Set(unseen)].join(', ')} expanded to (Claude Code records the command, not its body)`);
+
   const compactions = (g.compactSeqs[scopeKey(action.scope)] ?? []).filter(s => s < action.preSeq);
   if (compactions.length) {
     spots.push(`context compacted at seq ${compactions.join(', ')}; earlier inputs are only visible through the summary`);

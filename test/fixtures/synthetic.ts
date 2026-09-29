@@ -38,7 +38,7 @@ export function call(id: string, tool: string, input: Record<string, unknown>, t
 export function session(drafts: Draft[], sessionId = 's1', cwd = '/r'): EventRow[] {
   let promptId: string | null = null;
   return drafts.map((draft, i) => {
-    if (draft.hook === 'UserPromptSubmit') promptId = draft.payload.prompt_id as string;
+    if (draft.hook === 'UserPromptSubmit' || draft.hook === 'UserPromptExpansion') promptId = draft.payload.prompt_id as string;
     const p = draft.payload;
     return {
       id: i + 1,

@@ -1283,6 +1283,8 @@ function blindSpots(action, g) {
   if (g.inputs.some((i) => i.truncated && sameScope(i.scope, action.scope) && i.availableAt < action.preSeq)) {
     spots.push("some inputs were truncated when stored");
   }
+  const unseen = g.prompts.filter((p) => p.command && !p.command.bodyObserved && p.seq < action.preSeq).map((p) => p.command.text.split(" ")[0]);
+  if (unseen.length) spots.push(`the text ${[...new Set(unseen)].join(", ")} expanded to (Claude Code records the command, not its body)`);
   const compactions = (g.compactSeqs[scopeKey(action.scope)] ?? []).filter((s) => s < action.preSeq);
   if (compactions.length) {
     spots.push(`context compacted at seq ${compactions.join(", ")}; earlier inputs are only visible through the summary`);
@@ -1916,7 +1918,9 @@ function buildGraph(rows, who) {
   for (const prompt of prompts) {
     if (prompt.from === "task") continue;
     const expansion = expansions.get(prompt.promptId);
-    if (expansion) {
+    const expanded = expansion && prompt.text.trim() !== expansion.command.trim();
+    if (expansion) prompt.command = { text: expansion.command, bodyObserved: Boolean(expanded) };
+    if (expansion && expanded) {
       inputs.push({
         id: `template:${prompt.promptId}`,
         scope: mainScope,

@@ -39,6 +39,14 @@
     "SubagentStop": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 }] }
     ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/contrail\" ingest --from-hook", "timeout": 30 }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

@@ -438,9 +438,9 @@ import { homedir } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync3, rmSync } from "node:fs";
+import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join4 } from "node:path";
+import { basename as basename4, dirname as dirname2, join as join4 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -2758,17 +2758,26 @@ async function whyCommit(args, flags, io, s) {
     const action = graph.actions.find((a) => a.id === hit.toolUseId);
     if (!action) throw new ContrailError(`The action that made commit ${sha} is missing from its session.`);
     const explanation = explain(action.id, graph);
-    const files = commitFiles(hit.cwd, hit.commit.sha);
+    const files = commitFiles(hit.cwd, hit.commit.sha)?.map(realPath);
     const seqOf = (id) => graph.actions.find((a) => a.id === id)?.preSeq ?? 0;
+    const shown = /* @__PURE__ */ new Map();
+    const writes = graph.effects.filter((e) => e.kind === "file" && e.path).map((e) => {
+      const path = realPath(e.path);
+      shown.set(path, e.path);
+      return { path, seq: seqOf(e.actionId), actionId: e.actionId, expected: e.evidence === "expected" };
+    });
+    const cwdReal = realPath(graph.env.cwd);
+    const display = (file) => shown.get(file) ?? (graph.env.cwd && file.startsWith(`${cwdReal}/`) ? graph.env.cwd + file.slice(cwdReal.length) : file);
     const joined = files ? commitContains(
       action.preSeq,
       files,
-      graph.effects.filter((e) => e.kind === "file" && e.path).map((e) => ({ path: e.path, seq: seqOf(e.actionId), actionId: e.actionId, expected: e.evidence === "expected" })),
-      graph.effects.filter((e) => e.kind === "commit" && e.actionId !== action.id && e.commit).map((e) => ({ seq: seqOf(e.actionId), files: commitFiles(hit.cwd, e.commit.sha) ?? [] }))
+      writes,
+      graph.effects.filter((e) => e.kind === "commit" && e.actionId !== action.id && e.commit).map((e) => ({ seq: seqOf(e.actionId), files: (commitFiles(hit.cwd, e.commit.sha) ?? []).map(realPath) }))
     ).map((f) => {
-      if (!f.actionId) return f;
+      const file = display(f.file);
+      if (!f.actionId) return { ...f, file };
       const writer = explain(f.actionId, graph);
-      return { ...f, writer: { action: writer.action, named: writer.requested.verdict === "NAMED" } };
+      return { ...f, file, writer: { action: writer.action, named: writer.requested.verdict === "NAMED" } };
     }) : null;
     if (flags.json) {
       io.out(`${JSON.stringify({ commit: hit.commit, madeBy: action.id, requested: explanation.requested, files: joined }, null, 2)}
@@ -2778,6 +2787,17 @@ async function whyCommit(args, flags, io, s) {
     }
     return 0;
   });
+}
+function realPath(path) {
+  try {
+    return realpathSync3(path);
+  } catch {
+    try {
+      return join4(realpathSync3(dirname2(path)), basename4(path));
+    } catch {
+      return path;
+    }
+  }
 }
 async function trace2(flags, io, s) {
   const chosen = FILTERS.filter((f) => flags[f]);

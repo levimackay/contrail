@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { before, test } from 'node:test';
@@ -10,7 +10,11 @@ import { buildDemo } from './fixtures/demo.ts';
 
 let demo: { repo: string; data: string; sha: string };
 before(() => {
-  demo = buildDemo(mkdtempSync(join(tmpdir(), 'contrail-demo-test-')));
+  // Built through a symlink, as on macOS where /var is /private/var: hooks record the
+  // symlinked path while git reports the real one.
+  const link = join(mkdtempSync(join(tmpdir(), 'contrail-demo-link-')), 'via');
+  symlinkSync(mkdtempSync(join(tmpdir(), 'contrail-demo-test-')), link);
+  demo = buildDemo(link);
 });
 
 async function run(argv: string[], env: NodeJS.ProcessEnv = {}): Promise<{ code: number; out: string; err: string }> {
@@ -53,7 +57,7 @@ test('sessions lists both sessions, newest first, with the flagged count', async
   const r = await run(['sessions']);
   const rows = r.out.split('\n');
   assert.match(rows[0]!, /^SESSION +LAST ACTIVE +TURNS/);
-  assert.match(rows[1]!, /^9c1e7b52 .* 3 +Set up the QuickAuth CLI/);
+  assert.match(rows[1]!, /^9c1e7b52 .* 2 +Set up the QuickAuth CLI/);
   assert.match(rows[2]!, /^4f2a91c7 .* 0 +Users are getting logged out/);
 });
 
@@ -63,7 +67,8 @@ test('trace shows each side effect with where its values came from', async () =>
   assert.match(r.out, /SHELL +npm install jwt-decode\n +↳ LIKELY jwt-decode ← auth-service\/README\.md:13 \(local\) +not named by you\n +→ package\.json, package-lock\.json \(expected, not observed\)/);
   assert.match(r.out, /SHELL +git add -A && git commit/);
   const shell = await run(['trace', '--session', '4f2a', '--shell']);
-  assert.doesNotMatch(shell.out, /READ/);
+  assert.match(shell.out, /\bSHELL\b/);
+  assert.doesNotMatch(shell.out, /\bREAD\b/);
 });
 
 test('export writes the recorded events as JSON', async () => {

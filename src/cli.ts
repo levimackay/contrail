@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { commitContains } from './engine/effects.ts';
@@ -178,20 +178,34 @@ async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promis
     const action = graph.actions.find(a => a.id === hit.toolUseId);
     if (!action) throw new ContrailError(`The action that made commit ${sha} is missing from its session.`);
     const explanation = explain(action.id, graph);
-    const files = commitFiles(hit.cwd, hit.commit.sha);
+    const files = commitFiles(hit.cwd, hit.commit.sha)?.map(realPath);
     const seqOf = (id: string) => graph.actions.find(a => a.id === id)?.preSeq ?? 0;
+    // Git reports real paths (/private/var/... on macOS) and hooks may record a symlinked one
+    // (/var/...), so join on real paths and show the recorded one.
+    const shown = new Map<string, string>();
+    const writes = graph.effects
+      .filter(e => e.kind === 'file' && e.path)
+      .map(e => {
+        const path = realPath(e.path!);
+        shown.set(path, e.path!);
+        return { path, seq: seqOf(e.actionId), actionId: e.actionId, expected: e.evidence === 'expected' };
+      });
+    const cwdReal = realPath(graph.env.cwd);
+    const display = (file: string) =>
+      shown.get(file) ?? (graph.env.cwd && file.startsWith(`${cwdReal}/`) ? graph.env.cwd + file.slice(cwdReal.length) : file);
     const joined = files
       ? commitContains(
           action.preSeq,
           files,
-          graph.effects.filter(e => e.kind === 'file' && e.path).map(e => ({ path: e.path!, seq: seqOf(e.actionId), actionId: e.actionId, expected: e.evidence === 'expected' })),
+          writes,
           graph.effects
             .filter(e => e.kind === 'commit' && e.actionId !== action.id && e.commit)
-            .map(e => ({ seq: seqOf(e.actionId), files: commitFiles(hit.cwd, e.commit!.sha) ?? [] })),
+            .map(e => ({ seq: seqOf(e.actionId), files: (commitFiles(hit.cwd, e.commit!.sha) ?? []).map(realPath) })),
         ).map(f => {
-          if (!f.actionId) return f;
+          const file = display(f.file);
+          if (!f.actionId) return { ...f, file };
           const writer = explain(f.actionId, graph);
-          return { ...f, writer: { action: writer.action, named: writer.requested.verdict === 'NAMED' } };
+          return { ...f, file, writer: { action: writer.action, named: writer.requested.verdict === 'NAMED' } };
         })
       : null;
     if (flags.json) {
@@ -201,6 +215,19 @@ async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promis
     }
     return 0;
   });
+}
+
+/** The path with symlinks resolved; for a file that no longer exists, its directory's real path. */
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    try {
+      return join(realpathSync(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
 }
 
 async function trace(flags: Flags, io: Io, s: Style): Promise<number> {

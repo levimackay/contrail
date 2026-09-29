@@ -820,7 +820,7 @@ function shellSegments(command) {
 }
 function segments(command) {
   const out = [];
-  for (const line of withoutHeredocs(logicalLines(command))) {
+  for (const line of withoutHeredocs(logicalLines(command)).map(withoutFdNumbers)) {
     let entries;
     try {
       entries = (0, import_shell_quote.parse)(line, (key) => `$${key}`);
@@ -831,6 +831,10 @@ function segments(command) {
     let redirectNext = false;
     for (const e of entries) {
       if (typeof e === "string") {
+        if (redirectNext === ">&" && /^(\d{1,4}|-)$/.test(e)) {
+          redirectNext = false;
+          continue;
+        }
         (redirectNext ? cur.redirects : cur.words).push(e);
         redirectNext = false;
         continue;
@@ -841,7 +845,7 @@ function segments(command) {
         continue;
       }
       if (e.op === ">" || e.op === ">>" || e.op === ">&") {
-        redirectNext = true;
+        redirectNext = e.op === ">&" ? ">&" : ">";
         continue;
       }
       if (e.op === "<") continue;
@@ -878,6 +882,31 @@ function logicalLines(command) {
     cur += ch;
   }
   out.push(cur);
+  return out;
+}
+function withoutFdNumbers(line) {
+  let out = "";
+  let quote2 = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote2) {
+      if (ch === quote2) quote2 = null;
+      else if (ch === "\\" && quote2 === '"') {
+        out += ch + (line[++i] ?? "");
+        continue;
+      }
+    } else if (ch === "'" || ch === '"') {
+      quote2 = ch;
+    } else if (ch === "\\") {
+      out += ch + (line[++i] ?? "");
+      continue;
+    } else if ((i === 0 || /\s/.test(line[i - 1])) && /^\d{1,4}[<>]/.test(line.slice(i, i + 5))) {
+      while (/\d/.test(line[i])) i++;
+      i--;
+      continue;
+    }
+    out += ch;
+  }
   return out;
 }
 function withoutHeredocs(lines) {

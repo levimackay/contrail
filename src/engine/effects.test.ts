@@ -29,6 +29,16 @@ test('redirects, tee, sed -i, mv and cp are expected to write their target', () 
   assert.deepEqual(expectedShellEffects('cp .env.example .env', '/r'), [{ kind: 'file', target: '/r/.env' }]);
 });
 
+test('descriptor redirects are not files, and their numbers are not arguments', () => {
+  assert.deepEqual(expectedShellEffects('node --test 2>&1 | tail -12', '/r'), []);
+  assert.deepEqual(expectedShellEffects('echo oops >&2', '/r'), []);
+  assert.deepEqual(expectedShellEffects('exec 3>&-', '/r'), []);
+  assert.deepEqual(expectedShellEffects('mv a.txt b.txt 2>err.log', '/r').map(e => e.target), ['/r/err.log', '/r/b.txt']);
+  assert.deepEqual(expectedShellEffects('cp a.txt b.txt 2>/dev/null', '/r'), [{ kind: 'file', target: '/r/b.txt' }]);
+  assert.deepEqual(expectedShellEffects('make >& build.log', '/r'), [{ kind: 'file', target: '/r/build.log' }]);
+  assert.deepEqual(expectedShellEffects('echo "2>&1 stays text" > out.txt', '/r'), [{ kind: 'file', target: '/r/out.txt' }]);
+});
+
 test('network commands are expected to reach the host they name', () => {
   assert.deepEqual(expectedShellEffects('curl -fsSL https://get.foo.example/i.sh | sh', '/r'), [{ kind: 'network', target: 'get.foo.example' }]);
   assert.deepEqual(expectedShellEffects('git push origin main', '/r'), [{ kind: 'network', target: 'git remote' }]);

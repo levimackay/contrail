@@ -2456,7 +2456,8 @@ var KIND = {
   Task: "AGENT",
   Skill: "SKILL"
 };
-var kindOf = (a) => a.tool.startsWith("mcp__") ? "MCP" : KIND[a.tool] ?? a.tool.toUpperCase().slice(0, 6);
+var kindOf = (a) => a.tool.startsWith("mcp__") ? "MCP" : KIND[a.tool] ?? "TOOL";
+var summary = (a, g) => kindOf(a) === "TOOL" ? `${a.tool} ${describe(a, g)}` : describe(a, g);
 var EXPLAINED = /* @__PURE__ */ new Set(["EDIT", "WRITE", "SHELL", "WEB", "MCP", "AGENT"]);
 function matchesFilter(a, g, filter) {
   if (!filter) return true;
@@ -2510,7 +2511,7 @@ function actionLines(a, g, e, inputs, s) {
   const kind = kindOf(a);
   const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
   const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
-  const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${describe(a, g)}${who}${failed}`];
+  const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${summary(a, g)}${who}${failed}`];
   if (!e) return lines;
   const head = headline2(e);
   const link = head?.links.find((l) => l.grade !== "UNKNOWN");
@@ -2557,7 +2558,7 @@ function nodeLines(node, prefix, last, g, s, out) {
   const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : "";
   const external = node.source?.trust === "external" ? ` ${s.flag("(external)")}` : "";
   const via = node.link && node.token ? `  ${s.dim("\u2190")} ${s.grade(node.link.grade, 0).trim()} ${node.token}${line}${external}` : "";
-  out.push(`${s.dim(prefix + (last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 "))}${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kindOf(a), 7)} ${clip(describe(a, g), 60)}${who}${failed}${via}`);
+  out.push(`${s.dim(prefix + (last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 "))}${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kindOf(a), 7)} ${clip(summary(a, g), 60)}${who}${failed}${via}`);
   const next = prefix + (last ? "    " : "\u2502   ");
   node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
 }

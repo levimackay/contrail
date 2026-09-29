@@ -20,7 +20,9 @@ const KIND: Record<string, string> = {
   Read: 'READ', Grep: 'SEARCH', Glob: 'SEARCH', LS: 'SEARCH', Edit: 'EDIT', MultiEdit: 'EDIT', Write: 'WRITE',
   NotebookEdit: 'EDIT', Bash: 'SHELL', WebFetch: 'WEB', WebSearch: 'WEB', Agent: 'AGENT', Task: 'AGENT', Skill: 'SKILL',
 };
-const kindOf = (a: Action) => (a.tool.startsWith('mcp__') ? 'MCP' : (KIND[a.tool] ?? a.tool.toUpperCase().slice(0, 6)));
+const kindOf = (a: Action) => (a.tool.startsWith('mcp__') ? 'MCP' : (KIND[a.tool] ?? 'TOOL'));
+/** What a timeline line shows after the kind: for a tool without a kind of its own, its name first. */
+const summary = (a: Action, g: Graph) => (kindOf(a) === 'TOOL' ? `${a.tool} ${describe(a, g)}` : describe(a, g));
 
 /** Side effects worth explaining in a trace: anything that writes, runs, or reaches the network. */
 export const EXPLAINED = new Set(['EDIT', 'WRITE', 'SHELL', 'WEB', 'MCP', 'AGENT']);
@@ -88,7 +90,7 @@ function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Ma
   const kind = kindOf(a);
   const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : '';
   const failed = a.status === 'failed' || a.status === 'interrupted' ? s.flag(` ${a.status.toUpperCase()}`) : '';
-  const lines = [`  ${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kind, 7)} ${describe(a, g)}${who}${failed}`];
+  const lines = [`  ${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kind, 7)} ${summary(a, g)}${who}${failed}`];
   if (!e) return lines;
 
   const head = headline(e);
@@ -143,7 +145,7 @@ function nodeLines(node: TreeNode, prefix: string, last: boolean, g: Graph, s: S
   const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : '';
   const external = node.source?.trust === 'external' ? ` ${s.flag('(external)')}` : '';
   const via = node.link && node.token ? `  ${s.dim('←')} ${s.grade(node.link.grade, 0).trim()} ${node.token}${line}${external}` : '';
-  out.push(`${s.dim(prefix + (last ? '└── ' : '├── '))}${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kindOf(a), 7)} ${clip(describe(a, g), 60)}${who}${failed}${via}`);
+  out.push(`${s.dim(prefix + (last ? '└── ' : '├── '))}${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kindOf(a), 7)} ${clip(summary(a, g), 60)}${who}${failed}${via}`);
   const next = prefix + (last ? '    ' : '│   ');
   node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
 }

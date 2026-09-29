@@ -21,3 +21,9 @@ test('paths show relative to the working directory, which itself shows as .', as
   assert.equal(displayPath('/r/src/a.ts', '/r', '/Users/dev'), 'src/a.ts');
   assert.equal(displayPath('/Users/dev/.aws/credentials', '/r', '/Users/dev'), '~/.aws/credentials');
 });
+
+test('a tool without a kind of its own shows its name in the timeline', async () => {
+  const { renderTrace } = await import('../render/session.ts');
+  const g = buildGraph(session([d.prompt('go', 'p1'), ...call('x1', 'ToolSearch', { query: 'select:WebFetch' }, 'ok')]), WHO);
+  assert.match(renderTrace(g, new Map(), null), / {2}\d+ +TOOL {4}ToolSearch \{"query":"select:WebFetch"\}/);
+});

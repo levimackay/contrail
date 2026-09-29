@@ -4,6 +4,8 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-29
+
 ### Added
 
 - `contrail export --otel`: a session as OpenTelemetry traces (OTLP/JSON). Sessions, turns and tool calls become spans with real times, Contrail's grades and trust labels become `contrail.*` attributes, provenance edges become span links, and effects become span events.
@@ -55,6 +57,7 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 - `contrail ingest` and `contrail doctor`.
 - The `/contrail:why` skill, which passes its argument on standard input so it is never run as shell.
 
-[Unreleased]: https://github.com/levimackay/contrail/compare/5ec712e...HEAD
+[Unreleased]: https://github.com/levimackay/contrail/compare/main...HEAD
+[0.3.0]: https://github.com/levimackay/contrail/pull/2
 [0.2.0]: https://github.com/levimackay/contrail/pull/1
 [0.1.0]: https://github.com/levimackay/contrail/commit/15206e6

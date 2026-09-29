@@ -1,10 +1,21 @@
 {
   "name": "contrail",
-  "version": "0.2.0",
-  "description": "Shows the observable trail behind Claude Code's edits and commands, with every link graded by evidence.",
-  "author": { "name": "Levi Mackay", "url": "https://github.com/levimackay" },
+  "version": "0.3.0",
+  "description": "See where every value in a Claude Code action came from: trails graded by evidence, sensitive actions flagged, HTML reports and OpenTelemetry export. Local only.",
+  "author": {
+    "name": "Levi Mackay",
+    "url": "https://github.com/levimackay"
+  },
   "homepage": "https://github.com/levimackay/contrail",
   "repository": "https://github.com/levimackay/contrail",
   "license": "MIT",
-  "keywords": ["provenance", "audit", "hooks", "observability"]
+  "keywords": [
+    "provenance",
+    "audit",
+    "security",
+    "prompt-injection",
+    "hooks",
+    "observability",
+    "opentelemetry"
+  ]
 }

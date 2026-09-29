@@ -9,7 +9,7 @@
     {
       "name": "contrail",
       "source": "./plugin",
-      "description": "Shows the observable trail behind Claude Code's edits and commands, with every link graded by evidence."
+      "description": "See where every value in a Claude Code action came from: trails graded by evidence, sensitive actions flagged, HTML reports and OpenTelemetry export. Local only."
     }
   ]
 }

@@ -6,6 +6,7 @@ import type { Db } from '../store/sqlite.ts';
 export type Target =
   | { kind: 'path'; path: string; shown: string }
   | { kind: 'command'; text: string }
+  | { kind: 'call'; prefix: string; suffix: string; shown: string }
   | { kind: 'last' };
 
 export interface Hit {
@@ -15,12 +16,22 @@ export interface Hit {
   total: number;
 }
 
-/** `last`, an existing or path-looking argument, or else text to find in a shell command. */
+/**
+ * A call id as reports print it (toolu…ALhq1, or toolu...ALhq1 where … is awkward to type) or in
+ * full (toolu_01…); both halves are id characters only.
+ */
+const SHORT_CALL = /^([A-Za-z0-9_-]{1,40})(?:…|\.\.\.)([A-Za-z0-9_-]{1,40})$/;
+const FULL_CALL = /^toolu_[A-Za-z0-9_-]{8,200}$/;
+
+/** `last`, a call id, an existing or path-looking argument, or else text to find in a shell command. */
 export function parseTarget(args: string[], cwd: string): Target {
   const text = unquote(args.join(' ').trim());
-  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | last>');
+  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | call id | last>');
   if (text === 'last') return { kind: 'last' };
   const abs = resolve(cwd, text);
+  const short = SHORT_CALL.exec(text);
+  if (short && !existsSync(abs)) return { kind: 'call', prefix: short[1]!, suffix: short[2]!, shown: text };
+  if (FULL_CALL.test(text) && !existsSync(abs)) return { kind: 'call', prefix: text, suffix: '', shown: text };
   if (!/\s/.test(text) && (existsSync(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) return { kind: 'path', path: abs, shown: text };
   return { kind: 'command', text };
 }
@@ -61,6 +72,17 @@ export function findTarget(db: Db, target: Target, repoKey: string): Hit {
       target.text,
     );
     if (!rows.length) throw new ContrailError(`No recorded shell command contains "${target.text}".`);
+  } else if (target.kind === 'call') {
+    // Any tool, any repository: a call id names one call wherever it ran.
+    rows = db.all(
+      `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
+        WHERE hook_event = 'PreToolUse' AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
+          AND (? = '' OR substr(tool_use_id, -?) = ?)
+        ORDER BY captured_us DESC, spool_name DESC`,
+      target.prefix.length, target.prefix, target.prefix.length + target.suffix.length,
+      target.suffix, target.suffix.length, target.suffix,
+    );
+    if (!rows.length) throw new ContrailError(`No recorded tool call ${target.shown}.`);
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events

@@ -2449,11 +2449,16 @@ function loadGraph(db, sessionId, home, hashToken) {
 // src/query/target.ts
 import { existsSync as existsSync2, realpathSync as realpathSync2 } from "node:fs";
 import { resolve as resolve5 } from "node:path";
+var SHORT_CALL = /^([A-Za-z0-9_-]{1,40})(?:…|\.\.\.)([A-Za-z0-9_-]{1,40})$/;
+var FULL_CALL = /^toolu_[A-Za-z0-9_-]{8,200}$/;
 function parseTarget(args, cwd) {
   const text = unquote(args.join(" ").trim());
-  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | last>');
+  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | call id | last>');
   if (text === "last") return { kind: "last" };
   const abs = resolve5(cwd, text);
+  const short = SHORT_CALL.exec(text);
+  if (short && !existsSync2(abs)) return { kind: "call", prefix: short[1], suffix: short[2], shown: text };
+  if (FULL_CALL.test(text) && !existsSync2(abs)) return { kind: "call", prefix: text, suffix: "", shown: text };
   if (!/\s/.test(text) && (existsSync2(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) return { kind: "path", path: abs, shown: text };
   return { kind: "command", text };
 }
@@ -2488,6 +2493,20 @@ function findTarget(db, target, repoKey) {
       target.text
     );
     if (!rows.length) throw new ContrailError(`No recorded shell command contains "${target.text}".`);
+  } else if (target.kind === "call") {
+    rows = db.all(
+      `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
+        WHERE hook_event = 'PreToolUse' AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
+          AND (? = '' OR substr(tool_use_id, -?) = ?)
+        ORDER BY captured_us DESC, spool_name DESC`,
+      target.prefix.length,
+      target.prefix,
+      target.prefix.length + target.suffix.length,
+      target.suffix,
+      target.suffix.length,
+      target.suffix
+    );
+    if (!rows.length) throw new ContrailError(`No recorded tool call ${target.shown}.`);
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
@@ -3530,6 +3549,7 @@ var USAGE = `contrail ${VERSION}: the observable trail behind Claude Code action
 Usage:
   contrail why <path>               the trail behind the latest agent change to a file
   contrail why "<command text>"     the trail behind the latest shell command containing the text
+  contrail why <call id>            the trail behind one tool call, as reports print its id
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source

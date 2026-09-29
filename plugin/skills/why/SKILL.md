@@ -1,8 +1,8 @@
 ---
 name: why
-description: Show the recorded trail behind a Claude Code action (a file change, a shell command, or the last action), with every link graded by evidence. Runs only when you invoke it.
+description: Show the recorded trail behind a Claude Code action (a file change, a shell command, a tool call by its id, or the last action), with every link graded by evidence. Runs only when you invoke it.
 disable-model-invocation: true
-argument-hint: <path | "command text" | last>
+argument-hint: <path | "command text" | call id | last>
 allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/bin/contrail *)
 ---
 

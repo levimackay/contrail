@@ -45,6 +45,7 @@ Then use Claude Code as usual. Contrail records in the background. When you want
 /contrail:why last                       the most recent edit, command or commit
 /contrail:why src/auth/session.ts        the latest agent change to a file
 /contrail:why "npm install jwt-decode"   the latest command containing that text
+/contrail:why toolu…ALhq1                any call a report shows, by its id
 /contrail:risks                          sensitive actions, those tracing to web or MCP content first
 /contrail:trace                          this session as a timeline
 /contrail:sessions                       recent sessions in this repository at a glance
@@ -100,7 +101,7 @@ It is not a transcript viewer, a token tracker or a security scanner. It has one
 
 | Command | What it shows |
 |---|---|
-| [`contrail why <path \| "command" \| last>`](#contrail-why) | The trail behind one action |
+| [`contrail why <path \| "command" \| call id \| last>`](#contrail-why) | The trail behind one action |
 | [`contrail why commit <sha>`](#contrail-why-commit) | A commit's files, joined to the agent changes behind them |
 | [`contrail risks`](#contrail-risks) | Sensitive actions, with where their values came from |
 | [`contrail trace [--tree]`](#contrail-trace) | A session as a timeline, or as a forest of trails |
@@ -147,7 +148,7 @@ Use the launcher path `contrail doctor` prints if yours differs. The command rea
 
 ### `contrail why`
 
-The trail behind one action: a file change, a shell command, or the latest thing the agent did.
+The trail behind one action: a file change, a shell command, any tool call by the id a report prints (`toolu…ALhq1`, or `toolu...ALhq1`), or the latest thing the agent did.
 
 ![contrail why "npm install jwt-decode"](docs/why.svg)
 
@@ -605,7 +606,7 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 **Shipped in 0.1**
 
 - [x] Capture for every hook event, with redaction before storage
-- [x] `contrail why <path | "command" | last>` and the `/contrail:why` skill
+- [x] `contrail why <path | "command" | call id | last>` and the `/contrail:why` skill
 - [x] `contrail ingest` and `contrail doctor`
 
 **Shipped in 0.2**

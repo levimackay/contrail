@@ -66,6 +66,7 @@ export const USAGE = `contrail ${VERSION}: the observable trail behind Claude Co
 Usage:
   contrail why <path>               the trail behind the latest agent change to a file
   contrail why "<command text>"     the trail behind the latest shell command containing the text
+  contrail why <call id>            the trail behind one tool call, as reports print its id
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source

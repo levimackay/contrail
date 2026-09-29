@@ -31,6 +31,7 @@ const WRAPPERS = new Set(['sudo', 'env', 'time', 'nohup', 'command', 'exec']);
 const URL_RE = /https?:\/\/[^\s'"<>)\]]+/g;
 const WORD_RE = /[A-Za-z0-9_@][A-Za-z0-9_\-./@:]*[A-Za-z0-9_]/g;
 const MAX_HINTS = 20;
+const MAX_TARGETS = 40;
 
 /**
  * The strings in an action's arguments worth tracing, per tool:
@@ -92,6 +93,7 @@ function collector(env: Env) {
     [...env.cwd.split('/'), ...env.home.split('/'), env.user].filter(Boolean).map(s => s.toLowerCase()),
   );
   let hintCount = 0;
+  let targetCount = 0;
 
   const passes = (raw: string) => {
     const lower = raw.toLowerCase();
@@ -108,7 +110,7 @@ function collector(env: Env) {
   const api = {
     /** `exempt` skips the word filters, for values that are explicit on purpose (packages, URLs, skills). */
     target(text: string, group: number, argPath: string, exempt = false) {
-      if (exempt ? text.length >= 2 : passes(text)) push(text, 'target', group, argPath);
+      if (targetCount < MAX_TARGETS && (exempt ? text.length >= 2 : passes(text)) && push(text, 'target', group, argPath)) targetCount++;
     },
     hint(text: string, argPath: string) {
       if (hintCount < MAX_HINTS && passes(text) && isShaped(text) && push(text, 'hint', null, argPath)) hintCount++;
@@ -125,7 +127,8 @@ function collector(env: Env) {
       const abs = isAbsolute(p) ? p : resolve(env.cwd || '/', p);
       if (abs === env.cwd || abs === env.home || abs === '/') return;
       const rel = displayPath(abs, env.cwd, env.home);
-      push(rel, 'target', group, argPath);
+      if (targetCount >= MAX_TARGETS) return;
+      if (push(rel, 'target', group, argPath)) targetCount++;
       const base = basename(abs);
       if (!GENERIC_BASENAMES.has(base.toLowerCase())) {
         if (base !== rel && passes(base)) push(base, 'target', group, argPath);
@@ -192,10 +195,10 @@ function bash(command: string, b: Collector): void {
   }
 }
 
-/** Splits a command line on && || ; | & and newlines; collects redirect targets. */
+/** Splits a command on && || ; | & and unquoted newlines, skipping heredoc bodies; collects redirect targets. */
 function segments(command: string): Array<{ words: string[]; redirects: string[] }> {
   const out: Array<{ words: string[]; redirects: string[] }> = [];
-  for (const line of command.split('\n')) {
+  for (const line of withoutHeredocs(logicalLines(command))) {
     let entries: ParseEntry[];
     try {
       entries = parse(line, key => `$${key}`);
@@ -224,6 +227,52 @@ function segments(command: string): Array<{ words: string[]; redirects: string[]
       cur = { words: [], redirects: [] };
     }
     if (cur.words.length || cur.redirects.length) out.push(cur);
+  }
+  return out;
+}
+
+/** Newlines inside quotes and after a backslash don't end a command. */
+function logicalLines(command: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quote: string | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (quote) {
+      if (ch === quote) quote = null;
+      else if (ch === '\\' && quote === '"') {
+        cur += ch + (command[++i] ?? '');
+        continue;
+      }
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (ch === '\\' && command[i + 1] === '\n') {
+      i++;
+      cur += ' ';
+      continue;
+    } else if (ch === '\n') {
+      out.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** A heredoc body is data fed to a command, not commands. */
+function withoutHeredocs(lines: string[]): string[] {
+  const out: string[] = [];
+  let end: string | null = null;
+  for (const line of lines) {
+    if (end !== null) {
+      if (line.trim() === end) end = null;
+      continue;
+    }
+    out.push(line);
+    const heredoc = /<<-?\s*(['"]?)([A-Za-z_][\w-]*)\1/.exec(line);
+    if (heredoc) end = heredoc[2]!;
   }
   return out;
 }

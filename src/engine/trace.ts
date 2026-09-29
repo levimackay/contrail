@@ -40,9 +40,16 @@ export function traceToken(token: Token, action: Action, g: Graph, depth = 0, vi
   return trace;
 }
 
+/** How many of an upstream action's tokens are traced, targets first. Bounds the work per hop. */
+const UPSTREAM_TOKENS = 8;
+
 /** The most telling trace for an action: a target with a found source, else any found, else its first token. */
 export function headline(action: Action, g: Graph, depth: number, visited: Set<string>): TokenTrace | null {
-  const traces = extractTokens(action, g.env).map(t => traceToken(t, action, g, depth, visited));
+  const tokens = extractTokens(action, g.env)
+    .sort((a, b) => Number(a.role === 'hint') - Number(b.role === 'hint'))
+    .slice(0, UPSTREAM_TOKENS);
+  // Each token gets its own copy of the path so far: siblings don't hide each other's upstream.
+  const traces = tokens.map(t => traceToken(t, action, g, depth, new Set(visited)));
   const found = (t: TokenTrace) => t.links.some(l => l.grade !== 'UNKNOWN');
   return traces.find(t => t.token.role === 'target' && found(t)) ?? traces.find(found) ?? traces[0] ?? null;
 }

@@ -57,3 +57,9 @@ test('"commit it" names a git commit', () => {
   const r = requested(commit, [mkToken('commit', { shaped: false })], [say('p2', 40, 'looks good, commit it')]);
   assert.equal(r.verdict, 'NAMED');
 });
+
+test('names that merely contain a negator are not negations', () => {
+  const create = mkAction({ id: 't7', preSeq: 20, input: { file_path: '/r/src/app/not-found.tsx' } });
+  const r = requested(create, [mkToken('src/app/not-found.tsx')], [say('p1', 3, 'Create src/app/not-found.tsx with a no-cache header')]);
+  assert.equal(r.verdict, 'NAMED');
+});

@@ -1,7 +1,8 @@
 import { findMention } from './text.ts';
 import type { Action, RequestVerdict, Sentence, Token } from './types.ts';
 
-const NEGATOR = /\b(not|never|no|without|avoid|stop|skip|instead of|rather than)\b|n't\b/i;
+// Whole words only: "not-found.tsx" and "no-cache" are names, not negations.
+const NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
 
 /** Your prompt as sentences, with fenced pastes removed: pasted text is not something you asked for. */
 export function splitSentences(text: string): string[] {

@@ -17,7 +17,7 @@ export interface Hit {
 
 /** `last`, an existing or path-looking argument, or else text to find in a shell command. */
 export function parseTarget(args: string[], cwd: string): Target {
-  const text = args.join(' ').trim();
+  const text = unquote(args.join(' ').trim());
   if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | last>');
   if (text === 'last') return { kind: 'last' };
   const abs = resolve(cwd, text);
@@ -25,7 +25,17 @@ export function parseTarget(args: string[], cwd: string): Target {
   return { kind: 'command', text };
 }
 
+/** Text typed through the skill arrives with its quotes: "npm install foo" → npm install foo. */
+function unquote(s: string): string {
+  const m = /^(["'])(.*)\1$/s.exec(s);
+  return m ? m[2]!.trim() : s;
+}
+
 const WRITE_OR_EXTERNAL = `(tool_name IN ('Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash', 'WebFetch') OR tool_name LIKE 'mcp%')`;
+
+/** Contrail's own queries, run by the agent through Bash, must never answer themselves. */
+const COMMAND = `COALESCE(json_extract(payload, '$.tool_input.command'), '')`;
+const NOT_CONTRAIL = `NOT (${COMMAND} LIKE '%bin/contrail%' OR ${COMMAND} LIKE 'contrail %')`;
 
 export function findTarget(db: Db, target: Target, repoKey: string): Hit {
   let rows: Array<{ sessionId: string; toolUseId: string }>;
@@ -46,7 +56,7 @@ export function findTarget(db: Db, target: Target, repoKey: string): Hit {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
         WHERE hook_event = 'PreToolUse' AND tool_name = 'Bash'
-          AND instr(json_extract(payload, '$.tool_input.command'), ?) > 0
+          AND instr(${COMMAND}, ?) > 0 AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC`,
       target.text,
     );
@@ -54,7 +64,7 @@ export function findTarget(db: Db, target: Target, repoKey: string): Hit {
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND repo_key = ? AND ${WRITE_OR_EXTERNAL}
+        WHERE hook_event = 'PreToolUse' AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey,
     );

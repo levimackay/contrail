@@ -66,3 +66,17 @@ test('WebFetch targets the page; Skill targets the skill name', () => {
   ]);
   assert.deepEqual(texts('Skill', { skill: 'contrail:why' }), [['contrail:why', 'target', 0]]);
 });
+
+test('heredoc bodies and multi-line quoted text are data, not commands', () => {
+  const commit = "git commit -m \"$(cat <<'EOF'\nfix: retry in fetch-utils\nEOF\n)\"";
+  assert.deepEqual(texts('Bash', { command: commit }).filter(([, role]) => role === 'target'), [['commit', 'target', 0]]);
+  const heredoc = "cat > notes.md <<EOF\nuse left-pad here\nEOF\nnpm install foo-auth-helper";
+  const targets = texts('Bash', { command: heredoc }).filter(([, role]) => role === 'target').map(([t]) => t);
+  assert.ok(targets.includes('foo-auth-helper'));
+  assert.ok(!targets.includes('left-pad'));
+});
+
+test('an action has at most 40 targets however long its command', () => {
+  const many = 'npm install ' + Array.from({ length: 200 }, (_, i) => `pkg-${i}`).join(' ');
+  assert.equal(texts('Bash', { command: many }).length, 40);
+});

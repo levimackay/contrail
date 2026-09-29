@@ -27,8 +27,7 @@ export function explain(actionId: string, g: Graph): Explanation {
 
   const tokens = extractTokens(action, g.env);
   const sentences = g.prompts.flatMap(p => splitSentences(p.text).map(text => ({ promptId: p.promptId, seq: p.seq, text })));
-  const visited = new Set([action.id]);
-  const traces = tokens.map(t => traceToken(t, action, g, 0, visited));
+  const traces = tokens.map(t => traceToken(t, action, g, 0, new Set([action.id])));
 
   const effects: Link[] = g.effects
     .filter(e => e.actionId === action.id)

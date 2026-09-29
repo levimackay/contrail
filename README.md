@@ -141,10 +141,16 @@ A session as a timeline, one line per action, with the headline source of each s
 ![contrail trace --session 4f2a](docs/trace.svg)
 
 ```text
-contrail trace [--session <id>] [--writes | --shell | --network | --mcp | --subagents | --instructions] [--json]
+contrail trace [--session <id>] [--writes | --shell | --network | --mcp | --subagents | --instructions | --tree] [--json]
 ```
 
 Without `--session` it shows the latest session in this repository. A session id prefix is enough. The filters narrow the timeline to one kind of action.
+
+`--tree` shows the same session as a forest instead of a timeline. Each action hangs under the call whose output first held its headline value, so a chain of reads, fetches and commands reads top to bottom. An action whose value came from something no call produced, such as your prompt or an instructions file, starts a tree under that source.
+
+![contrail trace --session 9c1e --tree](docs/trace-tree.svg)
+
+In the injection session, the credential upload and the install script both hang under the fetched page, which hangs under the web search, which came from your prompt. The placement follows data only. It does not say the page made the agent act.
 
 ## `contrail sessions`
 
@@ -430,10 +436,13 @@ These answer different questions. Contrail's is narrow on purpose.
 - [x] Expected shell effects (R6), always worded "expected, not observed"
 - [x] Retention and `config.json`; `doctor` counts unparseable events and times the capture hook
 - [x] Color output, honoring `NO_COLOR` and `FORCE_COLOR`
+- [x] `trace --tree`: the session as a forest of trails
+- [x] `why commit` for quiet commits (`git commit -q`), joined on git's commit time (R9)
+- [x] Background task reports (`<task-notification>`) labeled by the task that produced them, never as your words
+- [x] A synchronous `SessionEnd` ingest, so the unredacted spool never outlives a session
 
 **Planned**
 
-- [ ] `trace --tree`: the trail as an ASCII graph
 - [ ] Optional transcript enrichment, to show what the agent said right before each action
 - [ ] `store_content: false` in `config.json`, for hash-only storage
 - [ ] OpenTelemetry export with `contrail.origin` and `contrail.grade` attributes

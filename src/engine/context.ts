@@ -1,5 +1,6 @@
 import { stringLeaves } from '../util.ts';
 import { sameScope } from './scope.ts';
+import { hashNeedle } from './hashed.ts';
 import { findNormalized, normalize } from './text.ts';
 import type { Action, Input, Scope, Token } from './types.ts';
 
@@ -60,7 +61,13 @@ const WORD_RUN = /[a-z0-9_-]{1,256}/g;
  * needle is a complete word of the text. Checking a per-input word set first skips the full
  * scan for almost every input that cannot match; the scan still decides every match.
  */
-export function findInInput(i: Input, needle: string): number {
+export function findInInput(i: Input, needle: string, hashToken?: (span: string) => string): number {
+  if (i.hashed) {
+    // The text is hashes of spans: look for the hash of the value instead.
+    const hashedNeedle = hashToken ? hashNeedle(needle, hashToken) : null;
+    if (hashedNeedle === null) return -1;
+    needle = hashedNeedle;
+  }
   let words = wordCache.get(i);
   if (!words) {
     words = new Set(normalizedText(i).match(WORD_RUN) ?? []);

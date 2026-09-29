@@ -32,8 +32,12 @@ function traceAt(
 ): TokenTrace {
   const available = availableTo(probe, g.inputs, g.compactSeqs[scopeKey(probe.scope)] ?? []);
   const needle = normalize(token.text);
-  const candidates = available.filter(i => findInInput(i, needle) >= 0);
-  const links = gradeSources(token, candidates, fromId);
+  const at = new Map<Input, number>();
+  for (const i of available) {
+    const index = findInInput(i, needle, g.hashToken);
+    if (index >= 0) at.set(i, index);
+  }
+  const links = gradeSources(token, [...at.keys()], fromId, i => at.get(i) ?? -1);
   const trace: TokenTrace = {
     token,
     firstUse: firstUseInfo,

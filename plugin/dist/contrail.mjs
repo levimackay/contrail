@@ -1077,7 +1077,7 @@ function minGrade(grades) {
 function maxGrade(grades) {
   return grades.reduce((best, g) => ORDER.indexOf(g) < ORDER.indexOf(best) ? g : best, "UNKNOWN");
 }
-function gradeSources(token, candidates, actionId) {
+function gradeSources(token, candidates, actionId, indexIn) {
   const base = { type: "value_from", from: actionId, recorded: false, token: token.text };
   if (candidates.length === 0) {
     return [{ ...base, to: null, grade: "UNKNOWN", rule: "R4", note: "no observed input contains it" }];
@@ -1092,7 +1092,7 @@ function gradeSources(token, candidates, actionId) {
     to: input.id,
     grade,
     rule: "R3",
-    quote: quote(input, token.text),
+    quote: quote(input, indexIn ? indexIn(input) : findMention(input.text, token.text)),
     ...extra
   });
   const yours = sources.find((s) => s.trust === "principal");
@@ -1110,9 +1110,9 @@ function gradeSources(token, candidates, actionId) {
   }
   return [{ ...base, to: null, grade: "UNKNOWN", rule: "R3", note: `in ${sources.length} observed inputs; too common to attribute` }];
 }
-function quote(input, token) {
-  const { line, text } = lineOf(input.text, findMention(input.text, token));
-  return { ref: input.ref, line, text };
+function quote(input, index) {
+  const { line, text } = lineOf(input.text, index);
+  return { ref: input.ref, line, text: input.hashed ? "" : text };
 }
 
 // src/engine/requested.ts
@@ -1157,6 +1157,12 @@ function requested(action, tokens, sentences) {
 var scopeKey = (s) => `${s.sessionId}/${s.agentId ?? "main"}`;
 var sameScope = (a, b) => a.sessionId === b.sessionId && a.agentId === b.agentId;
 
+// src/engine/hashed.ts
+var HASHED = "\u27E6contrail:hashed\u27E7";
+function hashNeedle(needle, hmac) {
+  return needle && !/\s/.test(needle) ? hmac(needle) : null;
+}
+
 // src/engine/context.ts
 function availableTo(probe, inputs, compactSeqs) {
   const boundary = Math.max(0, ...compactSeqs.filter((s) => s < probe.seq));
@@ -1191,7 +1197,12 @@ function normalizedText(i) {
 }
 var wordCache = /* @__PURE__ */ new WeakMap();
 var WORD_RUN = /[a-z0-9_-]{1,256}/g;
-function findInInput(i, needle) {
+function findInInput(i, needle, hashToken) {
+  if (i.hashed) {
+    const hashedNeedle = hashToken ? hashNeedle(needle, hashToken) : null;
+    if (hashedNeedle === null) return -1;
+    needle = hashedNeedle;
+  }
   let words2 = wordCache.get(i);
   if (!words2) {
     words2 = new Set(normalizedText(i).match(WORD_RUN) ?? []);
@@ -1214,8 +1225,12 @@ function traceToken(token, action, g, depth = 0, visited = /* @__PURE__ */ new S
 function traceAt(token, probe, fromId, firstUseInfo, g, depth, visited) {
   const available = availableTo(probe, g.inputs, g.compactSeqs[scopeKey(probe.scope)] ?? []);
   const needle = normalize(token.text);
-  const candidates = available.filter((i) => findInInput(i, needle) >= 0);
-  const links = gradeSources(token, candidates, fromId);
+  const at = /* @__PURE__ */ new Map();
+  for (const i of available) {
+    const index = findInInput(i, needle, g.hashToken);
+    if (index >= 0) at.set(i, index);
+  }
+  const links = gradeSources(token, [...at.keys()], fromId, (i) => at.get(i) ?? -1);
   const trace3 = {
     token,
     firstUse: firstUseInfo,
@@ -1874,7 +1889,7 @@ import { basename as basename3 } from "node:path";
 var DEPENDENCY_DIR = /(^|\/)(node_modules|vendor|\.venv|venv|site-packages)(\/|$)/;
 var WRITE_TOOLS2 = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 var NO_OUTPUT_TOOLS = /* @__PURE__ */ new Set([...WRITE_TOOLS2, "TodoWrite", "ExitPlanMode"]);
-function buildGraph(rows, who) {
+function buildGraph(rows, who, hashToken) {
   const cwd = rows.find((r) => r.cwd)?.cwd ?? "";
   const env = { cwd, home: who.home, user: who.user };
   const mainScope = { sessionId: rows[0]?.session_id ?? "", agentId: null };
@@ -2080,6 +2095,7 @@ function buildGraph(rows, who) {
       promptId: ins.promptId
     });
   }
+  for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
   return {
     actions: actionList,
@@ -2089,7 +2105,8 @@ function buildGraph(rows, who) {
     compactSeqs,
     agentSaid,
     env,
-    firstEvent: rows[0]?.hook_event ?? null
+    firstEvent: rows[0]?.hook_event ?? null,
+    ...hashToken ? { hashToken } : {}
   };
 }
 function parsePayload(payload) {

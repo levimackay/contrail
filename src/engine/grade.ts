@@ -23,7 +23,7 @@ export function maxGrade(grades: Grade[]): Grade {
  *   four or more            → one UNKNOWN: too common to attribute
  *   none                    → one UNKNOWN: no observed source (R4)
  */
-export function gradeSources(token: Token, candidates: Input[], actionId: string): Link[] {
+export function gradeSources(token: Token, candidates: Input[], actionId: string, indexIn?: (input: Input) => number): Link[] {
   const base = { type: 'value_from' as const, from: actionId, recorded: false, token: token.text };
   if (candidates.length === 0) {
     return [{ ...base, to: null, grade: 'UNKNOWN', rule: 'R4', note: 'no observed input contains it' }];
@@ -41,7 +41,7 @@ export function gradeSources(token: Token, candidates: Input[], actionId: string
     to: input.id,
     grade,
     rule: 'R3',
-    quote: quote(input, token.text),
+    quote: quote(input, indexIn ? indexIn(input) : findMention(input.text, token.text)),
     ...extra,
   });
 
@@ -63,7 +63,8 @@ export function gradeSources(token: Token, candidates: Input[], actionId: string
   return [{ ...base, to: null, grade: 'UNKNOWN', rule: 'R3', note: `in ${sources.length} observed inputs; too common to attribute` }];
 }
 
-function quote(input: Input, token: string): Link['quote'] {
-  const { line, text } = lineOf(input.text, findMention(input.text, token));
-  return { ref: input.ref, line, text };
+/** Where in the source the value sits. Hashed text keeps its line numbers but has no text to quote. */
+function quote(input: Input, index: number): Link['quote'] {
+  const { line, text } = lineOf(input.text, index);
+  return { ref: input.ref, line, text: input.hashed ? '' : text };
 }

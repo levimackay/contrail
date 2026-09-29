@@ -1,6 +1,7 @@
 import { scopeKey, sameScope } from '../engine/scope.ts';
 import type { Action, Effect, Env, Graph, Input, Origin, Prompt, Scope, Trust } from '../engine/types.ts';
 import { expectedShellEffects, parseCommitSha } from '../engine/effects.ts';
+import { HASHED } from '../engine/hashed.ts';
 import { shellSegments } from '../engine/tokens.ts';
 import { arr, callId, changedFiles, clip, displayPath, field, hostPath, obj, str, toText } from '../util.ts';
 
@@ -30,7 +31,7 @@ const NO_OUTPUT_TOOLS = new Set([...WRITE_TOOLS, 'TodoWrite', 'ExitPlanMode']);
  * seq is the event's position in that order; capture hooks are synchronous, so
  * the order respects what happened before what.
  */
-export function buildGraph(rows: EventRow[], who: { home: string; user: string }): Graph {
+export function buildGraph(rows: EventRow[], who: { home: string; user: string }, hashToken?: (span: string) => string): Graph {
   const cwd = rows.find(r => r.cwd)?.cwd ?? '';
   const env: Env = { cwd, home: who.home, user: who.user };
   const mainScope: Scope = { sessionId: rows[0]?.session_id ?? '', agentId: null };
@@ -204,6 +205,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     });
   }
 
+  for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
   return {
     actions: actionList,
@@ -214,6 +216,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     agentSaid,
     env,
     firstEvent: rows[0]?.hook_event ?? null,
+    ...(hashToken ? { hashToken } : {}),
   };
 }
 

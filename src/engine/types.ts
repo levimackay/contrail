@@ -67,6 +67,8 @@ export interface Input {
   promptId: string | null;
   /** For a subagent's report: the subagent's own context, where the values in it came from. */
   relays?: Scope | null;
+  /** Stored as keyed hashes (store_content: false): searchable by hashing a value, never quotable. */
+  hashed?: boolean;
 }
 
 /** Something an action changed. */
@@ -169,6 +171,8 @@ export interface Graph {
   agentSaid: { byPrompt: Record<string, string>; byAgent: Record<string, string> };
   env: Env;
   firstEvent: string | null;
+  /** The keyed hash that hashed inputs were stored with; absent when no key exists. */
+  hashToken?: (span: string) => string;
 }
 
 export interface TokenTrace {

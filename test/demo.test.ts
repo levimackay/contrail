@@ -43,6 +43,27 @@ test('the full sha works too, and an unknown sha is a clear error', async () => 
   assert.match(missing.err, /No recorded agent action made commit deadbee/);
 });
 
+test('why answers whatever it is pointed at: nothing, a bare sha, a URL, or a value', async () => {
+  const last = await run(['why', 'last']);
+  const bare = await run(['why']);
+  assert.equal(bare.err, '');
+  assert.equal(bare.out, last.out);
+
+  const sha = await run(['why', demo.sha.slice(0, 7)]);
+  assert.equal(sha.err, '');
+  assert.match(sha.out, /^Commit [0-9a-f]{7} on main/);
+
+  // A URL is a value, not a path: the latest call whose arguments used it.
+  const url = await run(['why', 'https://docs.quickauth.example/cli/setup']);
+  assert.equal(url.err, '');
+  assert.match(url.out, /^WebFetch {2}https:\/\/docs\.quickauth\.example\/cli\/setup/);
+  assert.match(url.out, /the latest recorded call that used "https:\/\/docs\.quickauth\.example\/cli\/setup"/);
+
+  const none = await run(['why', 'nothing-by-this-name']);
+  assert.equal(none.code, 1);
+  assert.match(none.err, /Nothing recorded matches "nothing-by-this-name"/);
+});
+
 test('risks puts the credential exfiltration first and traces it to the fetched page', async () => {
   const r = await run(['risks']);
   const first = r.out.split('\n\n')[1]!;

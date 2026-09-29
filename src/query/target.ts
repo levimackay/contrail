@@ -26,13 +26,15 @@ const FULL_CALL = /^toolu_[A-Za-z0-9_-]{8,200}$/;
 /** `last`, a call id, an existing or path-looking argument, or else text to find in a shell command. */
 export function parseTarget(args: string[], cwd: string): Target {
   const text = unquote(args.join(' ').trim());
-  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | call id | last>');
-  if (text === 'last') return { kind: 'last' };
+  // Nothing named: the question is almost always about what just happened.
+  if (!text || text === 'last') return { kind: 'last' };
   const abs = resolve(cwd, text);
   const short = SHORT_CALL.exec(text);
   if (short && !existsSync(abs)) return { kind: 'call', prefix: short[1]!, suffix: short[2]!, shown: text };
   if (FULL_CALL.test(text) && !existsSync(abs)) return { kind: 'call', prefix: text, suffix: '', shown: text };
-  if (!/\s/.test(text) && (existsSync(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) return { kind: 'path', path: abs, shown: text };
+  if (!/\s/.test(text) && !/^[a-z][a-z0-9+.-]{0,20}:\/\//i.test(text) && (existsSync(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) {
+    return { kind: 'path', path: abs, shown: text };
+  }
   return { kind: 'command', text };
 }
 

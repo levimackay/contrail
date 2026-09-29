@@ -15,7 +15,7 @@ import { contentHmac } from './ingest/content.ts';
 import { ingest } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
-import { commitFiles, findCommit } from './query/commit.ts';
+import { commitFiles, findCommit, isCommit } from './query/commit.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget } from './query/target.ts';
 import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
@@ -64,11 +64,13 @@ type Flags = Partial<Record<keyof typeof OPTIONS | TraceFilter, string | boolean
 export const USAGE = `contrail ${VERSION}: the observable trail behind Claude Code actions
 
 Usage:
-  contrail why <path>               the trail behind the latest agent change to a file
-  contrail why "<command text>"     the trail behind the latest shell command containing the text
-  contrail why <call id>            the trail behind one tool call, as reports print its id
-  contrail why last                 the latest side-effecting action in this repository
-  contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
+  contrail why [<anything>]         the trail behind whatever you point at:
+                                      nothing          the last thing the agent did
+                                      src/app.ts       the latest agent change to that file
+                                      "npm install x"  the latest shell command containing it
+                                      <commit sha>     what the commit holds, joined to agent changes
+                                      toolu…ALhq1      one tool call, by the id reports print
+                                      jwt-decode       the latest call that used that value
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source
         [--writes | --shell | --network | --mcp | --subagents | --instructions | --tree]
                                     --tree: each action under the call whose output held its value
@@ -185,14 +187,46 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
   if (args[0] === 'commit') return whyCommit(args.slice(1), flags, io, s);
   const target = parseTarget(flags.stdin ? [readStdin(io)] : args, io.cwd);
   if (target.kind === 'command' && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(' ').slice(1), flags, io, s);
+  if (target.kind === 'command' && isCommit(io.cwd, target.text)) return whyCommit([target.text], flags, io, s);
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
-    const hit = findTarget(db, target, repoKey);
+    let hit: { sessionId: string; toolUseId: string };
+    let note: string | undefined;
+    try {
+      const found = findTarget(db, target, repoKey);
+      hit = found;
+      note = found.total > 1 ? `the latest of ${found.total} recorded matches` : undefined;
+    } catch (e) {
+      // Not a changed file or a shell command: it may be a value (a package, a URL, a name),
+      // so answer for the latest call whose arguments used it.
+      if (!(e instanceof ContrailError) || (target.kind !== 'command' && target.kind !== 'path')) throw e;
+      const value = target.kind === 'path' ? target.shown : target.text;
+      const use = latestUse(db, value, repoKey, io.home, hashToken);
+      if (!use) {
+        throw new ContrailError(
+          `Nothing recorded matches "${value}": no agent change to that file, no shell command containing it, and no call that used it. ` +
+            'Contrail only sees sessions recorded since it was installed. Run /contrail:why with no argument for the last action.',
+        );
+      }
+      hit = use;
+      note = `the latest recorded call that used "${value}"${use.total > 1 ? ` (${use.total} calls in that session used it; contrail find lists them all)` : ''}`;
+    }
     const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const explanation = explain(hit.toolUseId, graph);
     if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}\n`);
-    else io.out(renderWhy(explanation, graph, hit.total > 1 ? `the latest of ${hit.total} recorded matches` : undefined, s));
+    else io.out(renderWhy(explanation, graph, note, s));
     return 0;
   });
+}
+
+/** The latest call, in the newest recent session that has one, whose arguments contain the value. */
+function latestUse(db: Db, value: string, repoKey: string, home: string, hashToken?: (span: string) => string) {
+  for (const row of recentSessions(db, repoKey, 50)) {
+    const graph = loadGraph(db, row.id, home, hashToken);
+    const uses = findValue(graph, value).filter(x => x.use);
+    const last = uses.at(-1)?.use;
+    if (last) return { sessionId: row.id, toolUseId: last.action.id, total: uses.length };
+  }
+  return null;
 }
 
 async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {

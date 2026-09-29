@@ -83,7 +83,7 @@ test('an unknown target is a clear error, not a stack trace', async () => {
   const data = spoolFrom();
   const r = await run(['why', 'src/never-touched.ts', '--data', data]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /^contrail: No recorded agent change to src\/never-touched\.ts\./);
+  assert.match(r.err, /^contrail: Nothing recorded matches "src\/never-touched\.ts": no agent change to that file, .*Contrail only sees sessions recorded since it was installed\./);
 });
 
 test('doctor reports what is stored', async () => {

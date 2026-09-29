@@ -84,6 +84,17 @@ function commitInfo(cwd: string, sha: string): { commit: Commit; sec: number } |
   }
 }
 
+/** Whether git in cwd knows this text as a commit, so `why <sha>` needs no "commit" word. */
+export function isCommit(cwd: string, text: string): boolean {
+  if (!/^[0-9a-f]{7,40}$/i.test(text)) return false;
+  try {
+    execFileSync('git', ['-C', cwd, 'rev-parse', '--verify', '--quiet', `${text}^{commit}`], { timeout: 5000, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The absolute paths a commit touched, from git itself; null when git can't show it from here. */
 export function commitFiles(cwd: string, sha: string): string[] | null {
   try {

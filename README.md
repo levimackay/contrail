@@ -248,7 +248,7 @@ Every input is labeled with an origin and a trust level that says who wrote it:
 |---|---|---|
 | Your prompt | principal | `UserPromptSubmit` |
 | A slash command you typed | principal | `UserPromptExpansion` |
-| Slash-command template | config, local or external, by the command's source | `UserPromptExpansion` (expanded body) |
+| Slash-command or skill body | Not observed: Claude Code records the command you typed, not the text it expands to (including a skill's `!` output). Listed as a blind spot. If a prompt ever arrives expanded, the body is labeled config, local or external by the command's source. | `UserPromptExpansion` |
 | Your instructions (user, local or managed CLAUDE.md) | config | `InstructionsLoaded` |
 | Repo instructions (project CLAUDE.md, `.claude/rules`) | local: repo content, not you | `InstructionsLoaded` |
 | Repo file or search output | local. Dependency directories (`node_modules`, `vendor`, `.venv`, `site-packages`) are external. `~/.claude` is config. | Read, Grep, Glob and LS results |
@@ -294,7 +294,7 @@ Live sessions on Claude Code 2.1.284 (Linux, default permission mode) have exerc
 - **Reasoning.** Contrail reports where an argument's value came from, never why the agent chose it. Thinking blocks are ignored on purpose.
 - **Which part of the context actually moved the model.** There are only proxies: literal data flow, order and scope. With no evidence the result is UNKNOWN, and UNKNOWN does not mean "no influence".
 - **Raw web pages.** WebFetch hands the model a smaller model's extraction of the page. Contrail records that text and the URL, and labels it as such.
-- **`@`-mentioned files, AGENTS.md, and skill `!` shell preprocessing.** No hook fires for these. Contrail lists `@`-mentions in your prompt as blind spots.
+- **`@`-mentioned files, AGENTS.md, and the text a slash command or skill expands to**, including a skill's `!` shell output. No hook carries these. Contrail lists `@`-mentions and slash commands in your prompts as blind spots.
 - **The system prompt**, and content other hooks rewrote.
 - **Anything before Contrail was installed.**
 
@@ -411,7 +411,7 @@ These answer different questions. Contrail's is narrow on purpose.
 - **No fuzzy matching.** There is no paraphrase or embedding matching, by design.
 - **Shell file effects depend on a beta field.** Claude Code reports which files a shell command changed in `bashEditDiff`, which is beta. Without it, those changes are only "expected, not observed".
 - **Web content is an extraction.** For WebFetch, Contrail sees what the model was given, not the page.
-- **Unobserved inputs.** `@`-mentions, AGENTS.md, skill `!` preprocessing, the system prompt and other hooks' rewrites are not visible.
+- **Unobserved inputs.** `@`-mentions, AGENTS.md, slash-command and skill bodies, the system prompt and other hooks' rewrites are not visible.
 - **One session at a time.** Trails do not cross sessions. `why commit` only sees agent changes in the session that made the commit.
 - **Sensitive-action patterns are a fixed list.** `risks` recognizes common credential paths and command shapes. An unusual command can go unflagged.
 - **History starts at install.**

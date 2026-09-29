@@ -17,9 +17,12 @@ export function isShaped(raw: string): boolean {
  * "foo-auth-helper" does not match inside "foo-auth-helper-v2".
  */
 export function findMention(text: string, token: string): number {
-  const needle = normalize(token);
+  return findNormalized(normalize(text), normalize(token));
+}
+
+/** findMention over text that is already normalized: callers that search the same text for many tokens cache it. */
+export function findNormalized(hay: string, needle: string): number {
   if (!needle) return -1;
-  const hay = normalize(text);
   for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
     const before = hay[i - 1];
     const after = hay[i + needle.length];

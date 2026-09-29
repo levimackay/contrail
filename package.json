@@ -12,7 +12,9 @@
     "test": "node --test 'src/**/*.test.ts' 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
     "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --external:bun:sqlite --legal-comments=none --outfile=plugin/dist/contrail.mjs",
-    "check": "npm run typecheck && npm test && npm run build && git diff --exit-code plugin/dist/"
+    "check": "npm run typecheck && npm test && npm run build && git diff --exit-code plugin/dist/",
+    "demo": "node scripts/demo.ts",
+    "svg": "node scripts/svg.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

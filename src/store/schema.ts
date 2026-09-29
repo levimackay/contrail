@@ -32,6 +32,19 @@ export const MIGRATIONS: readonly (readonly string[])[] = [
      )`,
     'CREATE INDEX touches_path ON touches (path, kind)',
   ],
+  [
+    // v2: shell commands without bashEditDiff get "expected" file touches (R6). SQLite can't
+    // alter a CHECK constraint, so the table is rebuilt and its rows copied across.
+    `CREATE TABLE touches_v2 (
+       event_id INTEGER NOT NULL REFERENCES events (id) ON DELETE CASCADE,
+       path     TEXT NOT NULL,
+       kind     TEXT NOT NULL CHECK (kind IN ('read', 'write', 'expected'))
+     )`,
+    'INSERT INTO touches_v2 (event_id, path, kind) SELECT event_id, path, kind FROM touches',
+    'DROP TABLE touches',
+    'ALTER TABLE touches_v2 RENAME TO touches',
+    'CREATE INDEX touches_path ON touches (path, kind)',
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

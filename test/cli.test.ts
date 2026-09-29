@@ -7,7 +7,9 @@ import { test } from 'node:test';
 import { main, type Io } from '../src/cli.ts';
 import { authSession, CLAUDE_MD, d, session } from './fixtures/synthetic.ts';
 
-/** Writes a recorded session into a spool the way the capture hook would, in order. */
+const NOW = Math.floor(Date.now() / 1000);
+
+/** Writes a recorded session into a spool the way the capture hook would, in order, an hour ago. */
 function spoolFrom(rows = authSession()): string {
   const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
   const spool = join(data, 'spool');
@@ -17,7 +19,7 @@ function spoolFrom(rows = authSession()): string {
     const payload = JSON.parse(row.payload);
     if (payload.hook_event_name === 'InstructionsLoaded') payload._contrail = { text: CLAUDE_MD };
     writeFileSync(file, JSON.stringify(payload));
-    const t = 1_700_000_000 + i / 100;
+    const t = NOW - 3600 + i / 100;
     utimesSync(file, t, t);
   });
   return data;

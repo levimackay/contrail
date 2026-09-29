@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Db } from '../store/sqlite.ts';
 import { changedFiles, obj, str } from '../util.ts';
+import { expectedShellEffects } from '../engine/effects.ts';
 import { redactString, redactValue } from './redact.ts';
 
 /** Longest string kept per field. Long enough to hold most files an agent reads, so lineage can match. */
@@ -20,7 +21,7 @@ export interface IngestReport {
 
 interface Touch {
   path: string;
-  kind: 'read' | 'write';
+  kind: 'read' | 'write' | 'expected';
 }
 
 /**
@@ -183,7 +184,12 @@ function touchesOf(p: Record<string, unknown>, cwd: string): Touch[] {
     const path = str(input, 'file_path') ?? str(input, 'notebook_path');
     return path ? [{ path, kind: 'read' }] : [];
   }
-  if (tool === 'Bash') return changedFiles(response, cwd).map(path => ({ path, kind: 'write' }));
+  if (tool === 'Bash') {
+    if (obj(response, 'bashEditDiff')) return changedFiles(response, cwd).map(path => ({ path, kind: 'write' }));
+    return expectedShellEffects(str(input, 'command') ?? '', cwd)
+      .filter(e => e.kind === 'file')
+      .map(e => ({ path: e.target, kind: 'expected' }));
+  }
   return [];
 }
 

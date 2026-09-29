@@ -124,7 +124,8 @@ function collector(env: Env) {
     },
     path(p: string, group: number, argPath: string) {
       if (!p) return;
-      const abs = isAbsolute(p) ? p : resolve(env.cwd || '/', p);
+      const expanded = p === '~' || p.startsWith('~/') ? env.home + p.slice(1) : p;
+      const abs = isAbsolute(expanded) ? expanded : resolve(env.cwd || '/', expanded);
       if (abs === env.cwd || abs === env.home || abs === '/') return;
       const rel = displayPath(abs, env.cwd, env.home);
       if (targetCount >= MAX_TARGETS) return;
@@ -196,6 +197,10 @@ function bash(command: string, b: Collector): void {
 }
 
 /** Splits a command on && || ; | & and unquoted newlines, skipping heredoc bodies; collects redirect targets. */
+export function shellSegments(command: string): Array<{ words: string[]; redirects: string[] }> {
+  return segments(command);
+}
+
 function segments(command: string): Array<{ words: string[]; redirects: string[] }> {
   const out: Array<{ words: string[]; redirects: string[] }> = [];
   for (const line of withoutHeredocs(logicalLines(command))) {

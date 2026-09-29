@@ -31,7 +31,11 @@ export function explain(actionId: string, g: Graph): Explanation {
 
   const effects: Link[] = g.effects
     .filter(e => e.actionId === action.id)
-    .map(e => ({ type: 'changed', from: action.id, to: e.id, grade: 'DIRECT', rule: 'R1', recorded: true }));
+    .map(e =>
+      e.evidence === 'expected'
+        ? { type: 'changed', from: action.id, to: e.id, grade: 'POSSIBLE', rule: 'R6', recorded: false }
+        : { type: 'changed', from: action.id, to: e.id, grade: 'DIRECT', rule: 'R1', recorded: true },
+    );
 
   return {
     action,
@@ -78,4 +82,26 @@ export function blindSpots(action: Action, g: Graph): string[] {
   if (g.firstEvent && !knownStarts.includes(g.firstEvent)) spots.push('the start of this session was not recorded');
 
   return spots;
+}
+
+/** A path, its basename and its stem are alternatives for one target: keep the best trace of each group. */
+export function bestPerGroup(traces: TokenTrace[]): TokenTrace[] {
+  const found = (t: TokenTrace) => t.links.some(l => l.grade !== 'UNKNOWN');
+  const byGroup = new Map<number, TokenTrace>();
+  const out: TokenTrace[] = [];
+  for (const t of traces) {
+    if (t.token.group === null) {
+      out.push(t);
+      continue;
+    }
+    const current = byGroup.get(t.token.group);
+    if (!current) {
+      byGroup.set(t.token.group, t);
+      out.push(t);
+    } else if (!found(current) && found(t)) {
+      byGroup.set(t.token.group, t);
+      out[out.indexOf(current)] = t;
+    }
+  }
+  return out;
 }

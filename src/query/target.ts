@@ -45,7 +45,7 @@ export function findTarget(db: Db, target: Target, repoKey: string): Hit {
     rows = db.all(
       `SELECT e.session_id AS sessionId, e.tool_use_id AS toolUseId
          FROM touches t JOIN events e ON e.id = t.event_id
-        WHERE t.kind = 'write' AND t.path IN (?, ?) AND e.tool_use_id IS NOT NULL
+        WHERE t.kind IN ('write', 'expected') AND t.path IN (?, ?) AND e.tool_use_id IS NOT NULL
         ORDER BY e.captured_us DESC, e.spool_name DESC`,
       target.path, real,
     );

@@ -1,6 +1,6 @@
 import { stringLeaves } from '../util.ts';
 import { sameScope } from './scope.ts';
-import { findMention } from './text.ts';
+import { findNormalized, normalize } from './text.ts';
 import type { Action, Input, Scope, Token } from './types.ts';
 
 /**
@@ -19,10 +19,34 @@ export function availableTo(probe: { scope: Scope; seq: number }, inputs: Input[
  * name, a search result for it) are never credited as the origin.
  */
 export function firstUse(token: Token, action: Action, scopeActions: Action[]): Action {
+  const needle = normalize(token.text);
   let first = action;
   for (const a of scopeActions) {
     if (a.preSeq >= first.preSeq || !sameScope(a.scope, action.scope)) continue;
-    if (stringLeaves(a.input).some(leaf => findMention(leaf.value, token.text) >= 0)) first = a;
+    if (findNormalized(normalizedInput(a), needle) >= 0) first = a;
   }
   return first;
+}
+
+const inputCache = new WeakMap<Action, string>();
+const textCache = new WeakMap<Input, string>();
+
+/** An action's arguments, normalized once. Leaves are joined by newlines, which are always a word boundary. */
+function normalizedInput(a: Action): string {
+  let n = inputCache.get(a);
+  if (n === undefined) {
+    n = stringLeaves(a.input).map(l => normalize(l.value)).join('\n');
+    inputCache.set(a, n);
+  }
+  return n;
+}
+
+/** An input's text, normalized once. */
+export function normalizedText(i: Input): string {
+  let n = textCache.get(i);
+  if (n === undefined) {
+    n = normalize(i.text);
+    textCache.set(i, n);
+  }
+  return n;
 }

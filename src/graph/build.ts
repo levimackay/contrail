@@ -1,5 +1,6 @@
 import { scopeKey, sameScope } from '../engine/scope.ts';
 import type { Action, Effect, Env, Graph, Input, Origin, Prompt, Scope, Trust } from '../engine/types.ts';
+import { expectedShellEffects, parseCommitSha } from '../engine/effects.ts';
 import { arr, changedFiles, clip, displayPath, field, hostPath, obj, str, toText } from '../util.ts';
 
 /** One row of the events table. */
@@ -278,9 +279,25 @@ function effectsOf(a: Action, env: Env): Effect[] {
     return [fx(0, { kind: 'file', target: displayPath(path, env.cwd, env.home), path, evidence: 'filePath', patch })];
   }
   if (a.tool === 'Bash') {
-    return changedFiles(a.response, env.cwd).map((path, i) =>
-      fx(i, { kind: 'file', target: displayPath(path, env.cwd, env.home), path, evidence: 'bashEditDiff', patch: [] }),
-    );
+    const command = str(a.input, 'command') ?? '';
+    const out: Effect[] = [];
+    const commit = parseCommitSha(command, str(a.response, 'stdout') ?? toText(a.response));
+    if (commit) {
+      out.push(fx(out.length, { kind: 'commit', target: `${commit.sha} on ${commit.branch}`, path: null, evidence: 'commit_stdout', patch: [], commit }));
+    }
+    if (field(a.response, 'bashEditDiff') !== undefined) {
+      // Claude Code reported what changed; an empty list means nothing did.
+      for (const path of changedFiles(a.response, env.cwd)) {
+        out.push(fx(out.length, { kind: 'file', target: displayPath(path, env.cwd, env.home), path, evidence: 'bashEditDiff', patch: [] }));
+      }
+    } else {
+      for (const e of expectedShellEffects(command, env.cwd)) {
+        const path = e.kind === 'file' ? e.target : null;
+        const target = path ? displayPath(path, env.cwd, env.home) : e.target;
+        out.push(fx(out.length, { kind: e.kind, target, path, evidence: 'expected', patch: [] }));
+      }
+    }
+    return out;
   }
   if (a.tool === 'WebFetch') {
     return [fx(0, { kind: 'network', target: hostPath(str(a.input, 'url') ?? ''), path: null, evidence: 'response', patch: [] })];

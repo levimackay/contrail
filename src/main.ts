@@ -8,4 +8,5 @@ process.exitCode = await main(process.argv.slice(2), {
   cwd: process.cwd(),
   env: process.env,
   home: homedir(),
+  isTTY: process.stdout.isTTY === true,
 });

@@ -1,14 +1,24 @@
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { commitContains } from './engine/effects.ts';
 import { explain } from './engine/explain.ts';
+import { assess, rankFindings, sensitivity, type Finding } from './engine/risks.ts';
+import type { Explanation, Graph } from './engine/types.ts';
 import { ContrailError } from './errors.ts';
-import { buildGraph, type EventRow } from './graph/build.ts';
 import { ingest } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
+import { commitFiles, findCommit } from './query/commit.ts';
+import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget } from './query/target.ts';
+import { EXPLAINED, matchesFilter, renderCommit, renderRisks, renderSessions, renderTrace, type TraceFilter } from './render/session.ts';
+import { PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderWhy } from './render/why.ts';
+import { loadConfig, prune } from './store/retention.ts';
 import { migrate, SCHEMA_VERSION } from './store/schema.ts';
 import { openDb, type Db } from './store/sqlite.ts';
 import { VERSION } from './version.ts';
@@ -19,21 +29,48 @@ export interface Io {
   cwd: string;
   env: NodeJS.ProcessEnv;
   home: string;
+  isTTY?: boolean;
 }
 
-type Flags = { json?: boolean; data?: string; stdin?: boolean; 'from-hook'?: boolean; help?: boolean; version?: boolean };
+const FILTERS: TraceFilter[] = ['writes', 'shell', 'network', 'mcp', 'subagents', 'instructions'];
+const MAX_EXPLAINED = 300;
+
+const OPTIONS = {
+  json: { type: 'boolean' },
+  data: { type: 'string' },
+  stdin: { type: 'boolean' },
+  session: { type: 'string' },
+  limit: { type: 'string' },
+  all: { type: 'boolean' },
+  'from-hook': { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+  version: { type: 'boolean', short: 'v' },
+  ...Object.fromEntries(FILTERS.map(f => [f, { type: 'boolean' }])),
+} as const;
+
+type Flags = Partial<Record<keyof typeof OPTIONS | TraceFilter, string | boolean>>;
 
 export const USAGE = `contrail ${VERSION}: the observable trail behind Claude Code actions
 
 Usage:
-  contrail why <path>             the latest recorded agent change to a file
-  contrail why "<command text>"   the latest recorded shell command containing the text
-  contrail why last               the latest side-effecting action in this repository
-  contrail ingest                 move recorded events from the spool into the database
-  contrail doctor                 check that recording and queries work
+  contrail why <path>               the trail behind the latest agent change to a file
+  contrail why "<command text>"     the trail behind the latest shell command containing the text
+  contrail why last                 the latest side-effecting action in this repository
+  contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
+  contrail trace [--session <id>]   a session as a timeline, each side effect with its source
+        [--writes | --shell | --network | --mcp | --subagents | --instructions]
+  contrail risks [--session <id> | --all]
+                                    sensitive actions, those tracing to web or MCP content first
+  contrail sessions [--limit N] [--all]
+                                    recent sessions at a glance
+  contrail export [<session> | last]
+                                    a session's recorded events as JSON
+  contrail doctor                   check that recording and queries work
+  contrail ingest                   move recorded events from the spool into the database
+  contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          print the explanation as JSON
+  --json          machine-readable output (why, trace, risks, sessions)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --stdin         read the why target from standard input (used by the /contrail:why skill)
   -h, --help      show this help
@@ -44,19 +81,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
   let flags: Flags;
   let positionals: string[];
   try {
-    const parsed = parseArgs({
-      args: argv,
-      allowPositionals: true,
-      options: {
-        json: { type: 'boolean' },
-        data: { type: 'string' },
-        stdin: { type: 'boolean' },
-        'from-hook': { type: 'boolean' },
-        help: { type: 'boolean', short: 'h' },
-        version: { type: 'boolean', short: 'v' },
-      },
-    });
-    flags = parsed.values;
+    const parsed = parseArgs({ args: argv, allowPositionals: true, options: OPTIONS });
+    flags = parsed.values as Flags;
     positionals = parsed.positionals;
   } catch (e) {
     io.err(`contrail: ${(e as Error).message}\n\n${USAGE}`);
@@ -73,18 +99,25 @@ export async function main(argv: string[], io: Io): Promise<number> {
     return 0;
   }
 
+  const style = flags.json ? PLAIN : styleFor(io.env, io.isTTY ?? false);
+  const commands: Record<string, (args: string[]) => Promise<number>> = {
+    why: args => why(args, flags, io, style),
+    trace: () => trace(flags, io, style),
+    risks: () => risks(flags, io, style),
+    sessions: () => sessions(flags, io, style),
+    export: args => exportSession(args, flags, io),
+    ingest: () => ingestCommand(flags, io),
+    prune: () => pruneCommand(flags, io),
+    doctor: () => doctor(flags, io),
+  };
+  const run = commands[command];
+  if (!run) {
+    io.err(`contrail: unknown command "${command}"\n\n${USAGE}`);
+    return 2;
+  }
+
   try {
-    switch (command) {
-      case 'why':
-        return await why(rest, flags, io);
-      case 'ingest':
-        return await ingestCommand(flags, io);
-      case 'doctor':
-        return await doctor(flags, io);
-      default:
-        io.err(`contrail: unknown command "${command}"\n\n${USAGE}`);
-        return 2;
-    }
+    return await run(rest);
   } catch (e) {
     if (flags['from-hook']) return 0; // a hook must never fail loudly
     if (e instanceof ContrailError) {
@@ -96,8 +129,14 @@ export async function main(argv: string[], io: Io): Promise<number> {
   }
 }
 
-async function openStore(flags: Flags, io: Io): Promise<{ db: Db; dataDir: string }> {
-  const dataDir = resolveDataDir(flags.data, io.env, io.home);
+interface Store {
+  db: Db;
+  dataDir: string;
+  repoKey: string;
+}
+
+async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Promise<T>): Promise<T> {
+  const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home);
   let db: Db;
   try {
     mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
@@ -106,34 +145,158 @@ async function openStore(flags: Flags, io: Io): Promise<{ db: Db; dataDir: strin
     if (e instanceof ContrailError) throw e;
     throw new ContrailError(`Cannot use the data directory ${dataDir}: ${(e as Error).message}`);
   }
-  migrate(db);
-  return { db, dataDir };
-}
-
-async function why(args: string[], flags: Flags, io: Io): Promise<number> {
-  const target = parseTarget(flags.stdin ? [readFileSync(0, 'utf8')] : args, io.cwd);
-  const { db, dataDir } = await openStore(flags, io);
   try {
+    migrate(db);
     const repoKeyOf = makeRepoKeyOf();
     ingest(db, join(dataDir, 'spool'), repoKeyOf);
-    const hit = findTarget(db, target, repoKeyOf(io.cwd));
-    const rows = db.all<EventRow>('SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name', hit.sessionId);
-    const graph = buildGraph(rows, { home: io.home, user: basename(io.home) });
-    const explanation = explain(hit.toolUseId, graph);
-    if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}\n`);
-    else io.out(renderWhy(explanation, graph, hit.total > 1 ? `the latest of ${hit.total} recorded matches` : undefined));
-    return 0;
+    return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd) });
   } finally {
     db.close();
   }
 }
 
+async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
+  if (args[0] === 'commit') return whyCommit(args.slice(1), flags, io, s);
+  const target = parseTarget(flags.stdin ? [readFileSync(0, 'utf8')] : args, io.cwd);
+  if (target.kind === 'command' && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(' ').slice(1), flags, io, s);
+  return withStore(flags, io, ({ db, repoKey }) => {
+    const hit = findTarget(db, target, repoKey);
+    const graph = loadGraph(db, hit.sessionId, io.home);
+    const explanation = explain(hit.toolUseId, graph);
+    if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}\n`);
+    else io.out(renderWhy(explanation, graph, hit.total > 1 ? `the latest of ${hit.total} recorded matches` : undefined, s));
+    return 0;
+  });
+}
+
+async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
+  const sha = args[0];
+  if (!sha) throw new ContrailError('Usage: contrail why commit <sha>');
+  return withStore(flags, io, ({ db }) => {
+    const hit = findCommit(db, sha);
+    const graph = loadGraph(db, hit.sessionId, io.home);
+    const action = graph.actions.find(a => a.id === hit.toolUseId);
+    if (!action) throw new ContrailError(`The action that made commit ${sha} is missing from its session.`);
+    const explanation = explain(action.id, graph);
+    const files = commitFiles(hit.cwd, hit.commit.sha);
+    const seqOf = (id: string) => graph.actions.find(a => a.id === id)?.preSeq ?? 0;
+    const joined = files
+      ? commitContains(
+          action.preSeq,
+          files,
+          graph.effects.filter(e => e.kind === 'file' && e.path).map(e => ({ path: e.path!, seq: seqOf(e.actionId), actionId: e.actionId, expected: e.evidence === 'expected' })),
+          graph.effects
+            .filter(e => e.kind === 'commit' && e.actionId !== action.id && e.commit)
+            .map(e => ({ seq: seqOf(e.actionId), files: commitFiles(hit.cwd, e.commit!.sha) ?? [] })),
+        ).map(f => {
+          if (!f.actionId) return f;
+          const writer = explain(f.actionId, graph);
+          return { ...f, writer: { action: writer.action, named: writer.requested.verdict === 'NAMED' } };
+        })
+      : null;
+    if (flags.json) {
+      io.out(`${JSON.stringify({ commit: hit.commit, madeBy: action.id, requested: explanation.requested, files: joined }, null, 2)}\n`);
+    } else {
+      io.out(renderCommit({ commit: hit.commit, action, explanation, files: joined }, graph, s));
+    }
+    return 0;
+  });
+}
+
+async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
+  const chosen = FILTERS.filter(f => flags[f]);
+  if (chosen.length > 1) throw new ContrailError(`Pick one filter: ${chosen.map(f => `--${f}`).join(', ')}`);
+  const filter = chosen[0] ?? null;
+  return withStore(flags, io, ({ db, repoKey }) => {
+    const graph = loadGraph(db, pickSession(db, flags.session as string | undefined, repoKey), io.home);
+    const explanations = new Map<string, Explanation>();
+    for (const a of graph.actions) {
+      if (explanations.size >= MAX_EXPLAINED) break;
+      if (!matchesFilter(a, graph, filter) || !EXPLAINED.has(kindForExplain(a.tool))) continue;
+      explanations.set(a.id, explain(a.id, graph));
+    }
+    if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
+    else io.out(renderTrace(graph, explanations, filter, s));
+    return 0;
+  });
+}
+
+function kindForExplain(tool: string): string {
+  if (tool.startsWith('mcp__')) return 'MCP';
+  return ({ Edit: 'EDIT', MultiEdit: 'EDIT', NotebookEdit: 'EDIT', Write: 'WRITE', Bash: 'SHELL', WebFetch: 'WEB', WebSearch: 'WEB', Agent: 'AGENT', Task: 'AGENT' } as Record<string, string>)[tool] ?? '';
+}
+
+function findingsFor(graph: Graph): Finding[] {
+  return graph.actions
+    .filter(a => sensitivity(a).length)
+    .map(a => assess(explain(a.id, graph), graph))
+    .filter((f): f is Finding => f !== null);
+}
+
+async function risks(flags: Flags, io: Io, s: Style): Promise<number> {
+  return withStore(flags, io, ({ db, repoKey }) => {
+    const ids = flags.session
+      ? [pickSession(db, flags.session as string, repoKey)]
+      : recentSessions(db, repoKey, flags.all ? 10_000 : 20, flags.all === true).map(r => r.id);
+    const graphs = new Map<string, Graph>();
+    let actions = 0;
+    const findings: Finding[] = [];
+    for (const id of ids) {
+      const graph = loadGraph(db, id, io.home);
+      graphs.set(id, graph);
+      actions += graph.actions.length;
+      findings.push(...findingsFor(graph));
+    }
+    const ranked = rankFindings(findings);
+    if (flags.json) {
+      io.out(`${JSON.stringify(ranked.map(f => ({ action: f.action.id, session: f.action.scope.sessionId, kinds: f.kinds, requested: f.requested, externalUpstream: f.externalUpstream, sources: f.sources.map(x => ({ grade: x.link.grade, token: x.link.token, source: x.input.label, trust: x.input.trust, quote: x.link.quote })) })), null, 2)}\n`);
+    } else {
+      io.out(renderRisks(ranked, { actions, sessions: ids.length }, graphs, s));
+    }
+    return 0;
+  });
+}
+
+async function sessions(flags: Flags, io: Io, s: Style): Promise<number> {
+  const limit = Number(flags.limit ?? 10);
+  if (!Number.isInteger(limit) || limit < 1) throw new ContrailError('--limit takes a positive whole number.');
+  return withStore(flags, io, ({ db, repoKey }) => {
+    const rows = recentSessions(db, repoKey, limit, flags.all === true);
+    const summaries = rows.map(r => {
+      const graph = loadGraph(db, r.id, io.home);
+      return { ...r, graph, flagged: findingsFor(graph).filter(f => f.externalUpstream).length };
+    });
+    if (flags.json) {
+      io.out(`${JSON.stringify(summaries.map(x => ({ id: x.id, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts[0]?.text ?? null })), null, 2)}\n`);
+    } else {
+      io.out(renderSessions(summaries, s));
+    }
+    return 0;
+  });
+}
+
+async function exportSession(args: string[], flags: Flags, io: Io): Promise<number> {
+  return withStore(flags, io, ({ db, repoKey }) => {
+    const id = pickSession(db, args[0] ?? (flags.session as string | undefined), repoKey);
+    const events = loadRows(db, id).map(r => ({ ...r, payload: JSON.parse(r.payload) as unknown }));
+    io.out(`${JSON.stringify({ contrail: VERSION, schema: SCHEMA_VERSION, session: id, events }, null, 2)}\n`);
+    return 0;
+  });
+}
+
 async function ingestCommand(flags: Flags, io: Io): Promise<number> {
-  const { db, dataDir } = await openStore(flags, io);
+  const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home);
+  mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+  const db = await openDb(join(dataDir, 'contrail.db'));
   try {
+    migrate(db);
     const r = ingest(db, join(dataDir, 'spool'), makeRepoKeyOf());
+    const { sessionsRemoved } = prune(db, loadConfig(dataDir).config, Date.now());
     if (!flags['from-hook']) {
-      io.out(`ingested ${r.ingested} events (${r.duplicates} already stored, ${r.parseErrors} unparseable, ${r.staleTmpRemoved} stale temp files removed)\n`);
+      io.out(
+        `ingested ${r.ingested} events (${r.duplicates} already stored, ${r.parseErrors} unparseable, ${r.staleTmpRemoved} stale temp files removed); ` +
+          `pruned ${sessionsRemoved} sessions\n`,
+      );
     }
     return 0;
   } finally {
@@ -141,34 +304,65 @@ async function ingestCommand(flags: Flags, io: Io): Promise<number> {
   }
 }
 
+async function pruneCommand(flags: Flags, io: Io): Promise<number> {
+  return withStore(flags, io, ({ db, dataDir }) => {
+    const { config, problem } = loadConfig(dataDir);
+    if (problem) io.err(`contrail: ${problem}\n`);
+    const { sessionsRemoved } = prune(db, config, Date.now());
+    db.exec('VACUUM');
+    io.out(`removed ${sessionsRemoved} sessions (keeping ${config.retentionDays} days, up to ${config.maxDbMb} MB); database compacted\n`);
+    return 0;
+  });
+}
+
 async function doctor(flags: Flags, io: Io): Promise<number> {
-  const runtime = (process.versions as Record<string, string | undefined>).bun
-    ? `bun ${(process.versions as Record<string, string>).bun}`
-    : `node ${process.versions.node}`;
-  io.out(`contrail ${VERSION} on ${runtime}\n`);
-  const { db, dataDir } = await openStore(flags, io);
-  try {
+  const versions = process.versions as Record<string, string | undefined>;
+  io.out(`contrail ${VERSION} on ${versions.bun ? `bun ${versions.bun}` : `node ${process.versions.node}`}\n`);
+  return withStore(flags, io, ({ db, dataDir }) => {
     const backlog = readdirSync(join(dataDir, 'spool')).filter(n => n.endsWith('.json')).length;
-    const stats = db.get<{ events: number; sessions: number; parseErrors: number; last: number | null }>(
+    const stats = db.get<{ events: number; sessions: number; parseErrors: number | null; last: number | null }>(
       `SELECT COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions,
               SUM(parse_error IS NOT NULL) AS parseErrors, MAX(captured_us) AS last FROM events`,
     )!;
-    const last = stats.last ? new Date(Math.floor(stats.last / 1000)).toISOString() : 'never';
-    io.out(
-      [
-        `data directory   ${dataDir}`,
-        `schema           v${SCHEMA_VERSION}`,
-        `events stored    ${stats.events} across ${stats.sessions} sessions`,
-        `waiting in spool ${backlog}`,
-        `unparseable      ${stats.parseErrors ?? 0}`,
-        `last event       ${last}`,
-        stats.events === 0 && backlog === 0
-          ? 'No events yet. Run a Claude Code session with the plugin enabled, then check again.'
-          : 'Recording and queries work.',
-      ].join('\n') + '\n',
-    );
+    const { config, problem } = loadConfig(dataDir);
+    const hook = captureTiming();
+    const lines = [
+      `data directory   ${dataDir}`,
+      `schema           v${SCHEMA_VERSION}`,
+      `events stored    ${stats.events} across ${stats.sessions} sessions`,
+      `waiting in spool ${backlog}`,
+      `unparseable      ${stats.parseErrors ?? 0}`,
+      `last event       ${stats.last ? new Date(Math.floor(stats.last / 1000)).toISOString() : 'never'}`,
+      `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ''}`,
+      ...(hook ? [`capture hook     ${hook} ms per event (median of 5)`] : []),
+      stats.events === 0 && backlog === 0
+        ? 'No events yet. Run a Claude Code session with the plugin enabled, then check again.'
+        : 'Recording and queries work.',
+    ];
+    io.out(`${lines.join('\n')}\n`);
     return 0;
+  });
+}
+
+/** Times the real capture hook shipped next to this bundle, writing into a throwaway directory. */
+function captureTiming(): string | null {
+  let hook: string;
+  try {
+    hook = fileURLToPath(new URL('../hooks/capture.sh', import.meta.url));
+  } catch {
+    return null;
+  }
+  if (!existsSync(hook)) return null;
+  const dir = mkdtempSync(join(tmpdir(), 'contrail-doctor-'));
+  try {
+    const times: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const start = performance.now();
+      spawnSync('sh', [hook], { input: '{"hook_event_name":"PreToolUse"}', env: { PATH: process.env.PATH ?? '', CONTRAIL_HOME: dir } });
+      times.push(performance.now() - start);
+    }
+    return times.sort((a, b) => a - b)[2]!.toFixed(1);
   } finally {
-    db.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 }

@@ -68,14 +68,22 @@ export interface Input {
 }
 
 /** Something an action changed. */
+/** Something an action changed. `expected` effects were inferred from the command, not reported (R6). */
 export interface Effect {
   id: string;
   actionId: string;
-  kind: 'file' | 'network';
+  kind: 'file' | 'network' | 'commit';
   target: string;
   path: string | null;
-  evidence: 'filePath' | 'bashEditDiff' | 'response';
+  evidence: 'filePath' | 'bashEditDiff' | 'response' | 'commit_stdout' | 'expected';
   patch: string[];
+  commit?: Commit;
+}
+
+export interface Commit {
+  branch: string;
+  sha: string;
+  subject: string;
 }
 
 /** A string from an action's arguments that we try to trace. */
@@ -157,8 +165,13 @@ export interface TokenTrace {
   firstUse: { actionId: string; preSeq: number } | null;
   searched: { count: number; beforeSeq: number };
   links: Link[];
-  /** how the agent came to call the tool that returned the credited input */
-  upstream: { via: Action; trace: TokenTrace } | null;
+  /**
+   * One step further back (R5):
+   *   call        how the agent came to call the tool that returned the credited input
+   *   conduit     the credited text was agent-written, so the same name is followed further back
+   *   compaction  the credited text is a compaction summary, so the same name is looked for before it
+   */
+  upstream: { kind: 'call' | 'conduit' | 'compaction'; via: Action | null; trace: TokenTrace } | null;
 }
 
 export interface Explanation {

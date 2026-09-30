@@ -1184,6 +1184,20 @@ function findInInput(i, needle, hashToken) {
     if (hashedNeedle === null) return -1;
     needle = hashedNeedle;
   }
+  let found = foundCache.get(i);
+  if (!found) {
+    found = /* @__PURE__ */ new Map();
+    foundCache.set(i, found);
+  }
+  let index = found.get(needle);
+  if (index === void 0) {
+    index = search(i, needle);
+    found.set(needle, index);
+  }
+  return index;
+}
+var foundCache = /* @__PURE__ */ new WeakMap();
+function search(i, needle) {
   let bits = wordFilterCache.get(i);
   if (!bits) {
     const searches = (searchCount.get(i) ?? 0) + 1;

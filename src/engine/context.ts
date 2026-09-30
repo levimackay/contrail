@@ -57,7 +57,8 @@ export function normalizedText(i: Input): string {
  * A whole-token match starts and ends on a word boundary, so every complete word inside the
  * needle is a complete word of the text. Once an input has been searched a few times, a filter
  * of the text's words is checked first, which skips the scan for almost every input that cannot
- * match; the scan still decides every match.
+ * match; the scan still decides every match. The answer is kept per input and needle: traces of
+ * one value from different calls, and the same upstream call's values, ask again and again.
  */
 export function findInInput(i: Input, needle: string, hashToken?: (span: string) => string): number {
   if (i.hashed) {
@@ -66,6 +67,23 @@ export function findInInput(i: Input, needle: string, hashToken?: (span: string)
     if (hashedNeedle === null) return -1;
     needle = hashedNeedle;
   }
+  let found = foundCache.get(i);
+  if (!found) {
+    found = new Map();
+    foundCache.set(i, found);
+  }
+  let index = found.get(needle);
+  if (index === undefined) {
+    index = search(i, needle);
+    found.set(needle, index);
+  }
+  return index;
+}
+
+/** Inputs never change once the graph is built, so a needle's index in one never does either. */
+const foundCache = new WeakMap<Input, Map<string, number>>();
+
+function search(i: Input, needle: string): number {
   let bits = wordFilterCache.get(i);
   if (!bits) {
     const searches = (searchCount.get(i) ?? 0) + 1;

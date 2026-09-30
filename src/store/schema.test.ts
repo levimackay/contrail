@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { ContrailError } from '../errors.ts';
-import { migrate, SCHEMA_VERSION } from './schema.ts';
+import { migrate, MIGRATIONS, SCHEMA_VERSION } from './schema.ts';
 import { openDb } from './sqlite.ts';
 
 const tempDb = () => join(mkdtempSync(join(tmpdir(), 'contrail-db-')), 'contrail.db');
@@ -27,6 +27,19 @@ test('migrating twice is a no-op', async () => {
   migrate(db);
   migrate(db);
   assert.equal(db.get<{ user_version: number }>('PRAGMA user_version')?.user_version, SCHEMA_VERSION);
+  db.close();
+});
+
+test('a v2 database gains the source column, and its rows read as recorded live', async () => {
+  const db = await openDb(tempDb());
+  for (const statement of [...MIGRATIONS[0]!, ...MIGRATIONS[1]!]) db.exec(statement);
+  db.exec('PRAGMA user_version = 2');
+  db.run("INSERT INTO events (spool_name, captured_us, session_id, hook_event, payload) VALUES ('a', 1, 's1', 'PreToolUse', '{}')");
+  migrate(db);
+  assert.equal(db.get<{ user_version: number }>('PRAGMA user_version')?.user_version, SCHEMA_VERSION);
+  assert.deepEqual(db.all<{ spool_name: string; source: string | null }>('SELECT spool_name, source FROM events').map(r => [r.spool_name, r.source]), [['a', null]]);
+  db.run("INSERT INTO events (spool_name, captured_us, session_id, hook_event, payload, source) VALUES ('b', 2, 's2', 'PreToolUse', '{}', 'transcript')");
+  assert.equal(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE source = 'transcript'")?.n, 1);
   db.close();
 });
 

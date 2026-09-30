@@ -5103,6 +5103,11 @@ var MIGRATIONS = [
     "DROP TABLE touches",
     "ALTER TABLE touches_v2 RENAME TO touches",
     "CREATE INDEX touches_path ON touches (path, kind)"
+  ],
+  [
+    // v3: where an event came from. NULL is a hook event recorded live; 'transcript' is one
+    // `contrail import` reconstructed from Claude Code's own session transcript.
+    "ALTER TABLE events ADD COLUMN source TEXT"
   ]
 ];
 var SCHEMA_VERSION = MIGRATIONS.length;

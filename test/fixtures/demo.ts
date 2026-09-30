@@ -48,6 +48,9 @@ export function shouldRefresh(raw: string, now = Date.now()) {
 }
 `;
 
+/** A line in session.ts that no recorded agent call wrote. */
+export const YOUR_COMMENT = '// exp is in seconds; Date.now() is in milliseconds.';
+
 export const SETUP_PAGE = [
   '# QuickAuth CLI setup',
   '',
@@ -86,7 +89,8 @@ export function createRepo(repo: string, commitSec: number | null = null): strin
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'Initial service');
 
-  writeFileSync(join(repo, 'auth-service', 'src', 'session.ts'), SESSION_AFTER);
+  // The agent's fix, plus one comment you added by hand before committing.
+  writeFileSync(join(repo, 'auth-service', 'src', 'session.ts'), SESSION_AFTER.replace('  return exp', `  ${YOUR_COMMENT}\n  return exp`));
   writeFileSync(join(repo, 'package.json'), '{\n  "name": "acme-api",\n  "private": true,\n  "dependencies": { "jwt-decode": "^4.0.0" }\n}\n');
   writeFileSync(join(repo, 'package-lock.json'), '{\n  "name": "acme-api",\n  "lockfileVersion": 3\n}\n');
   writeFileSync(join(repo, 'docs', 'CHANGELOG.md'), '# Changelog\n\n- Sessions no longer expire early.\n');

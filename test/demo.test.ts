@@ -165,7 +165,7 @@ test('a version 1 database upgrades to the current schema with its rows intact',
 });
 
 test('no report uses causal or accusatory wording of its own', async () => {
-  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['trace', '--session', '9c1e', '--tree'], ['sessions'], ['find', 'jwt-decode'], ['find', 'nothing-here']];
+  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['trace', '--session', '9c1e', '--tree'], ['sessions'], ['find', 'jwt-decode'], ['find', 'nothing-here'], ['blame', 'auth-service/src/session.ts'], ['blame', 'package.json'], ['why', 'auth-service/src/session.ts:4']];
   for (const argv of views) {
     const own = (await run(argv)).out
       .split('\n')
@@ -323,4 +323,17 @@ test('why shows a directory hint only when it adds a source the full path does n
   assert.doesNotMatch(upload, /\n {2}\.aws {2}\(/, '.aws repeats the same page line');
   const edit = (await run(['why', 'auth-service/src/session.ts'])).out;
   assert.match(edit, /\n {2}auth-service {2}\(\$\.file_path, first used in t1 at seq 3\)\n {4}LIKELY {3}only observed in CLAUDE\.md:4/, 'a directory named in CLAUDE.md is a different source, so it stays');
+});
+
+test('blame shows each line of the file with the recorded call that last wrote it, and your line unattributed', async () => {
+  const r = await run(['blame', 'auth-service/src/session.ts']);
+  assert.equal(r.err, '');
+  assert.match(r.out, /^Blame auth-service\/src\/session\.ts {2}\(the file as it is now\)\n6 of 7 lines attributed to 1 recorded agent call in 1 session · 1 recorded write to this file\n/);
+  assert.match(r.out, /\nLIKELY {3}Edit t5 · session 4f2a91c7 · .*\n {9}p1 your words: "Users are getting logged out after 30 minutes\. Figure out why and fix it\."\n {9}↳ LIKELY auth-service\/src\/session\.ts ← the output of Grep "shouldRefresh" \(local\) {3}not named by you\n {9}↳ in these lines: LIKELY jwt-decode ← auth-service\/README\.md:13 \(local\)\n {3}1 │ import \{ jwtDecode \} from 'jwt-decode';\n {3}2 │\n/);
+  assert.match(r.out, /\nUNKNOWN {2}no recorded agent write holds these lines .*\n {3}5 │ {3}\/\/ exp is in seconds; Date\.now\(\) is in milliseconds\.\n\nLIKELY {3}Edit t5 \(shown above\)\n {3}6 │ {3}return exp \* 1000/);
+  const lockfile = await run(['blame', 'package.json']);
+  assert.match(lockfile.out, /\n0 of 5 lines attributed[^\n]*\n1 of them \(Bash t4\) recorded no text to match \(a shell write other than a literal heredoc\)\.\ncontrail why package\.json shows the latest write to the file\./);
+  const line = await run(['why', 'auth-service/src/session.ts:1']);
+  assert.match(line.out, /^auth-service\/src\/session\.ts:1 was last written by t5 \(session 4f2a91c7, [^)]+\); LIKELY — matched by the line's text \[R10\]\nEdit {2}auth-service\/src\/session\.ts\n/);
+  assert.match((await run(['why', 'auth-service/src/session.ts:5'])).err, /No recorded agent write holds line auth-service\/src\/session\.ts:5 as it is now/);
 });

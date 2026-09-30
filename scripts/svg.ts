@@ -74,6 +74,7 @@ const VIEWS: Array<{ file: string; args: string[]; cols?: number }> = [
   { file: 'trace.svg', args: ['trace', '--session', '4f2a'] },
   { file: 'trace-tree.svg', args: ['trace', '--session', '9c1e', '--tree'], cols: 146 },
   { file: 'why-commit.svg', args: ['why', 'commit', '{sha}'] },
+  { file: 'blame.svg', args: ['blame', 'auth-service/src/session.ts'] },
   { file: 'find.svg', args: ['find', 'collect.telemetry.example'], cols: 146 },
   { file: 'sessions.svg', args: ['sessions'], cols: 150 },
 ];

@@ -19,14 +19,16 @@ const shape = (report: string) =>
   report
     .split('\n')
     .filter(l => !/^\s*(\d+)?│/.test(l) && !/^ {6}[+ -]/.test(l) && !l.startsWith('Agent said'))
-    .join('\n');
+    .join('\n')
+    // blame dates each call by when it was recorded; the two demos are built moments apart
+    .replace(/\d{4}-\d\d-\d\d \d\d:\d\d/g, 'DATE');
 
 test('store_content: false keeps every grade and line number while storing none of the text the agent read', async () => {
   const plain = buildDemo(mkdtempSync(join(tmpdir(), 'contrail-plain-')));
   const hashed = buildDemo(mkdtempSync(join(tmpdir(), 'contrail-hashed-')));
   writeFileSync(join(hashed.data, 'config.json'), '{"store_content": false}');
 
-  for (const argv of [['risks'], ['why', 'npm install jwt-decode'], ['trace', '--session', '9c1e', '--tree'], ['why', 'auth-service/src/session.ts'], ['find', 'jwt-decode']]) {
+  for (const argv of [['risks'], ['why', 'npm install jwt-decode'], ['trace', '--session', '9c1e', '--tree'], ['why', 'auth-service/src/session.ts'], ['find', 'jwt-decode'], ['blame', 'auth-service/src/session.ts'], ['why', 'auth-service/src/session.ts:3']]) {
     assert.equal(shape(await run(hashed, argv)).replaceAll(hashed.repo, plain.repo), shape(await run(plain, argv)), argv.join(' '));
   }
   const risks = await run(hashed, ['risks']);

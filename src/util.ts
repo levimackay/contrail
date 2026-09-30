@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 /** Every string inside a JSON value, depth-first, with its JSONPath. */
 export function stringLeaves(value: unknown, path = '$'): Array<{ path: string; value: string }> {
@@ -88,4 +89,21 @@ export function clip(s: string, max: number): string {
 export function callId(id: string): string {
   const safe = id.replace(/[^\w-]/g, '?');
   return safe.length > 12 ? `${safe.slice(0, 5)}…${safe.slice(-5)}` : safe;
+}
+
+/**
+ * The path with symlinks resolved; for a file that no longer exists, its directory's real path.
+ * Hooks may record a symlinked path (/var/... on macOS) where the shell reports the real one
+ * (/private/var/...), so paths are joined on this.
+ */
+export function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    try {
+      return join(realpathSync(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
 }

@@ -7,7 +7,7 @@ const dir = join(import.meta.dirname, '..', 'plugin', 'skills');
 const skills = readdirSync(dir).map(name => ({ name, text: readFileSync(join(dir, name, 'SKILL.md'), 'utf8') }));
 
 test('every skill is manual-only and may run nothing but the Contrail launcher', () => {
-  assert.deepEqual(skills.map(s => s.name).sort(), ['find', 'report', 'risks', 'sessions', 'trace', 'why']);
+  assert.deepEqual(skills.map(s => s.name).sort(), ['blame', 'find', 'report', 'risks', 'sessions', 'trace', 'why']);
   for (const { name, text } of skills) {
     assert.match(text, new RegExp(`^---\\nname: ${name}\\n`), name);
     assert.match(text, /\ndisable-model-invocation: true\n/, name);
@@ -20,10 +20,10 @@ test('every skill is manual-only and may run nothing but the Contrail launcher',
   }
 });
 
-test('why and find pass their argument on stdin only; the others take none', () => {
+test('why, find and blame pass their argument on stdin only; the others take none', () => {
   for (const { name, text } of skills) {
     const uses = text.split('$ARGUMENTS').length - 1;
-    if (name === 'why' || name === 'find') {
+    if (name === 'why' || name === 'find' || name === 'blame') {
       assert.equal(uses, 1);
       assert.match(text, /--stdin 2>&1 <<'CONTRAIL_TARGET'\n\$ARGUMENTS\nCONTRAIL_TARGET\n/);
     } else {

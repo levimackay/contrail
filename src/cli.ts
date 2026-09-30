@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { commitContains } from './engine/effects.ts';
@@ -17,9 +17,11 @@ import { redactString } from './ingest/redact.ts';
 import { ingest, stored } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
+import { blameFile, explainCalls } from './query/blame.ts';
 import { commitFiles, findCommit, isCommit } from './query/commit.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
-import { findTarget, parseTarget } from './query/target.ts';
+import { findTarget, parseTarget, unquote, type Target } from './query/target.ts';
+import { blameJson, noLineWriter, renderBlame, renderLineNote } from './render/blame.ts';
 import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, renderTripwire, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
@@ -28,6 +30,7 @@ import { renderWhy } from './render/why.ts';
 import { loadConfig, prune } from './store/retention.ts';
 import { migrate, SCHEMA_VERSION } from './store/schema.ts';
 import { openDb, type Db } from './store/sqlite.ts';
+import { displayPath, realPath } from './util.ts';
 import { VERSION } from './version.ts';
 
 export interface Io {
@@ -69,10 +72,14 @@ Usage:
   contrail why [<anything>]         the trail behind whatever you point at:
                                       nothing          the last thing the agent did
                                       src/app.ts       the latest agent change to that file
+                                      src/app.ts:42    the call that last wrote that line (or 40-48)
                                       "npm install x"  the latest shell command containing it
                                       <commit sha>     what the commit holds, joined to agent changes
                                       toolu…ALhq1      one tool call, by the id reports print
                                       jwt-decode       the latest call that used that value
+  contrail blame <file> [--session <id>]
+                                    each line of a file as it is now, with the recorded agent call
+                                    that last wrote it, its turn and its trail
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source
         [--writes | --shell | --network | --mcp | --subagents | --instructions | --tree]
                                     --tree: each action under the call whose output held its value
@@ -91,11 +98,11 @@ Usage:
   contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          machine-readable output (why, trace, risks, sessions)
+  --json          machine-readable output (why, blame, trace, risks, sessions, find)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
-  --stdin         read the why target from standard input (used by the /contrail:why skill)
+  --stdin         read the target from standard input (used by the /contrail:why, find and blame skills)
   -h, --help      show this help
   -v, --version   show the version
 `;
@@ -125,6 +132,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   const style = flags.json ? PLAIN : styleFor(io.env, io.isTTY ?? false);
   const commands: Record<string, (args: string[]) => Promise<number>> = {
     why: args => why(args, flags, io, style),
+    blame: args => blame(args, flags, io, style),
     trace: () => trace(flags, io, style),
     risks: () => risks(flags, io, style),
     sessions: () => sessions(flags, io, style),
@@ -196,6 +204,7 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
   const target = parseTarget(flags.stdin ? [readStdin(io)] : args, io.cwd);
   if (target.kind === 'command' && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(' ').slice(1), flags, io, s);
   if (target.kind === 'command' && isCommit(io.cwd, target.text)) return whyCommit([target.text], flags, io, s);
+  if (target.kind === 'line') return whyLine(target, flags, io, s);
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     let hit: { sessionId: string; toolUseId: string };
     let note: string | undefined;
@@ -286,17 +295,41 @@ async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promis
   });
 }
 
-/** The path with symlinks resolved; for a file that no longer exists, its directory's real path. */
-function realPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    try {
-      return join(realpathSync(dirname(path)), basename(path));
-    } catch {
-      return path;
+/** why file.ts:42: the recorded call that last wrote that line, found as blame finds it, then that call's report. */
+async function whyLine(target: Extract<Target, { kind: 'line' }>, flags: Flags, io: Io, s: Style): Promise<number> {
+  return withStore(flags, io, ({ db, hashToken }) => {
+    const b = blameFile(db, target.path, target.shown);
+    if (target.start > b.lines.length) {
+      throw new ContrailError(`${target.shown} has ${b.lines.length} line${b.lines.length === 1 ? '' : 's'} now; there is no line ${target.start}.`);
     }
-  }
+    const hit = b.lines.slice(target.start - 1, target.end).find(l => l.call);
+    if (!hit) throw new ContrailError(noLineWriter(target));
+    const call = b.calls.find(c => c.id === hit.call)!;
+    const graph = loadGraph(db, call.sessionId, io.home, hashToken);
+    const explanation = explain(call.id, graph);
+    if (flags.json) {
+      const line = { file: b.path, line: hit.line, call: call.id, grade: hit.grade, rule: 'R10', match: hit.match, unambiguous: hit.unambiguous, writers: hit.writers, inFile: hit.inFile, byCall: hit.byCall };
+      io.out(`${JSON.stringify({ line, ...explanation }, null, 2)}\n`);
+    } else {
+      io.out(`${renderLineNote(target, hit, call, s)}\n${renderWhy(explanation, graph, undefined, s)}`);
+    }
+    return 0;
+  });
+}
+
+async function blame(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
+  const arg = unquote((flags.stdin ? readStdin(io) : args.join(' ')).trim());
+  if (!arg) throw new ContrailError('Usage: contrail blame <file> [--session <id>] [--json]');
+  const path = resolve(io.cwd, arg);
+  const shown = displayPath(path, io.cwd, io.home);
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const session = flags.session ? pickSession(db, flags.session as string, repoKey) : null;
+    const b = blameFile(db, path, shown, session);
+    explainCalls(db, b, io.home, hashToken);
+    if (flags.json) io.out(`${JSON.stringify(blameJson(b), null, 2)}\n`);
+    else io.out(renderBlame(b, shown, s));
+    return 0;
+  });
 }
 
 async function trace(flags: Flags, io: Io, s: Style): Promise<number> {

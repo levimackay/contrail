@@ -43,3 +43,17 @@ test('lineOf falls back to the position in the text, and single lines have no nu
   assert.deepEqual(lineOf(text, findMention(text, 'foo-auth-helper')), { line: 3, text: 'use foo-auth-helper' });
   assert.deepEqual(lineOf('install foo-auth-helper', 8), { line: null, text: 'install foo-auth-helper' });
 });
+
+test('lineOf quotes a long line from just before the match, so the value shows', () => {
+  const links = `Links: [${Array.from({ length: 8 }, (_, i) => `{"title":"Result ${i}","url":"https://r${i}.example/"}`).join(',')}]`;
+  const text = `Web search results for query: "x"\n\n${links}\n`;
+  const q = lineOf(text, findMention(text, 'r6.example'));
+  assert.equal(q.line, 3);
+  assert.ok(q.text.startsWith('…'));
+  assert.ok(q.text.indexOf('r6.example') > 0 && q.text.indexOf('r6.example') < 40, q.text);
+  assert.ok(links.endsWith(q.text.slice(1)));
+  // A match near the start keeps the whole line.
+  assert.equal(lineOf(text, findMention(text, 'r0.example')).text, links);
+  const numbered = `    12\t${' '.repeat(4)}${'x'.repeat(100)} foo-auth-helper`;
+  assert.deepEqual(lineOf(numbered, findMention(numbered, 'foo-auth-helper')), { line: 12, text: `…${'x'.repeat(29)} foo-auth-helper` });
+});

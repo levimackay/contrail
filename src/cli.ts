@@ -519,7 +519,7 @@ async function tripwire(flags: Flags, io: Io): Promise<number> {
     if (payload.hook_event_name !== 'PreToolUse' || !sessionId || !toolUseId) return 0;
     const notice = await withStore(flags, io, ({ db, dataDir, hashToken }) => {
       if (!loadConfig(dataDir).config.tripwire) return null;
-      const rows = loadRows(db, sessionId);
+      const rows = loadRows(db, sessionId, { later: true });
       // The capture hook stores this same event in parallel; it may not be ingested yet.
       if (!rows.some(r => r.hook_event === 'PreToolUse' && r.tool_use_id === toolUseId)) {
         rows.push({

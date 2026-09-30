@@ -157,3 +157,25 @@ test('a long session prints exactly what it printed before', async () => {
   ];
   compare('long.txt', await render(cases, long.data, long.cwd));
 });
+
+test('rows whose payloads are read later build the same graph as rows read at once', async () => {
+  await render([{ name: 'ingest', argv: ['sessions'] }], long.data, long.cwd);
+  const { openDb } = await import('../src/store/sqlite.ts');
+  const { loadRows } = await import('../src/query/sessions.ts');
+  const { buildGraph } = await import('../src/graph/build.ts');
+  const db = await openDb(join(long.data, 'contrail.db'));
+  try {
+    const now = loadRows(db, LONG_SESSION);
+    const later = loadRows(db, LONG_SESSION, { later: true });
+    assert.ok(later.some(r => r.payloadLater), 'some payloads wait');
+    const who = { home: '/Users/dev', user: 'dev' };
+    // Built before any late payload is read, then everything in it serialized, responses included.
+    assert.equal(JSON.stringify(buildGraph(later, who)), JSON.stringify(buildGraph(now, who)));
+    assert.deepEqual(
+      later.map(({ payloadLater: _, ...r }) => ({ ...r })),
+      now.map(r => ({ ...r })),
+    );
+  } finally {
+    db.close();
+  }
+});

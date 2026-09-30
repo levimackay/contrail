@@ -1672,10 +1672,11 @@ function buildGraph(rows, who, hashToken) {
     const seq = index + 1;
     const id = row.tool_use_id;
     const known = id ? actions.get(id) : void 0;
-    if (row.hook_event === "PostToolUse" && known && row.payload.length > DEFER_OVER && onlyTextUsed(known.tool) && modelSaw.get(known.id)?.text) {
+    const large = row.hook_event === "PostToolUse" && (row.payloadLater || row.payload.length > DEFER_OVER);
+    if (large && known && onlyTextUsed(known.tool) && modelSaw.get(known.id)?.text) {
       known.postSeq = seq;
       known.status = "ok";
-      deferResponse(known, row.payload);
+      deferResponse(known, row);
       return;
     }
     if (row.hook_event === "PostToolBatch") return;
@@ -1877,10 +1878,10 @@ function buildGraph(rows, who, hashToken) {
     ...hashToken ? { hashToken } : {}
   };
 }
-var TEXT_RESULT_TOOLS = /* @__PURE__ */ new Set(["Read", "NotebookRead", "Grep", "Glob", "LS", "WebFetch", "WebSearch"]);
-var onlyTextUsed = (tool) => TEXT_RESULT_TOOLS.has(tool) || tool.startsWith("mcp__");
+var TEXT_RESULT_TOOLS = ["Read", "NotebookRead", "Grep", "Glob", "LS", "WebFetch", "WebSearch"];
+var onlyTextUsed = (tool) => TEXT_RESULT_TOOLS.includes(tool) || tool.startsWith("mcp__");
 var DEFER_OVER = 16 * 1024;
-function deferResponse(a, payload) {
+function deferResponse(a, row) {
   const settle = (value) => {
     Object.defineProperty(a, "response", { value, writable: true, enumerable: true, configurable: true });
     return value;
@@ -1888,7 +1889,7 @@ function deferResponse(a, payload) {
   Object.defineProperty(a, "response", {
     enumerable: true,
     configurable: true,
-    get: () => settle(parsePayload(payload).tool_response ?? null),
+    get: () => settle(parsePayload(row.payload).tool_response ?? null),
     set: settle
   });
 }
@@ -3079,11 +3080,42 @@ function pickSession(db, prefix, repoKey) {
 ${matches.map((m) => `  ${clip(m.id, 80)}`).join("\n")}
 Use more characters.`);
 }
-function loadRows(db, sessionId) {
-  return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
+var TEXT_RESULTS = `IFNULL(hook_event = 'PostToolUse' AND (tool_name IN (${TEXT_RESULT_TOOLS.map((t) => `'${t}'`).join(", ")}) OR substr(tool_name, 1, 5) = 'mcp__'), 0)`;
+function loadRows(db, sessionId, { later = false } = {}) {
+  if (!later) return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
+  const rows = db.all(
+    `SELECT * FROM events WHERE session_id = ? AND NOT ${TEXT_RESULTS}
+     UNION ALL
+     SELECT id, spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, NULL, parse_error
+       FROM events WHERE session_id = ?1 AND ${TEXT_RESULTS}
+     ORDER BY captured_us, spool_name`,
+    sessionId
+  );
+  return rows.map((r) => {
+    const row = r;
+    if (r.payload === null) readLater(db, row);
+    return row;
+  });
+}
+function readLater(db, row) {
+  const settle = (payload) => {
+    Object.defineProperty(row, "payload", { value: payload, writable: true, enumerable: true, configurable: true });
+    return payload;
+  };
+  Object.defineProperty(row, "payload", {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      const stored2 = db.get("SELECT payload FROM events WHERE id = ?", row.id);
+      if (!stored2) throw new ContrailError("This session changed while it was being read. Run the command again.");
+      return settle(stored2.payload);
+    },
+    set: settle
+  });
+  row.payloadLater = true;
 }
 function loadGraph(db, sessionId, home, hashToken) {
-  return buildGraph(loadRows(db, sessionId), { home, user: basename5(home) }, hashToken);
+  return buildGraph(loadRows(db, sessionId, { later: true }), { home, user: basename5(home) }, hashToken);
 }
 
 // src/query/blame.ts
@@ -5704,7 +5736,7 @@ async function tripwire(flags, io) {
     if (payload.hook_event_name !== "PreToolUse" || !sessionId || !toolUseId) return 0;
     const notice = await withStore(flags, io, ({ db, dataDir, hashToken }) => {
       if (!loadConfig(dataDir).config.tripwire) return null;
-      const rows = loadRows(db, sessionId);
+      const rows = loadRows(db, sessionId, { later: true });
       if (!rows.some((r) => r.hook_event === "PreToolUse" && r.tool_use_id === toolUseId)) {
         rows.push({
           id: 0,

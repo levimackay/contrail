@@ -1271,12 +1271,19 @@ function findInInput(i, needle, hashToken) {
   }
   let bits = wordFilterCache.get(i);
   if (!bits) {
+    const searches = (searchCount.get(i) ?? 0) + 1;
+    if (searches <= SCANS_BEFORE_FILTER) {
+      searchCount.set(i, searches);
+      return findNormalized(normalizedText(i), needle);
+    }
     bits = wordFilter(normalizedText(i));
     wordFilterCache.set(i, bits);
   }
   if (!mayHoldWords(bits, needleWords(needle))) return -1;
   return findNormalized(normalizedText(i), needle);
 }
+var SCANS_BEFORE_FILTER = 8;
+var searchCount = /* @__PURE__ */ new WeakMap();
 var wordFilterCache = /* @__PURE__ */ new WeakMap();
 var needleWordCache = /* @__PURE__ */ new Map();
 var MAX_NEEDLES_CACHED = 1e4;

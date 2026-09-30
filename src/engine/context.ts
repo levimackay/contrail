@@ -55,8 +55,9 @@ export function normalizedText(i: Input): string {
 /**
  * Index of the token in an input's normalized text, as findNormalized, or -1.
  * A whole-token match starts and ends on a word boundary, so every complete word inside the
- * needle is a complete word of the text. Checking a per-input filter of the text's words first
- * skips the full scan for almost every input that cannot match; the scan still decides every match.
+ * needle is a complete word of the text. Once an input has been searched a few times, a filter
+ * of the text's words is checked first, which skips the scan for almost every input that cannot
+ * match; the scan still decides every match.
  */
 export function findInInput(i: Input, needle: string, hashToken?: (span: string) => string): number {
   if (i.hashed) {
@@ -67,6 +68,11 @@ export function findInInput(i: Input, needle: string, hashToken?: (span: string)
   }
   let bits = wordFilterCache.get(i);
   if (!bits) {
+    const searches = (searchCount.get(i) ?? 0) + 1;
+    if (searches <= SCANS_BEFORE_FILTER) {
+      searchCount.set(i, searches);
+      return findNormalized(normalizedText(i), needle);
+    }
     bits = wordFilter(normalizedText(i));
     wordFilterCache.set(i, bits);
   }
@@ -78,10 +84,14 @@ export function findInInput(i: Input, needle: string, hashToken?: (span: string)
  * The word filter: a bit set with two bits per whole word of a text (a maximal run of the
  * characters findNormalized treats as word characters), set from a hash of the word. A word
  * that is in the text always has both bits set, so a clear bit proves a needle's word is not
- * there; a set bit proves nothing, and the scan decides. Building it is one pass over the
- * text with no strings made, which is what makes it cheap enough to build for every input.
+ * there; a set bit proves nothing, and the scan decides. Building it is one pass over the text
+ * with no strings made, but that pass costs about as much as ten plain scans (indexOf is fast),
+ * so a query that searches each input only a few times, like the statusline or the tripwire,
+ * never builds it, and one that explains every call does.
  */
 
+const SCANS_BEFORE_FILTER = 8;
+const searchCount = new WeakMap<Input, number>();
 const wordFilterCache = new WeakMap<Input, Uint32Array>();
 const needleWordCache = new Map<string, number[]>();
 const MAX_NEEDLES_CACHED = 10_000;

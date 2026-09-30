@@ -695,8 +695,10 @@ function unwrapCommand(words2) {
   }
   return argv;
 }
-var URL_RE = /https?:\/\/[^\s'"<>)\]]+/g;
-var WORD_RE = /[A-Za-z0-9_@][A-Za-z0-9_\-./@:]*[A-Za-z0-9_]/g;
+var URL_RE = /https?:\/\/[^\s'"<>)\]]{1,2048}/g;
+var WORD_RUN = /[A-Za-z0-9_@][A-Za-z0-9_\-./@:]{0,4096}/g;
+var WORD_END = /[^A-Za-z0-9_]{1,4096}$/;
+var WORDS_SCAN = 64 * 1024;
 var MAX_HINTS = 20;
 var MAX_TARGETS = 40;
 function extractTokens(action, env) {
@@ -796,11 +798,14 @@ function collector(env) {
 }
 function words(text) {
   const found = [];
-  const rest = text.replace(URL_RE, (url) => {
+  const rest = text.slice(0, WORDS_SCAN).replace(URL_RE, (url) => {
     found.push(hostPath(url));
     return " ";
   });
-  for (const m of rest.matchAll(WORD_RE)) found.push(m[0]);
+  for (const m of rest.matchAll(WORD_RUN)) {
+    const word = m[0].replace(WORD_END, "");
+    if (word.length >= 2) found.push(word);
+  }
   return found;
 }
 function looksLikePath(s) {
@@ -1239,7 +1244,7 @@ function normalizedText(i) {
   return n;
 }
 var wordCache = /* @__PURE__ */ new WeakMap();
-var WORD_RUN = /[a-z0-9_-]{1,256}/g;
+var WORD_RUN2 = /[a-z0-9_-]{1,256}/g;
 function findInInput(i, needle, hashToken) {
   if (i.hashed) {
     const hashedNeedle = hashToken ? hashNeedle(needle, hashToken) : null;
@@ -1248,10 +1253,10 @@ function findInInput(i, needle, hashToken) {
   }
   let words2 = wordCache.get(i);
   if (!words2) {
-    words2 = new Set(normalizedText(i).match(WORD_RUN) ?? []);
+    words2 = new Set(normalizedText(i).match(WORD_RUN2) ?? []);
     wordCache.set(i, words2);
   }
-  for (const w of needle.match(WORD_RUN) ?? []) {
+  for (const w of needle.match(WORD_RUN2) ?? []) {
     if (w.length < 256 && !words2.has(w)) return -1;
   }
   return findNormalized(normalizedText(i), needle);

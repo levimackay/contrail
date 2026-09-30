@@ -94,3 +94,14 @@ test('an escaped space keeps a digit inside the word before a redirect', async (
   assert.deepEqual(shellSegments('echo a\\ 2>x'), [{ words: ['echo', 'a 2'], redirects: ['x'] }]);
   assert.deepEqual(shellSegments('cmd 3<&0 arg'), [{ words: ['cmd', 'arg'], redirects: [] }]);
 });
+
+test('names in hostile text are found in linear time', () => {
+  const at = '@'.repeat(300_000);
+  const started = performance.now();
+  const tokens = extractTokens(
+    { id: 'w', tool: 'Write', input: { file_path: '/r/.env', content: `${at} jwt-decode ${'.'.repeat(300_000)}` }, preSeq: 1, postSeq: 2, status: 'ok', scope: { sessionId: 's', agentId: null }, promptId: 'p' } as never,
+    { cwd: '/r', home: '/Users/dev', user: 'dev' } as never,
+  );
+  assert.ok(performance.now() - started < 500, `took ${performance.now() - started} ms`);
+  assert.ok(tokens.some(t => t.text === '/r/.env' || t.text.endsWith('.env')));
+});

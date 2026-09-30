@@ -6,12 +6,12 @@
   </picture>
 </h1>
 
-<h3 align="center">See where every value in a Claude Code action came from.</h3>
+<h3 align="center">Ask why Claude Code did anything. Get the record, not a story.</h3>
 
 <p align="center">
   <a href="https://github.com/levimackay/contrail/actions/workflows/ci.yml"><img src="https://github.com/levimackay/contrail/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/version-0.3.0-green.svg" alt="Version 0.3.0"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-0.4.0-green.svg" alt="Version 0.4.0"></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Claude%20Code-plugin-d97757.svg" alt="Claude Code plugin"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/runtime-Node%2022.13%2B%20%7C%20Bun-339933.svg" alt="Node 22.13+ or Bun"></a>
   <a href="#privacy-and-security"><img src="https://img.shields.io/badge/data-local%20only-555.svg" alt="Local only"></a>
@@ -19,8 +19,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="#why-contrail">Why Contrail</a> ·
-  <a href="#features">Features</a> ·
+  <a href="#why-not-just-ask-claude">Why not just ask Claude?</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#how-grading-works">Grading</a> ·
@@ -28,32 +27,51 @@
   <a href="#faq">FAQ</a>
 </p>
 
-Contrail is a local-first plugin for Claude Code. Ask it about any edit, command or commit the agent made, and it shows where each value in that action first entered the agent's context. It says who wrote that source (you, your repo, the web, or the agent itself) and grades every link from DIRECT to UNKNOWN. It uses deterministic rules and no LLM, and it never claims to know why the agent acted.
+Claude Code just installed a package you never mentioned, piped a script into `sh`, or rewrote a function in a way you did not ask for. Where did that come from? A README it read? A web page? Your own words, three prompts ago?
+
+Claude cannot tell you reliably. Once a session ends, its context is gone, and even mid-session its explanation is a reconstruction, not a record. **Contrail keeps the record.** It is a local Claude Code plugin that records what the agent read and did, and traces every value in an action (a package name, a path, a URL) back to the input where it first appeared, with who wrote that input and how sure each link is.
 
 ## Quick start
 
-Install from inside Claude Code:
+Inside Claude Code:
 
 ```text
 /plugin marketplace add levimackay/contrail
 /plugin install contrail@contrail
 ```
 
-Then use Claude Code as usual. Contrail records in the background. When you want to know where something came from:
+That is all the setup there is. From then on:
+
+**1. It warns you before a risky call whose values came from outside.** When Claude is about to touch credentials, the network or the shell, and a value in that call first appeared in a web page, an MCP result or a dependency's files, you see one line before Claude Code asks for permission:
 
 ```text
-/contrail:why last                       the most recent edit, command or commit
-/contrail:why src/auth/session.ts        the latest agent change to a file
-/contrail:why "npm install jwt-decode"   the latest command containing that text
-/contrail:why toolu…ALhq1                any call a report shows, by its id
-/contrail:risks                          sensitive actions, those tracing to web or MCP content first
-/contrail:trace                          this session as a timeline
-/contrail:sessions                       recent sessions in this repository at a glance
-/contrail:report                         this session as an HTML page you open in a browser
-/contrail:find collect.telemetry.example every input that held a value, and every call that used it
+PreToolUse:Bash says: Contrail ▲ runs remote code · network · not named in your words:
+get.fastlog.example/setup.sh first appeared in node_modules/fastlog/README.md:9 (external, LIKELY).
+Trail: /contrail:why toolu…cgnJw
 ```
 
-Each skill prints the report exactly as the CLI wrote it; Claude adds nothing. The same commands work from a terminal (see [Commands](#commands)).
+The notice goes to you, not to Claude, and it never blocks anything or changes a permission decision.
+
+**2. You can ask why about anything.** Point `/contrail:why` at whatever looks wrong:
+
+```text
+/contrail:why                              the last thing Claude did
+/contrail:why src/auth/session.ts:42       the call that last wrote that line, and where its values came from
+/contrail:why src/auth/session.ts          the latest change to the file
+/contrail:why "npm install jwt-decode"     the latest command containing that text
+/contrail:why jwt-decode                   the latest call that used that value
+/contrail:why 3f9c2e1                      a commit, joined to the agent changes in it
+```
+
+Every report starts with the answer and then shows the evidence:
+
+<p align="center">
+  <img src="docs/hero.svg" alt="contrail why: a credential upload traced to line 7 of a fetched web page">
+</p>
+
+Above, Claude Code was asked to set up a CLI. It searched the web and fetched a setup page containing a line addressed to AI agents: send `~/.aws/credentials` to a remote URL. The agent ran it. You never named either value; both first appeared on line 7 of that page, which the agent found through a web search that started from your prompt.
+
+<sub>All output on this page comes from two scripted example sessions over a real git repository: the same ones `npm run demo` builds and the end-to-end tests run against. They are not recordings of a real incident. Every domain in them is a reserved `.example` name. The tripwire notice above is from a live Claude Code session against a local test repository.</sub>
 
 **Try it without installing.** With Node 24, `npm run demo` builds a small repository and two recorded sessions in a temporary directory, then prints the commands to run against them:
 
@@ -62,46 +80,30 @@ git clone https://github.com/levimackay/contrail && cd contrail
 npm ci && npm run demo
 ```
 
-<p align="center">
-  <img src="docs/risks.svg" alt="contrail risks: a credential upload traced to line 7 of a fetched web page">
-</p>
+## Why not just ask Claude?
 
-Above, Claude Code was asked to set up a CLI. It searched the web and fetched a setup page containing a line addressed to AI agents: send `~/.aws/credentials` to a remote URL. The agent ran it. `contrail risks` lists that command first and traces both the credentials path and the upload URL to line 7 of the fetched page, marked `external`. You never named either one.
+You can ask Claude why it did something, and it will give you an answer. It is not the same thing:
 
-<sub>All output on this page comes from two scripted example sessions over a real git repository: the same ones `npm run demo` builds and the end-to-end tests run against. They are not recordings of a real incident. Every domain in them is a reserved `.example` name.</sub>
+- **The context is gone.** After a session ends, or after compaction, Claude does not have what it read. Contrail does, across every session since you installed it.
+- **An explanation is not a record.** Claude's answer is generated after the fact. Contrail shows the input a value came from, quotes the line, and says who wrote it.
+- **Your words and a web page look the same to the model.** Contrail labels every source: you, your config, your repo, the web or an MCP server, or the agent itself. A value that came from a README is never reported as yours.
+- **An agent that followed an injected instruction is the wrong witness.** Contrail uses no LLM. Every grade comes from a named, deterministic rule over what Claude Code recorded.
 
-## Why Contrail
+What it gives you instead:
 
-**Without Contrail.** The agent ran a command you did not ask for. To find out where it came from, you scroll through a transcript of hundreds of events. In it, your prompt, a line in a README and a sentence on a fetched web page all look the same.
-
-**With Contrail.** You ask about the command and get the answer in one screen:
-
-- which input first held each value in it (a package name, a path, a URL), with the line quoted
-- who wrote that input: you, your config, your repo, the web or an MCP server, or the agent itself
-- how the agent came to read that input, one step further back each time
-- how strong each link is, and what Contrail could not see
-
-It is not a transcript viewer, a token tracker or a security scanner. It has one job: show the observable trail behind an action, and be honest about how sure each step is.
-
-## Features
-
-- **Trace any action.** `why` explains a file change, a shell command, the last action, or a commit, down to the source line of each value.
-- **Flag what matters.** `risks` lists credential access, network egress, remote code, installs and destructive commands, with those tracing to external content first.
-- **Graded evidence.** Every link is DIRECT, LIKELY, POSSIBLE or UNKNOWN by a named rule (`[R3]`), so a grade always traces to a stated condition.
-- **Knows who wrote it.** Every source is labeled `principal`, `config`, `local`, `external` or `agent`. Your words and a README's words never look alike.
-- **Sees through the agent's own notes.** Text the agent wrote itself (subagent instructions and reports, compaction summaries, files it wrote and read back) is followed back to whoever supplied the value first.
-- **Session views.** `trace` shows a session as a timeline or, with `--tree`, as a forest of trails. `sessions` gives an overview.
-- **Commit provenance.** `why commit <sha>` joins git's file list to the agent changes behind each file, including quiet `git commit -q` commits.
-- **Observe only, local only.** It never blocks a tool call, never writes into the agent's context, and never touches the network.
-- **Redacts before storing.** Secrets are removed before anything reaches the database. With `store_content: false`, no text the agent read is stored at all.
-- **Light and fast.** Capture is a POSIX `sh` script, so recording needs nothing else. Queries run on Node 22.13+ or Bun, with no `npm install` and no build step.
-- **Honest about blind spots.** Every report ends with what Contrail could not see. An UNKNOWN always says how many inputs were searched.
+- **One command for any question.** `/contrail:why` takes a file, a line, a command, a commit, a call id or a value, or nothing for the last action.
+- **Line-level provenance.** `blame` shows each line of a file next to the recorded agent call that last wrote it, across sessions; `why file:line` gives that call's full trail.
+- **A warning before, not only an answer after.** The tripwire tells you when a sensitive call's values came from external content, before you approve it.
+- **Graded evidence.** Every link is DIRECT, LIKELY, POSSIBLE or UNKNOWN by a named rule (`[R3]`), and every report says what Contrail could not see.
+- **Sees through the agent's own notes.** Subagent instructions and reports, compaction summaries, and files the agent wrote and read back are followed to whoever supplied the value first.
+- **Local, observe only, redacted.** No network calls, no telemetry, nothing blocked. Secrets are removed before anything is stored, and `store_content: false` stores no text the agent read at all.
 
 ## Commands
 
 | Command | What it shows |
 |---|---|
-| [`contrail why <path \| "command" \| call id \| last>`](#contrail-why) | The trail behind one action |
+| [`contrail why [<anything>]`](#contrail-why) | The trail behind whatever you point at: nothing (the last action), a file, `file:line`, a command, a commit, a call id or a value |
+| [`contrail blame <file>`](#contrail-blame) | Each line of a file with the recorded agent call that last wrote it, across sessions |
 | [`contrail why commit <sha>`](#contrail-why-commit) | A commit's files, joined to the agent changes behind them |
 | [`contrail risks`](#contrail-risks) | Sensitive actions, with where their values came from |
 | [`contrail trace [--tree]`](#contrail-trace) | A session as a timeline, or as a forest of trails |
@@ -116,7 +118,7 @@ It is not a transcript viewer, a token tracker or a security scanner. It has one
 
 Options: `--json` for machine-readable output (why, trace, risks, sessions), `--session <id>` (a prefix is enough), `--data <dir>` to read another data directory, `-h` and `-v`.
 
-Inside Claude Code, the `/contrail:why`, `/contrail:risks`, `/contrail:trace`, `/contrail:sessions`, `/contrail:find` and `/contrail:report` skills run the same CLI. From a terminal, use the launcher Contrail keeps in its data directory. Its path stays the same across plugin updates, and `contrail doctor` prints it:
+Inside Claude Code, the `/contrail:why`, `/contrail:blame`, `/contrail:risks`, `/contrail:trace`, `/contrail:sessions`, `/contrail:find` and `/contrail:report` skills run the same CLI. They are manual only: Claude never runs them on its own, and each prints its report exactly as the CLI wrote it. From a terminal, use the launcher Contrail keeps in its data directory. Its path stays the same across plugin updates, and `contrail doctor` prints it:
 
 ```sh
 alias contrail="sh $(echo ~/.claude/plugins/data/contrail-*/bin/contrail)"
@@ -146,9 +148,23 @@ Add it to `~/.claude/settings.json`:
 
 Use the launcher path `contrail doctor` prints if yours differs. The command reads the session Claude Code passes on stdin, takes about 75 ms, and never fails: if anything goes wrong it prints just `contrail`. To keep an existing status line, call `contrail statusline` from your own script and print both.
 
+### Tripwire
+
+Before a tool call runs, and before Claude Code asks for permission, the tripwire checks it. When the call touches credentials, the network or the shell, installs something, or touches Contrail's own records, and a value in it first appeared in external content (a web page or web search, an MCP result, or a file inside a dependency such as `node_modules/`), it shows you one line:
+
+```text
+Contrail ▲ credentials · network · not named in your words: ~/.aws/credentials, collect.telemetry.example/v1
+first appeared in WebFetch of docs.quickauth.example/cli/setup:7 (external, LIKELY). Trail: /contrail:why toolu…Ab3xQ
+```
+
+- **It goes to you, not to Claude.** The notice is a hook `systemMessage`, which Claude Code shows to the person and does not add to the model's context. A live session confirmed the model does not see it.
+- **It never blocks.** It makes no permission decision; whatever you would have been asked, you are still asked.
+- **It is quiet.** It stays silent for calls with nothing sensitive and for sensitive calls whose values came from you or your repo. Ordinary calls pay for one `sh` pattern match; only a call that looks sensitive starts the CLI.
+- **It can be turned off** with `"tripwire": false` in [`config.json`](#configuration).
+
 ### `contrail why`
 
-The trail behind one action: a file change, a shell command, any tool call by the id a report prints (`toolu…ALhq1`, or `toolu...ALhq1`), or the latest thing the agent did.
+The trail behind whatever you point at. With no argument, the last thing the agent did. Otherwise a file (its latest agent change), `file:line` or `file:start-end` (the call that last wrote that line; see [`blame`](#contrail-blame)), a shell command's text, a commit sha, a call id as reports print it (`toolu…ALhq1`, or `toolu...ALhq1`), or any value the agent used, such as a package name or a URL (the latest call whose arguments held it).
 
 ![contrail why "npm install jwt-decode"](docs/why.svg)
 
@@ -158,6 +174,7 @@ You never named `jwt-decode`. The only place it appeared in the agent's context 
 <summary><b>Reading a report</b></summary>
 
 - **Header.** The action, its session, turn and tool call, and whether the main agent or a subagent ran it.
+- **In short.** The answer first: whether your words named the action, what is sensitive about it, and for each value the chain of sources it was first observed in, with the grade of each link.
 - **Requested?** Whether your own sentences name the target. Text inside fenced code blocks counts as pasted material, not your words. If the sentence that names it also contains a negation such as "don't" or "instead of", the verdict is downgraded and a warning is printed.
 - **Turn.** The prompt the action ran under, recorded by Claude Code.
 - **Where the values came from.** For each significant string in the arguments (a package name, a path, a URL), the input where it first appeared in the agent's context, with the source line quoted. The trail is followed upstream: to the call that fetched the source, and through anything the agent wrote itself (see [conduits](#origins-and-trust)). After three steps the report stops and names the call whose own trail picks up from there.
@@ -169,6 +186,24 @@ You never named `jwt-decode`. The only place it appeared in the agent's context 
 Every line names the rule that produced it (`[R3]`), so a grade can always be traced to a stated condition.
 
 </details>
+
+### `contrail blame`
+
+Each line of a file as it is now, next to the recorded agent call that last wrote it: the session, the date, the turn (your words or a background task report), the call id to pass to `contrail why`, and where that call's values came from.
+
+![contrail blame auth-service/src/session.ts](docs/blame.svg)
+
+```text
+contrail blame <file> [--session <id>] [--json]
+contrail why <file>:<line>          # or <file>:<start>-<end>: the full trail behind the call that last wrote that line
+```
+
+Claude Code cannot tell you why a line exists once the session that wrote it is gone, and `git blame` only names the commit. For every line, Contrail finds the latest recorded write whose text holds that line, across all sessions, through the file's recorded Edit, Write, MultiEdit and NotebookEdit calls and literal shell heredocs.
+
+- **Graded honestly.** The file join is recorded (DIRECT). The line join is a text match (R10), so it is LIKELY at best, and POSSIBLE when the file holds the text more often than the call wrote it or when a shell write was expected but not reported.
+- **Credit where it is due.** An Edit is credited only with the lines it added, not the context it carried over. A Write is credited with every line it wrote. Blank and bracket-only lines join a block only when the lines on both sides belong to the same call.
+- **Never guesses.** A line no recorded write holds is shown as such: it may be yours, pre-existing, or changed since. Lines are compared trimmed, so reindenting keeps attribution, but a formatter run or a hand edit shows UNKNOWN.
+- **What carries text.** Only Edit, Write, MultiEdit, NotebookEdit and literal `cat`/`tee` heredocs record the text written. `npm install`, `sed -i`, `echo >` and the like record none; blame lists those writes in its header and points to `contrail why <file>`.
 
 ### `contrail risks`
 
@@ -370,6 +405,7 @@ That is enforced in code, not left to tone:
 | R7 | A commit's files joined to earlier agent changes. LIKELY at best. |
 | R8 | Whether your own sentences name the action's target. |
 | R9 | A commit joined to the one recorded `git commit` running in the second git dated it, when git printed no commit line (`git commit -q`). LIKELY at best; two or more candidates attribute nothing. |
+| R10 | A line of a file as it is now, joined to the latest recorded write whose text contains it. A text match: LIKELY at best, POSSIBLE when the file holds the text more often than the call wrote it or the write was only expected. |
 
 </details>
 
@@ -518,10 +554,10 @@ Placeholders such as `${VAR}`, `<...>` and `xxxx`, and code that only names a se
 The data directory holds `contrail.db`, the `spool/` directory and an optional `config.json`:
 
 ```json
-{ "retention_days": 90, "max_db_mb": 1024, "store_content": true }
+{ "retention_days": 90, "max_db_mb": 1024, "store_content": true, "tripwire": true }
 ```
 
-Missing or invalid values fall back to these defaults, and `contrail doctor` reports a `config.json` it cannot parse.
+Missing or invalid values fall back to these defaults, and `contrail doctor` reports a `config.json` it cannot parse. `"tripwire": false` turns off the notice before sensitive calls; recording and every command work the same.
 
 <details>
 <summary><b>How the data directory is chosen</b></summary>
@@ -570,7 +606,13 @@ No. There are no network calls and no telemetry. Everything stays in the plugin'
 No. Every grade comes from a deterministic, named rule. A model summary could invent causality; Contrail's job is to show only what the evidence supports.
 
 **Can it block a dangerous command?**
-No, by design. Contrail observes and explains after the fact. A recorder that changes what the agent does corrupts its own evidence. It pairs well with a guardrail that does block.
+No, by design. The tripwire tells you before a sensitive call whose values came from outside, and you still decide in Claude Code's own permission prompt. A recorder that changes what the agent does corrupts its own evidence. Contrail pairs well with a guardrail that does block.
+
+**Does the tripwire tell Claude anything?**
+No. Its notice is a `systemMessage`, which Claude Code shows to you and does not give to the model. A live session confirmed the model does not see it. The `/contrail:*` skills are different: running one puts its report into the conversation, because you asked for it there.
+
+**Can the agent tamper with Contrail's records?**
+It runs as you, so an agent with shell access could edit or delete them, like any file you own. Contrail flags every call that names its data directory or database (`touches Contrail's records`), and the tripwire watches for it. For a record the agent cannot touch, ship the [OpenTelemetry export](#export-to-opentelemetry) to a collector elsewhere. See [SECURITY.md](SECURITY.md).
 
 **What does LIKELY actually mean?**
 That exactly one observed input held that value before the agent first used it. It does not mean that input made the agent act. Contrail never claims to know the agent's reasons.
@@ -596,7 +638,9 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 - **Matching is literal.** If the agent paraphrased a source, or knew a name from training, Contrail finds no source and reports UNKNOWN. There is no paraphrase or embedding matching, by design.
 - **Shell file effects depend on a beta field.** Claude Code reports which files a shell command changed in `bashEditDiff`, which is beta. Without it, those changes are only "expected, not observed".
 - **Web content is an extraction.** For WebFetch, Contrail sees what the model was given, not the page.
-- **One session at a time.** Trails do not cross sessions. `why commit` only sees agent changes in the session that made the commit.
+- **Trails stay within a session.** A value is traced through the session it was used in; `why commit` only sees agent changes in the session that made the commit. `blame` and `find` do look across sessions.
+- **Blame is a text match.** It credits the latest recorded write holding a line's text. It cannot tell identical text written earlier, or already there, from the latest writer's, and it needs the written text to have been recorded.
+- **The tripwire runs before the call.** It reads the session so far, so in a very long session with many large reads its notice can take a second or two before a sensitive-looking call. Ordinary calls do not start it.
 - **Sensitive-action patterns are a fixed list.** An unusual command can go unflagged.
 - **Redaction is best effort.** Secrets without a matching rule can be stored.
 - **Hook fields change between Claude Code releases.** Contrail tolerates unknown and missing fields and degrades to fewer links, but a renamed field can quietly reduce what it can explain. `contrail doctor` counts unparseable events.

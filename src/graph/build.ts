@@ -20,6 +20,8 @@ export interface EventRow {
   repo_key?: string | null;
   payload: string;
   parse_error: string | null;
+  /** null for a hook event recorded live; 'transcript' for one `contrail import` reconstructed */
+  source?: string | null;
 }
 
 const DEPENDENCY_DIR = /(^|\/)(node_modules|vendor|\.venv|venv|site-packages)(\/|$)/;
@@ -207,6 +209,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
 
   for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
+  const fromTranscript = rows.filter(r => r.source === 'transcript').length;
   return {
     sessionId: mainScope.sessionId,
     actions: actionList,
@@ -217,6 +220,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     agentSaid,
     env,
     firstEvent: rows[0]?.hook_event ?? null,
+    source: fromTranscript === 0 ? 'hooks' : fromTranscript === rows.length ? 'transcript' : 'both',
     timeUs: rows.map(r => r.captured_us),
     ...(hashToken ? { hashToken } : {}),
   };

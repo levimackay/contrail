@@ -61,7 +61,7 @@ export function toOtlp(g: Graph, explanations: Map<string, Explanation>, finding
       kind: SPAN_KIND_INTERNAL,
       startTimeUnixNano: nanos(first),
       endTimeUnixNano: nanos(last),
-      attributes: attrs({ 'session.id': sessionId, 'contrail.cwd': g.env.cwd, 'contrail.turns': g.prompts.length, 'contrail.tool_calls': g.actions.length }),
+      attributes: attrs({ 'session.id': sessionId, 'contrail.cwd': g.env.cwd, 'contrail.source': g.source, 'contrail.turns': g.prompts.length, 'contrail.tool_calls': g.actions.length }),
     },
   ];
 

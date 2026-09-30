@@ -5,7 +5,10 @@ import { headlineTrace, type TreeNode, type TreeRoot } from '../engine/tree.ts';
 import type { Action, Commit, Explanation, Graph, Grade, Input, TokenTrace } from '../engine/types.ts';
 import { clip, displayPath } from '../util.ts';
 import { callId, PLAIN, type Style } from './style.ts';
-import { describe, originWording } from './why.ts';
+import { describe, originWording, sourceNote, sourceTag } from './why.ts';
+
+/** Said under any list that names a session by its sourceTag. */
+const TRANSCRIPT_LEGEND = '(from transcript): reconstructed from Claude Code\'s transcript by contrail import, not recorded live. (partly from transcript): some of each.';
 
 export interface SessionSummary {
   id: string;
@@ -50,6 +53,8 @@ export function renderTrace(
   const sessionId = g.sessionId;
   const inputs = new Map(g.inputs.map(i => [i.id, i]));
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(source));
   out.push(
     s.dim(
       `${counted(g.prompts.length, 'turn')} · ${counted(g.actions.length, 'tool call')} · ${counted(g.effects.filter(e => e.kind === 'file').length, 'file effect')}` +
@@ -67,7 +72,8 @@ export function renderTrace(
   }
   if (!filter || filter === 'instructions') {
     for (const i of g.inputs.filter(x => x.origin === 'instructions')) {
-      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad(`${i.availableAt}`, 4))} ${pad('LOADED', 7)} ${clip(i.label, 100)}  ${s.dim(originWording(i))}`] });
+      const who = i.scope.agentId ? s.dim(` [subagent ${callId(i.scope.agentId)}]`) : '';
+      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad(`${i.availableAt}`, 4))} ${pad('LOADED', 7)} ${clip(i.label, 100)}${who}  ${s.dim(originWording(i))}`] });
     }
   }
   if (!filter) {
@@ -129,6 +135,8 @@ export function renderTree(g: Graph, forest: TreeRoot[], omitted: number, s: Sty
   const out: string[] = [];
   const sessionId = g.sessionId;
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(source));
   out.push(s.dim('Each action sits under the call whose output first held its headline value. Data flow, not the agent\'s reasons.'));
   for (const root of forest) {
     out.push('', rootLine(root, g, s));
@@ -188,7 +196,8 @@ export function renderFind(value: string, hits: Array<{ graph: Graph; sightings:
   for (const { graph: g, sightings } of found) {
     const sessionId = g.sessionId;
     const first = g.prompts.find(p => p.from === 'you');
-    out.push('', `${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : '')}`);
+    const tag = sourceTag(g);
+    out.push('', `${s.bold('Session')} ${sessionId.slice(0, 8)}${tag ? ` ${s.bold(tag)}` : ''}  ${s.dim(first ? `"${clip(first.text, 70)}"` : '')}`);
     let seenSource = false;
     for (const hit of sightings) {
       if (hit.source) {
@@ -208,19 +217,24 @@ export function renderFind(value: string, hits: Array<{ graph: Graph; sightings:
     }
   }
   out.push('', s.dim(`HELD: an input that held the value. USED: a call whose arguments contain it. Run ${s.bold('contrail why')} on a call for its graded trail.`));
+  if (found.some(h => h.graph.source !== 'hooks')) out.push(s.dim(TRANSCRIPT_LEGEND));
   return `${out.join('\n')}\n`;
 }
 
 /** Recent sessions with what they did at a glance. */
 export function renderSessions(sessions: SessionSummary[], s: Style = PLAIN): string {
   if (!sessions.length) return 'No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n';
-  const head = ['SESSION', 'LAST ACTIVE', 'TURNS', 'READS', 'WRITES', 'SHELL', 'WEB/MCP', 'SUBAGENTS', 'FLAGGED', 'FIRST PROMPT'];
+  // A SOURCE column only when some session did not come from the hooks, so the usual view is unchanged.
+  const mixed = sessions.some(x => x.graph.source !== 'hooks');
+  const SOURCE_WORD = { hooks: 'live', transcript: 'transcript', both: 'both' } as const;
+  const head = ['SESSION', ...(mixed ? ['SOURCE'] : []), 'LAST ACTIVE', 'TURNS', 'READS', 'WRITES', 'SHELL', 'WEB/MCP', 'SUBAGENTS', 'FLAGGED', 'FIRST PROMPT'];
   const rows = sessions.map(x => {
     const g = x.graph;
     const count = (kinds: string[]) => g.actions.filter(a => kinds.includes(kindOf(a))).length;
     const subagents = new Set(g.actions.map(a => a.scope.agentId).filter(Boolean)).size;
     return [
       x.id.slice(0, 8),
+      ...(mixed ? [SOURCE_WORD[g.source]] : []),
       localTime(x.lastUs),
       `${g.prompts.length}`,
       `${count(['READ', 'SEARCH'])}`,
@@ -238,7 +252,8 @@ export function renderSessions(sessions: SessionSummary[], s: Style = PLAIN): st
   const flaggedCol = head.indexOf('FLAGGED');
   return (
     [s.bold(line(head)), ...body.map((b, i) => (rows[i]![flaggedCol] !== '0' ? highlightFlag(b, s) : b))].join('\n') +
-    `\n\n${s.dim('FLAGGED = sensitive actions whose values trace to external content. See: contrail risks --session <id>')}\n`
+    `\n\n${s.dim('FLAGGED = sensitive actions whose values trace to external content. See: contrail risks --session <id>')}\n` +
+    (mixed ? `${s.dim("SOURCE: live = recorded by Contrail's hooks; transcript = reconstructed from Claude Code's transcript by contrail import; both = some of each.")}\n` : '')
   );
 }
 
@@ -263,7 +278,8 @@ export function renderRisks(findings: Finding[], scanned: { actions: number; ses
     out.push('', `${mark} ${s.bold(describe(f.action, graph))}`);
     const asked = f.requested === 'NAMED' ? 'named by you' : f.requested === 'NOT_NAMED' ? s.flag('not named by you') : f.requested.toLowerCase().replace(/_/g, ' ');
     const prompt = graph.prompts.find(p => p.promptId === f.action.promptId);
-    out.push(`  ${s.accent(f.kinds.join(' · '))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)} · ${prompt?.label ?? 'no turn'} · ${callId(f.action.id)}`)}`);
+    const tag = sourceTag(graph);
+    out.push(`  ${s.accent(f.kinds.join(' · '))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)}`)}${tag ? ` ${s.bold(tag)}` : ''}${s.dim(` · ${prompt?.label ?? 'no turn'} · ${callId(f.action.id)}`)}`);
     const external = f.sources.filter(x => x.input.trust === 'external');
     const shown = (external.length ? external : f.sources).slice(0, 3);
     if (!shown.length) {
@@ -283,6 +299,15 @@ export function renderRisks(findings: Finding[], scanned: { actions: number; ses
     s.dim('▲ values trace to web, MCP or dependency content   △ not named by you   · named by you'),
     s.dim('Contrail explains; it does not judge or block. A flagged action is not proof of an attack, and an unflagged one is not proof of safety.'),
   );
+  const imported = [...g.values()].filter(x => x.source !== 'hooks').length;
+  if (imported) {
+    const which =
+      imported === g.size
+        ? g.size === 1 ? 'This session was' : `All ${g.size} sessions searched were`
+        : `${imported} of the ${g.size} sessions searched ${imported === 1 ? 'was' : 'were'}`;
+    const marked = findings.length && imported < g.size ? '; their findings are marked (from transcript)' : '';
+    out.push(s.dim(`${which} reconstructed, wholly or in part, from Claude Code's transcript by contrail import, not recorded live${marked}.`));
+  }
   return `${out.join('\n')}\n`;
 }
 

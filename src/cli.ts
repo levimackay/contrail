@@ -365,7 +365,7 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
       const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map(a => [a.id, explain(a.id, graph)]));
       const forest = trailForest(graph, explanations);
       const omitted = graph.actions.length - explanations.size;
-      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, source: graph.source, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
       else io.out(renderTree(graph, forest, omitted, s));
       return 0;
     }
@@ -375,7 +375,7 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
       if (!matchesFilter(a, graph, filter) || !EXPLAINED.has(kindForExplain(a.tool))) continue;
       explanations.set(a.id, explain(a.id, graph));
     }
-    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
+    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, source: graph.source, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
   });
@@ -407,7 +407,7 @@ async function risks(flags: Flags, io: Io, s: Style): Promise<number> {
     }
     const ranked = rankFindings(findings);
     if (flags.json) {
-      io.out(`${JSON.stringify(ranked.map(f => ({ action: f.action.id, session: f.action.scope.sessionId, kinds: f.kinds, requested: f.requested, externalUpstream: f.externalUpstream, sources: f.sources.map(x => ({ grade: x.link.grade, token: x.link.token, source: x.input.label, trust: x.input.trust, quote: x.link.quote })) })), null, 2)}\n`);
+      io.out(`${JSON.stringify(ranked.map(f => ({ action: f.action.id, session: f.action.scope.sessionId, source: graphs.get(f.action.scope.sessionId)?.source, kinds: f.kinds, requested: f.requested, externalUpstream: f.externalUpstream, sources: f.sources.map(x => ({ grade: x.link.grade, token: x.link.token, source: x.input.label, trust: x.input.trust, quote: x.link.quote })) })), null, 2)}\n`);
     } else {
       io.out(renderRisks(ranked, { actions, sessions: ids.length }, graphs, s));
     }
@@ -425,7 +425,7 @@ async function sessions(flags: Flags, io: Io, s: Style): Promise<number> {
       return { ...r, graph, flagged: findingsFor(graph).filter(f => f.externalUpstream).length };
     });
     if (flags.json) {
-      io.out(`${JSON.stringify(summaries.map(x => ({ id: x.id, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts.find(p => p.from === 'you')?.text ?? null })), null, 2)}\n`);
+      io.out(`${JSON.stringify(summaries.map(x => ({ id: x.id, source: x.graph.source, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts.find(p => p.from === 'you')?.text ?? null })), null, 2)}\n`);
     } else {
       io.out(renderSessions(summaries, s));
     }

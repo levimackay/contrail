@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Db } from '../store/sqlite.ts';
@@ -50,10 +50,16 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
     let raw: string;
     let mtimeNs: bigint;
     try {
-      mtimeNs = statSync(file, { bigint: true }).mtimeNs;
-      raw = readFileSync(file, 'utf8');
-    } catch {
-      continue; // a concurrent ingest already took it
+      const read = readSpoolFile(file);
+      if (!read) {
+        // Not a regular file (a FIFO would hang every reader; a symlink could point anywhere): drop it.
+        rmSync(file, { force: true });
+        continue;
+      }
+      ({ raw, mtimeNs } = read);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ELOOP') rmSync(file, { force: true }); // a symlink
+      continue; // otherwise a concurrent ingest already took it
     }
 
     const capturedUs = Number(mtimeNs / 1000n);
@@ -278,4 +284,20 @@ function removeIfStale(file: string, now: number): boolean {
 
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
+}
+
+/**
+ * One spool file's text and time, or null when it is not a regular file. Opened without
+ * following symlinks and without blocking, then checked on the open descriptor, so nothing
+ * swapped in between can make a reader hang or read outside the spool.
+ */
+function readSpoolFile(file: string): { raw: string; mtimeNs: bigint } | null {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const st = fstatSync(fd, { bigint: true });
+    if (!st.isFile()) return null;
+    return { raw: readFileSync(fd, 'utf8'), mtimeNs: st.mtimeNs };
+  } finally {
+    closeSync(fd);
+  }
 }

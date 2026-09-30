@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -169,4 +170,17 @@ test('a skill name found both in your skills and the project is ambiguous, so ne
     process.env.HOME = saved;
   }
   assert.equal(JSON.parse(db.get<{ payload: string }>('SELECT payload FROM events')!.payload)._contrail, undefined);
+});
+
+test('a FIFO or a symlink in the spool is dropped, never read: nothing hangs and nothing outside is stored', async () => {
+  const { db, spool } = await setup();
+  const outside = join(spool, '..', 'secret.txt');
+  writeFileSync(outside, 'machine example.org password hunter2hunter2');
+  symlinkSync(outside, join(spool, '1-1-link.json'));
+  execFileSync('mkfifo', [join(spool, '1-2-fifo.json')]);
+  drop(spool, '1-3-ok.json', { hook_event_name: 'Stop', session_id: 's1' });
+  const r = ingest(db, spool, repoKey);
+  assert.equal(r.ingested, 1);
+  assert.deepEqual(readdirSync(spool), []);
+  assert.ok(!db.all<{ payload: string }>('SELECT payload FROM events').some(x => x.payload.includes('hunter2')));
 });

@@ -438,7 +438,7 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename as basename4, dirname as dirname2, join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2087,7 +2087,7 @@ function redactValue(value, key = "") {
 
 // src/ingest/ingest.ts
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync as readFileSync2, statSync, unlinkSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync as readFileSync2, rmSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join as join2 } from "node:path";
 var STRING_CAP = 256 * 1024;
@@ -2112,9 +2112,14 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     let raw;
     let mtimeNs;
     try {
-      mtimeNs = statSync(file, { bigint: true }).mtimeNs;
-      raw = readFileSync2(file, "utf8");
-    } catch {
+      const read = readSpoolFile(file);
+      if (!read) {
+        rmSync(file, { force: true });
+        continue;
+      }
+      ({ raw, mtimeNs } = read);
+    } catch (e) {
+      if (e.code === "ELOOP") rmSync(file, { force: true });
       continue;
     }
     const capturedUs = Number(mtimeNs / 1000n);
@@ -2306,6 +2311,16 @@ function removeIfStale(file, now) {
 }
 function sha256(s) {
   return createHash("sha256").update(s).digest("hex");
+}
+function readSpoolFile(file) {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const st = fstatSync(fd, { bigint: true });
+    if (!st.isFile()) return null;
+    return { raw: readFileSync2(fd, "utf8"), mtimeNs: st.mtimeNs };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // src/ingest/repo.ts
@@ -4127,7 +4142,7 @@ function captureTiming() {
     }
     return times.sort((a, b) => a - b)[2].toFixed(1);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync2(dir, { recursive: true, force: true });
   }
 }
 

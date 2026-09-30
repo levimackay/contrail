@@ -16,8 +16,9 @@ test('every skill is manual-only and may run nothing but the Contrail launcher',
     assert.match(text, /\n```!\nsh "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/contrail" \w+ /, name);
     assert.match(text, /exactly as printed/, name);
     // The permission check refuses shell expansion, so the data directory is plain substitution,
-    // and it must not override CONTRAIL_HOME, which the capture hook honors first.
-    assert.match(text, /contrail" \w+ --plugin-data "\$\{CLAUDE_PLUGIN_DATA\}"/, name);
+    // and it must not override CONTRAIL_HOME, which the capture hook honors first. --from-skill
+    // makes an error the output, since Claude Code shows a failing command as a broken block.
+    assert.match(text, /contrail" \w+ --from-skill --plugin-data "\$\{CLAUDE_PLUGIN_DATA\}"/, name);
     assert.doesNotMatch(text, /--data |:-/, name);
   }
 });

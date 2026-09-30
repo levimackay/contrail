@@ -54,6 +54,7 @@ const OPTIONS = {
   otel: { type: 'boolean' },
   output: { type: 'string', short: 'o' },
   'from-hook': { type: 'boolean' },
+  'from-skill': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
   ...Object.fromEntries(FILTERS.map(f => [f, { type: 'boolean' }])),
@@ -142,12 +143,15 @@ export async function main(argv: string[], io: Io): Promise<number> {
     return await run(rest);
   } catch (e) {
     if (flags['from-hook']) return 0; // a hook must never fail loudly
+    // A skill's command that exits non-zero is shown as a failed shell block, not as its output,
+    // so from a skill the message is the output.
+    const say = flags['from-skill'] ? io.out : io.err;
     if (e instanceof ContrailError) {
-      io.err(`contrail: ${e.message}\n`);
-      return 1;
+      say(`contrail: ${e.message}\n`);
+      return flags['from-skill'] ? 0 : 1;
     }
-    io.err(`contrail: unexpected error. Please report it with this output.\n${(e as Error).stack ?? String(e)}\n`);
-    return 3;
+    say(`contrail: unexpected error. Please report it with this output.\n${(e as Error).stack ?? String(e)}\n`);
+    return flags['from-skill'] ? 0 : 3;
   }
 }
 

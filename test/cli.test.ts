@@ -138,6 +138,16 @@ test('the data directory resolves as the capture hook does: CONTRAIL_HOME before
   assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev'), '/env');
 });
 
+test('from a skill, an error is the output and the exit is 0, so Claude Code shows it as the report', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
+  const plain = await run(['why', 'last', '--data', data]);
+  const skill = await run(['why', 'last', '--from-skill', '--data', data]);
+  assert.equal(plain.code, 1);
+  assert.equal(skill.code, 0);
+  assert.equal(skill.err, '');
+  assert.equal(skill.out, plain.err);
+});
+
 test('with no runtime, the launcher says what to install, and the Stop hook stays quiet', () => {
   // A PATH holding only what the launcher itself needs: no node, no bun.
   const bin = mkdtempSync(join(tmpdir(), 'contrail-bin-'));
@@ -151,6 +161,9 @@ test('with no runtime, the launcher says what to install, and the Stop hook stay
   assert.equal(query.status, 127);
   assert.equal(query.stdout, '');
   assert.match(query.stderr, /^contrail: queries need Node 22\.13\+ or Bun, and neither is on PATH\. Install one, then run this again\. Recording still works/);
+  const skill = spawnSync(sh, [launcher, 'why', '--from-skill', '--stdin'], { env, input: 'last\n', encoding: 'utf8' });
+  assert.equal(skill.status, 0);
+  assert.equal(skill.stdout, query.stderr);
   const hook = spawnSync(sh, [launcher, 'ingest', '--from-hook'], { env, encoding: 'utf8' });
   assert.equal(hook.status, 0);
   assert.equal(hook.stdout + hook.stderr, '');

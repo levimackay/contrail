@@ -7,7 +7,7 @@ allowed-tools: Bash(sh "${CLAUDE_PLUGIN_ROOT}/bin/contrail" *)
 ---
 
 ```!
-sh "${CLAUDE_PLUGIN_ROOT}/bin/contrail" find --plugin-data "${CLAUDE_PLUGIN_DATA}" --stdin 2>&1 <<'CONTRAIL_TARGET'
+sh "${CLAUDE_PLUGIN_ROOT}/bin/contrail" find --from-skill --plugin-data "${CLAUDE_PLUGIN_DATA}" --stdin 2>&1 <<'CONTRAIL_TARGET'
 $ARGUMENTS
 CONTRAIL_TARGET
 ```

@@ -3558,6 +3558,7 @@ var OPTIONS = {
   otel: { type: "boolean" },
   output: { type: "string", short: "o" },
   "from-hook": { type: "boolean" },
+  "from-skill": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
   ...Object.fromEntries(FILTERS.map((f) => [f, { type: "boolean" }]))
@@ -3644,15 +3645,16 @@ ${USAGE}`);
     return await run(rest);
   } catch (e) {
     if (flags["from-hook"]) return 0;
+    const say = flags["from-skill"] ? io.out : io.err;
     if (e instanceof ContrailError) {
-      io.err(`contrail: ${e.message}
+      say(`contrail: ${e.message}
 `);
-      return 1;
+      return flags["from-skill"] ? 0 : 1;
     }
-    io.err(`contrail: unexpected error. Please report it with this output.
+    say(`contrail: unexpected error. Please report it with this output.
 ${e.stack ?? String(e)}
 `);
-    return 3;
+    return flags["from-skill"] ? 0 : 3;
   }
 }
 async function withStore(flags, io, use) {

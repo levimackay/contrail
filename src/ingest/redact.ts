@@ -18,10 +18,10 @@ interface Rule {
 const tag = (id: string) => `[REDACTED:${id}]`;
 
 /** Obvious stand-ins, never secrets. */
-const PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w*\}?|<[^>]*>|x{3,}|\*{3,}|\.{3}|changeme|your[-_a-z]*)$/i;
+const PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w{0,127}\}?|<[^<>\n]{0,128}>|x{3,64}|\*{3,64}|\.{3}|changeme|your[-_a-z]{0,64})$/i;
 
 /** Code that names a secret instead of holding one: getToken(), os.environ[, process.env.API_KEY, 1024. */
-const CODE_REF = /^(?:[A-Za-z_][\w.]*(?:\(.*\)|\[.*\]|\[)|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|\d{1,6})$/;
+const CODE_REF = /^(?:[A-Za-z_][\w.]{0,127}(?:\(.{0,512}\)|\[.{0,512}\]|\[)|[A-Za-z_]\w{0,63}(?:\.[A-Za-z_]\w{0,63}){1,12}|\d{1,6})$/;
 
 const namesSecret = (v: string) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.startsWith('[REDACTED');
 
@@ -131,3 +131,6 @@ export function redactValue(value: unknown, key = ''): unknown {
   }
   return value;
 }
+
+/** Every pattern this module runs, for the test that checks each quantifier is bounded. */
+export const PATTERNS: RegExp[] = [...RULES.map(r => r.re), PLACEHOLDER, CODE_REF, SECRET_NAME];

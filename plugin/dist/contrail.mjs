@@ -1608,8 +1608,8 @@ import { join as join2 } from "node:path";
 
 // src/ingest/redact.ts
 var tag = (id) => `[REDACTED:${id}]`;
-var PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w*\}?|<[^>]*>|x{3,}|\*{3,}|\.{3}|changeme|your[-_a-z]*)$/i;
-var CODE_REF = /^(?:[A-Za-z_][\w.]*(?:\(.*\)|\[.*\]|\[)|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|\d{1,6})$/;
+var PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w{0,127}\}?|<[^<>\n]{0,128}>|x{3,64}|\*{3,64}|\.{3}|changeme|your[-_a-z]{0,64})$/i;
+var CODE_REF = /^(?:[A-Za-z_][\w.]{0,127}(?:\(.{0,512}\)|\[.{0,512}\]|\[)|[A-Za-z_]\w{0,63}(?:\.[A-Za-z_]\w{0,63}){1,12}|\d{1,6})$/;
 var namesSecret = (v) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.startsWith("[REDACTED");
 var SECRET_NAME = /secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie/i;
 var RULES = [
@@ -1706,6 +1706,7 @@ function redactValue(value, key = "") {
   }
   return value;
 }
+var PATTERNS = [...RULES.map((r) => r.re), PLACEHOLDER, CODE_REF, SECRET_NAME];
 
 // src/ingest/ingest.ts
 var STRING_CAP = 256 * 1024;

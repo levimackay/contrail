@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { redactString, redactValue } from './redact.ts';
+import { PATTERNS, redactString, redactValue } from './redact.ts';
 
 // Fake credentials assembled at runtime so this file never contains a literal secret.
 const repeat = (s: string, n: number) => s.repeat(n);
@@ -133,4 +133,26 @@ test('long adversarial text redacts in linear time, not minutes', () => {
   const ms = performance.now() - start;
   // ~0.3 s alone; the quadratic version this guards against took minutes. Loose for busy CI runners.
   assert.ok(ms < 15_000, `took ${Math.round(ms)} ms`);
+});
+
+/** Finds a *, + or {n,} outside a character class: a quantifier with no upper bound. */
+function unboundedQuantifier(source: string): string | undefined {
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '\\') {
+      i++;
+    } else if (inClass) {
+      if (c === ']') inClass = false;
+    } else if (c === '[') {
+      inClass = true;
+    } else if (c === '*' || c === '+' || (c === '{' && /^\{\d+,\}/.test(source.slice(i)))) {
+      return source.slice(Math.max(0, i - 30), i + 1);
+    }
+  }
+  return undefined;
+}
+
+test('every quantifier in every redaction pattern is bounded', () => {
+  for (const re of PATTERNS) assert.equal(unboundedQuantifier(re.source), undefined, re.source.slice(0, 80));
 });

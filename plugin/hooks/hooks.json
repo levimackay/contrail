@@ -1,5 +1,5 @@
 {
-  "description": "Contrail: record hook events so `contrail why` can reconstruct what led to an action.",
+  "description": "Contrail: record hook events so `contrail why` can show the observable trail behind an action.",
   "hooks": {
     "SessionStart": [
       {

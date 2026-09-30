@@ -239,8 +239,11 @@ test('a symlink or a FIFO where a transcript would be is never read', async () =
   assert.match(r.out, /^1 Claude Code session found .*\n {2}imported {5}1 session, 4 events\n/);
 });
 
-test('with no transcripts for this repository, import says where it looked and what else to try', async () => {
+test('with nothing recorded, the first-run messages point to contrail import', async () => {
   const w = world();
-  assert.match((await w.run(['import'])).out, /^0 Claude Code sessions found .*\n {2}No transcripts here belong to .*--all takes every project/);
+  assert.match((await w.run(['sessions'])).out, /contrail import/);
+  assert.match((await w.run(['trace'])).err, /No sessions recorded yet\..*\n.*run contrail import in a terminal\./);
+  assert.match((await w.run(['risks'])).out, /contrail import/);
+  assert.match((await w.run(['import'])).out, /^0 Claude Code sessions found .*\n {2}No transcripts here belong to /);
   assert.ok(existsSync(join(w.data, 'contrail.db')));
 });

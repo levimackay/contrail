@@ -4,6 +4,7 @@ import { ContrailError } from '../errors.ts';
 import { buildGraph, type EventRow } from '../graph/build.ts';
 import type { Graph } from '../engine/types.ts';
 import type { Db } from '../store/sqlite.ts';
+import { IMPORT_HINT } from '../render/session.ts';
 
 export interface SessionRow {
   id: string;
@@ -30,7 +31,7 @@ export function recentSessions(db: Db, repoKey: string, limit: number, all = fal
 export function pickSession(db: Db, prefix: string | undefined, repoKey: string): string {
   if (!prefix || prefix === 'last') {
     const [latest] = recentSessions(db, repoKey, 1);
-    if (!latest) throw new ContrailError('No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.');
+    if (!latest) throw new ContrailError(`No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n${IMPORT_HINT}`);
     return latest.id;
   }
   const matches = db.all<{ id: string }>(

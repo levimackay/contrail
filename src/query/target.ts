@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ContrailError } from '../errors.ts';
+import { IMPORT_HINT } from '../render/session.ts';
 import type { Db } from '../store/sqlite.ts';
 
 export type Target =
@@ -79,7 +80,7 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
       target.path, real,
     );
     if (!rows.length) {
-      throw new ContrailError(`No recorded agent change to ${target.shown}. Contrail only sees sessions recorded since it was installed.`);
+      throw new ContrailError(`No recorded agent change to ${target.shown}. Contrail only sees sessions recorded since it was installed, and earlier ones brought in with contrail import.`);
     }
   } else if (target.kind === 'command') {
     rows = db.all(
@@ -110,7 +111,7 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
     );
     if (!rows.length) {
       throw new ContrailError(
-        'No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again.',
+        `No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again.\n${IMPORT_HINT}`,
       );
     }
   }

@@ -24,7 +24,7 @@ import { reviewBranch } from './query/review.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget, unquote, type Target } from './query/target.ts';
 import { blameJson, noLineWriter, renderBlame, renderLineNote } from './render/blame.ts';
-import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, renderTripwire, type TraceFilter } from './render/session.ts';
+import { EXPLAINED, IMPORT_HINT, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, renderTripwire, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
 import { importJson, renderImport } from './render/import.ts';
@@ -252,7 +252,7 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
       if (!use) {
         throw new ContrailError(
           `Nothing recorded matches "${value}": no agent change to that file, no shell command containing it, and no call that used it. ` +
-            'Contrail only sees sessions recorded since it was installed. Run /contrail:why with no argument for the last action.',
+            'Contrail only sees sessions recorded since it was installed, and earlier ones brought in with contrail import. Run /contrail:why with no argument for the last action.',
         );
       }
       hit = use;
@@ -730,7 +730,7 @@ async function doctor(flags: Flags, io: Io): Promise<number> {
       `launcher         ${existsSync(join(dataDir, 'bin', 'contrail')) ? join(dataDir, 'bin', 'contrail') : 'written at the next session start'}`,
       ...(hook ? [`capture hook     ${hook} ms per event (median of 5)`] : []),
       stats.events === 0 && backlog === 0
-        ? 'No events yet. Run a Claude Code session with the plugin enabled, then check again.'
+        ? `No events yet. Run a Claude Code session with the plugin enabled, then check again. ${IMPORT_HINT}`
         : 'Recording and queries work.',
     ];
     io.out(`${lines.join('\n')}\n`);

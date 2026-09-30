@@ -7,6 +7,9 @@ import { clip, displayPath } from '../util.ts';
 import { callId, PLAIN, type Style } from './style.ts';
 import { describe, originWording, sourceNote, sourceTag } from './why.ts';
 
+/** Where a user with no recorded sessions can get their earlier ones. */
+export const IMPORT_HINT = 'Sessions from before Contrail was installed can be brought in from Claude Code\'s transcripts: run contrail import in a terminal.';
+
 /** Said under any list that names a session by its sourceTag. */
 const TRANSCRIPT_LEGEND = '(from transcript): reconstructed from Claude Code\'s transcript by contrail import, not recorded live. (partly from transcript): some of each.';
 
@@ -223,7 +226,7 @@ export function renderFind(value: string, hits: Array<{ graph: Graph; sightings:
 
 /** Recent sessions with what they did at a glance. */
 export function renderSessions(sessions: SessionSummary[], s: Style = PLAIN): string {
-  if (!sessions.length) return 'No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n';
+  if (!sessions.length) return `No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n${IMPORT_HINT}\n`;
   // A SOURCE column only when some session did not come from the hooks, so the usual view is unchanged.
   const mixed = sessions.some(x => x.graph.source !== 'hooks');
   const SOURCE_WORD = { hooks: 'live', transcript: 'transcript', both: 'both' } as const;
@@ -268,7 +271,7 @@ export function renderRisks(findings: Finding[], scanned: { actions: number; ses
     `${s.bold('Sensitive actions')} ${s.dim(`(${findings.length} of ${counted(scanned.actions, 'tool call')} in ${counted(scanned.sessions, 'session')})`)}`,
   );
   if (!scanned.actions) {
-    out.push('', '  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.');
+    out.push('', '  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.', `  ${IMPORT_HINT}`);
     return `${out.join('\n')}\n`;
   }
   if (!findings.length) out.push('', '  None found.');

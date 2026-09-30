@@ -85,7 +85,7 @@ export function blameFile(db: Db, path: string, shown: string, session: string |
   if (!rows.length) {
     const where = session ? ` in session ${session.slice(0, 8)}` : '';
     throw new ContrailError(
-      `No recorded agent write to ${shown}${where}. Contrail sees Edit, Write, MultiEdit and NotebookEdit calls, and shell heredocs, in sessions recorded since it was installed.`,
+      `No recorded agent write to ${shown}${where}. Contrail sees Edit, Write, MultiEdit and NotebookEdit calls, and shell heredocs, in sessions recorded since it was installed and earlier ones brought in with contrail import.`,
     );
   }
 

@@ -3617,6 +3617,606 @@ function blameBlocks(lines) {
 
 // src/query/sessions.ts
 import { basename as basename5 } from "node:path";
+
+// src/render/style.ts
+var sgr = (code) => (s) => s ? `\x1B[${code}m${s}\x1B[0m` : s;
+var GRADE_COLOR = {
+  DIRECT: sgr("1;32"),
+  LIKELY: sgr("1;36"),
+  POSSIBLE: sgr("33"),
+  UNKNOWN: sgr("90")
+};
+var pad = (g, width) => " ".repeat(Math.max(1, width - g.length));
+var PLAIN = {
+  on: false,
+  grade: (g, width = 9) => g + pad(g, width),
+  bold: (s) => s,
+  dim: (s) => s,
+  flag: (s) => s,
+  accent: (s) => s
+};
+var COLOR = {
+  on: true,
+  grade: (g, width = 9) => (GRADE_COLOR[g]?.(g) ?? g) + pad(g, width),
+  bold: sgr("1"),
+  dim: sgr("2"),
+  flag: sgr("1;35"),
+  accent: sgr("1;36")
+};
+function styleFor(env, isTTY) {
+  if (env.NO_COLOR) return PLAIN;
+  if (env.FORCE_COLOR && env.FORCE_COLOR !== "0") return COLOR;
+  return isTTY ? COLOR : PLAIN;
+}
+
+// src/render/why.ts
+var HEADING = "Where the values came from (data provenance, not the agent's reasons)";
+var FOOTER = [
+  `LIKELY means "this value first appeared in the agent's context from this source", not "this source made the agent act".`,
+  "Not observable: the agent's reasons for this action."
+];
+function sourceNote(g) {
+  if (g.source === "transcript") return "reconstructed from Claude Code's transcript by contrail import, not recorded live";
+  if (g.source === "both") return "partly reconstructed from Claude Code's transcript by contrail import, partly recorded live";
+  return null;
+}
+function sourceTag(g) {
+  if (g.source === "transcript") return "(from transcript)";
+  if (g.source === "both") return "(partly from transcript)";
+  return "";
+}
+function renderWhy(e, g, note, s = PLAIN) {
+  const out = [];
+  const a = e.action;
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  const prompt = g.prompts.find((p) => p.promptId === a.promptId);
+  out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
+  out.push(
+    s.dim(
+      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : ` \xB7 ${a.status.toUpperCase()}`)
+    )
+  );
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(`  ${source}`));
+  if (note) out.push(s.dim(`  ${note}`));
+  out.push("");
+  const best = bestPerGroup(e.traces);
+  const credited = new Set(best.filter((t) => t.token.role !== "hint").flatMap((t) => t.links.filter((l) => l.grade !== "UNKNOWN").map((l) => l.to)));
+  const shown = best.filter((t) => t.token.role !== "hint" || t.links.some((l) => l.grade !== "UNKNOWN" && !credited.has(l.to)));
+  const found = shown.filter((t) => t.links.some((l) => l.grade !== "UNKNOWN"));
+  const unfound = shown.filter((t) => !found.includes(t));
+  out.push(...inShort(e, found, unfound, inputs, s), "");
+  out.push(...requestedLines(e, s));
+  out.push(
+    !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
+  );
+  out.push("", s.bold(HEADING));
+  for (const t of found) trace(t, 1, out, inputs, s);
+  if (unfound.length) {
+    out.push(`  ${s.grade("UNKNOWN")}no observed source for: ${unfound.map((t) => clip(t.token.text, 80)).join(", ")}  ${s.dim("[R4]")}`);
+  }
+  if (!e.traces.length) out.push(s.dim("  nothing distinctive in this action to trace"));
+  const searched = e.traces[0]?.searched;
+  if (searched) {
+    out.push(s.dim(`  (searched ${searched.count} input${searched.count === 1 ? "" : "s"} in this agent's context before seq ${searched.beforeSeq})`));
+  }
+  out.push("");
+  const effects = e.effects.map((l) => ({ l, fx: g.effects.find((x) => x.id === l.to) })).filter((x) => !!x.fx);
+  if (effects.length) {
+    out.push(s.bold("Effects"));
+    const target = (fx) => clip(fx.target, 100);
+    const width = Math.max(...effects.map((x) => target(x.fx).length));
+    for (const { l, fx } of effects) {
+      out.push(`  ${s.grade(l.grade)}${target(fx).padEnd(width)}  ${effectWording(fx)}  ${s.dim(`[${l.rule} ${clip(fx.evidence, 40)}]`)}`);
+      for (const line of fx.patch.slice(0, 6)) out.push(s.dim(`      ${clip(line, 100)}`));
+    }
+    out.push("");
+  }
+  out.push(`${s.bold("Weakest link on this trail:")} ${s.grade(e.chainGrade, 0).trim()}`);
+  for (const line of FOOTER) out.push(s.dim(line));
+  const said = a.scope.agentId ? g.agentSaid.byAgent[a.scope.agentId] : a.promptId ? g.agentSaid.byPrompt[a.promptId] : void 0;
+  if (said) out.push(s.dim(`Agent said (shown for context, never used as evidence): "${clip(said, 220)}"`));
+  out.push(s.dim(`Blind spots: ${e.blindSpots.join("; ")}. No observed source is not the same as no source.`));
+  return `${out.join("\n")}
+`;
+}
+function inShort(e, found, unfound, inputs, s) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const t of found) {
+    const chain = [];
+    let cur = t;
+    let next;
+    while (cur) {
+      const link = cur.links.find((l) => l.grade === "LIKELY") ?? cur.links.find((l) => l.firstSeen) ?? cur.links.find((l) => l.grade !== "UNKNOWN");
+      const src = link?.to ? inputs.get(link.to) : void 0;
+      if (!link || !src) break;
+      chain.push({ link, src, value: cur.token.text });
+      if (!cur.upstream && cur.truncated) next = cur.truncated.next;
+      cur = cur.upstream?.trace;
+    }
+    if (!chain.length) continue;
+    const key = chain.map((c) => `${c.src.id}:${c.link.quote?.line ?? ""}`).join(">");
+    const group = groups.get(key) ?? { values: [], chain, next };
+    group.values.push(clip(t.token.text, 60));
+    groups.set(key, group);
+  }
+  const external = [...groups.values()].some((g) => g.chain.some((c) => c.src.trust === "external"));
+  const facts = [
+    ASKED[e.requested.verdict](s),
+    ...sensitivity(e.action).map((k) => s.flag(k)),
+    ...external ? [s.flag("values from external content")] : []
+  ];
+  const out = [s.bold("In short"), `  ${facts.join(s.dim(" \xB7 "))}`];
+  const listed = [...groups.values()].slice(0, 3);
+  for (const g of listed) {
+    out.push(`  ${s.accent(clip(g.values.join(", "), 110))}`);
+    g.chain.forEach(({ link, src, value }, i) => {
+      const where2 = link.quote?.line != null ? `${clip(src.label, 90)}:${link.quote.line}` : clip(src.label, 90);
+      const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+      const via = i > 0 && value !== g.chain[i - 1].value ? s.dim(`  for ${clip(value, 60)}`) : "";
+      out.push(`    ${s.dim("\u2190")} ${s.grade(link.grade)}${where2}  ${trust2}${via}`);
+    });
+    if (g.next !== void 0) out.push(`    ${s.dim(`\u2190 \u2026 further back${g.next ? `: contrail why ${callId(g.next)}` : ""}`)}`);
+  }
+  if (groups.size > listed.length) out.push(s.dim(`  (${groups.size - listed.length} more below)`));
+  if (unfound.length) out.push(`  ${s.dim("no observed source for:")} ${clip(unfound.map((t) => t.token.text).join(", "), 100)}`);
+  if (!found.length && !unfound.length) out.push(s.dim("  nothing distinctive in this action to trace"));
+  return out;
+}
+var ASKED = {
+  NAMED: () => "named in your words",
+  NAMED_NEGATED: (s) => s.flag("named, but your latest mention is negated"),
+  PARTLY_NAMED: () => "partly named in your words",
+  NOT_NAMED: (s) => s.flag("not named in your words"),
+  NOTHING_TO_MATCH: () => "nothing in it to match against your words"
+};
+function trace(t, depth, out, inputs, s) {
+  const pad3 = "  ".repeat(depth);
+  const firstUse2 = t.firstUse ? `, first used in ${callId(t.firstUse.actionId)} at seq ${t.firstUse.preSeq}` : "";
+  out.push(`${pad3}${s.accent(clip(t.token.text, 80))}  ${s.dim(`(${t.token.argPath}${firstUse2})`)}`);
+  for (const l of t.links) {
+    if (!l.to) {
+      out.push(`${pad3}  ${s.grade(l.grade)}${l.note}  ${s.dim(`[${l.rule}]`)}`);
+      continue;
+    }
+    const src = inputs.get(l.to);
+    if (!src) continue;
+    const where2 = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
+    out.push(`${pad3}  ${s.grade(l.grade)}${sourceWording(l, where2)}  ${s.dim(`[${l.rule}]`)}`);
+    if (l.quote?.text) out.push(`${pad3}           ${s.dim(l.quote.line != null ? `${l.quote.line}\u2502` : "\u2502")} ${clip(l.quote.text, 100)}`);
+    else if (l.quote && src.hashed) out.push(`${pad3}           ${s.dim(`${l.quote.line ?? ""}\u2502 (text not stored)`)}`);
+    const origin = originWording(src);
+    out.push(`${pad3}           ${src.trust === "external" ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` \xB7 returned by ${callId(src.producedBy)} (seq ${src.availableAt})` : "")}`);
+  }
+  if (t.links.every((l) => l.grade === "UNKNOWN") && depth > 1) out.push(s.dim(`${pad3}  the trail starts here: the reason is not observable`));
+  if (t.upstream) {
+    const u = t.upstream;
+    const heading = u.kind === "call" ? `how the agent came to call ${u.via?.tool} ${callId(u.via?.id ?? "")}:` : u.kind === "conduit" ? `that text was written by the agent (${u.via?.tool} ${callId(u.via?.id ?? "")}); following the same value back:` : "a compaction summary is agent-written; the same value before the compaction:";
+    out.push(s.dim(`${pad3}  ${heading}`));
+    trace(u.trace, depth + 2, out, inputs, s);
+  }
+  if (t.truncated) {
+    const next = t.truncated.next ? `; contrail why ${callId(t.truncated.next)} picks it up from there` : "";
+    out.push(s.dim(`${pad3}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
+  }
+}
+function sourceWording(l, where2) {
+  if (l.note === "you supplied it") return `you supplied it: ${where2}`;
+  if (l.note === "also in") return `also in ${where2}`;
+  if (l.grade === "LIKELY") return `only observed in ${where2}`;
+  if (l.firstSeen) return `could be from ${where2} (seen first)`;
+  if (l.note) return `${where2} (${l.note})`;
+  return `could be from ${where2}`;
+}
+var ORIGIN_WORDING = {
+  prompt: "your words",
+  template: "slash-command template",
+  instructions: "instructions file",
+  file: "repo file",
+  dependency_file: "dependency file, written by a third party",
+  search: "search output",
+  shell: "shell output",
+  web: "web page, as a model's extraction of it, not the page itself",
+  web_search: "web search results",
+  mcp: "MCP server result",
+  skill: "skill",
+  subagent_prompt: "agent-written instructions to a subagent",
+  subagent_result: "agent-written subagent report",
+  compaction: "agent-written compaction summary",
+  tool_output: "tool output"
+};
+function originWording(i) {
+  if (i.origin === "instructions") {
+    return i.trust === "local" ? "repo instructions (repo content, not you)" : "your instructions (user-level)";
+  }
+  return `${ORIGIN_WORDING[i.origin]} (${i.trust})`;
+}
+function requestedLines(e, s) {
+  const r = e.requested;
+  const quoted = r.sentence ? `"${clip(r.sentence.text, 80)}"` : "";
+  const tag3 = (t) => s.dim(`[${t}]`);
+  switch (r.verdict) {
+    case "NAMED":
+      return [
+        `Requested?  ${s.bold("NAMED")}  ${quoted}  ${tag3(`R8 ${r.grade}`)}`,
+        s.dim('            "Named" means your words contain it. It is not a judgment of intent or permission.')
+      ];
+    case "NAMED_NEGATED":
+      return [`Requested?  ${s.flag("NAMED, BUT YOUR LATEST MENTION IS NEGATED:")} ${quoted}  ${tag3(`R8 ${r.grade}`)}`];
+    case "PARTLY_NAMED":
+      return [`Requested?  ${s.bold("PARTLY NAMED")}  ${quoted} names ${clip(r.matched ?? "", 80)}, not everything this action targets  ${tag3(`R8 ${r.grade}`)}`];
+    case "NOT_NAMED": {
+      const yours = r.searched === 1 ? "Your 1 sentence this session does not" : `None of your ${r.searched} sentences this session`;
+      return [`Requested?  ${s.flag("NOT NAMED")}. ${yours} name it.  ${tag3("R8")}`];
+    }
+    case "NOTHING_TO_MATCH":
+      return [`Requested?  nothing specific in this action to match against your words  ${tag3("R8")}`];
+  }
+}
+function describe(a, g) {
+  const path = str(a.input, "file_path") ?? str(a.input, "notebook_path");
+  if (path) return clip(displayPath(path, g.env.cwd, g.env.home), 120);
+  if (a.tool === "Bash") return clip(str(a.input, "command") ?? "", 90);
+  if (a.tool === "WebFetch") return clip(str(a.input, "url") ?? "", 90);
+  if (a.tool === "Agent" || a.tool === "Task") return clip(str(a.input, "description") ?? str(a.input, "prompt") ?? "", 90);
+  if (a.tool === "Grep" || a.tool === "Glob") {
+    const where2 = str(a.input, "path");
+    return clip(`${JSON.stringify(str(a.input, "pattern") ?? "")}${where2 ? ` in ${displayPath(where2, g.env.cwd, g.env.home)}` : ""}`, 90);
+  }
+  if (a.tool === "WebSearch") return clip(JSON.stringify(str(a.input, "query") ?? ""), 90);
+  if (a.tool === "Skill") return clip(str(a.input, "skill") ?? "", 90);
+  if (a.tool.startsWith("mcp__")) return clip(`${a.tool.slice(5).replace("__", "/")} ${JSON.stringify(a.input)}`, 90);
+  return clip(JSON.stringify(a.input), 90);
+}
+function effectWording(fx) {
+  if (fx.evidence === "filePath") return "written by this call";
+  if (fx.evidence === "bashEditDiff") return "changed while this command ran";
+  if (fx.evidence === "commit_stdout") return "commit made by this command";
+  if (fx.evidence === "expected") return fx.kind === "network" ? "the command names this host; the request itself was not observed" : "expected for this kind of command, not observed";
+  return "request made and answered";
+}
+
+// src/render/session.ts
+var IMPORT_HINT = "Sessions from before Contrail was installed can be brought in from Claude Code's transcripts: run contrail import in a terminal.";
+var TRANSCRIPT_LEGEND = "(from transcript): reconstructed from Claude Code's transcript by contrail import, not recorded live. (partly from transcript): some of each.";
+var KIND = {
+  Read: "READ",
+  Grep: "SEARCH",
+  Glob: "SEARCH",
+  LS: "SEARCH",
+  Edit: "EDIT",
+  MultiEdit: "EDIT",
+  Write: "WRITE",
+  NotebookEdit: "EDIT",
+  Bash: "SHELL",
+  WebFetch: "WEB",
+  WebSearch: "WEB",
+  Agent: "AGENT",
+  Task: "AGENT",
+  Skill: "SKILL"
+};
+var kindOf = (a) => a.tool.startsWith("mcp__") ? "MCP" : KIND[a.tool] ?? "TOOL";
+var summary = (a, g) => kindOf(a) === "TOOL" ? `${a.tool} ${describe(a, g)}` : describe(a, g);
+var EXPLAINED = /* @__PURE__ */ new Set(["EDIT", "WRITE", "SHELL", "WEB", "MCP", "AGENT"]);
+function matchesFilter(a, g, filter) {
+  if (!filter) return true;
+  const kind = kindOf(a);
+  if (filter === "writes") return g.effects.some((e) => e.actionId === a.id && e.kind === "file");
+  if (filter === "shell") return kind === "SHELL";
+  if (filter === "network") return kind === "WEB" || kind === "MCP" || g.effects.some((e) => e.actionId === a.id && e.kind === "network");
+  if (filter === "mcp") return kind === "MCP";
+  if (filter === "subagents") return kind === "AGENT" || a.scope.agentId !== null;
+  return false;
+}
+function renderTrace(g, explanations, filter, s = PLAIN) {
+  const out = [];
+  const sessionId = g.sessionId;
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(source));
+  out.push(
+    s.dim(
+      `${counted(g.prompts.length, "turn")} \xB7 ${counted(g.actions.length, "tool call")} \xB7 ${counted(g.effects.filter((e) => e.kind === "file").length, "file effect")}` + (filter ? ` \xB7 showing --${filter}` : "")
+    )
+  );
+  const items = [];
+  if (!filter) {
+    for (const p of g.prompts) {
+      const head = p.from === "task" ? `${s.dim("background task report, not your words:")} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
+      items.push({ seq: p.seq, line: () => ["", `${s.bold(p.label)}  ${head}`] });
+    }
+  }
+  if (!filter || filter === "instructions") {
+    for (const i of g.inputs.filter((x) => x.origin === "instructions")) {
+      const who = i.scope.agentId ? s.dim(` [subagent ${callId(i.scope.agentId)}]`) : "";
+      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad2(`${i.availableAt}`, 4))} ${pad2("LOADED", 7)} ${clip(i.label, 100)}${who}  ${s.dim(originWording(i))}`] });
+    }
+  }
+  if (!filter) {
+    for (const i of g.inputs.filter((x) => x.origin === "compaction")) {
+      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad2(`${i.availableAt}`, 4))} ${s.dim("COMPACTED  earlier context now visible only through the summary")}`] });
+    }
+  }
+  for (const a of g.actions) {
+    if (filter === "instructions" || !matchesFilter(a, g, filter)) continue;
+    items.push({ seq: a.preSeq, line: () => actionLines(a, g, explanations.get(a.id), inputs, s) });
+  }
+  items.sort((a, b) => a.seq - b.seq);
+  for (const item of items) out.push(...item.line());
+  if (!items.length) out.push("", s.dim("  nothing matches this filter"));
+  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
+  return `${out.join("\n")}
+`;
+}
+function actionLines(a, g, e, inputs, s) {
+  const kind = kindOf(a);
+  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
+  const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${summary(a, g)}${who}${failed}`];
+  if (!e) return lines;
+  const detail = trailDetail(e, inputs, s);
+  if (detail) lines.push(`         ${s.dim("\u21B3")} ${detail}`);
+  const effects = g.effects.filter((x) => x.actionId === a.id && x.kind !== "network");
+  if (effects.length && kind === "SHELL") {
+    const shown = effects.slice(0, 4).map((x) => clip(x.target, 80)).join(", ") + (effects.length > 4 ? `, +${effects.length - 4} more` : "");
+    const how = effects.every((x) => x.evidence === "expected") ? s.dim(" (expected, not observed)") : "";
+    lines.push(`         ${s.dim("\u2192")} ${shown}${how}`);
+  }
+  return lines;
+}
+function trailDetail(e, inputs, s) {
+  const head = headlineTrace(e);
+  const from = head ? traceSource(head, inputs, s) : "";
+  const found = from || (e.traces.length ? `${s.grade("UNKNOWN", 0).trim()} ${s.dim("no observed source")}` : "");
+  const asked = e.requested.verdict === "NAMED" ? s.dim("named by you") : e.requested.verdict === "NOT_NAMED" ? s.flag("not named by you") : "";
+  return [found, asked].filter(Boolean).join("   ");
+}
+function traceSource(t, inputs, s) {
+  const link = t.links.find((l) => l.grade !== "UNKNOWN");
+  const src = link?.to ? inputs.get(link.to) : void 0;
+  if (!src || !link) return "";
+  const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+  return `${s.grade(link.grade, 0).trim()} ${clip(t.token.text, 80)} \u2190 ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""} ${trust2}`;
+}
+function renderTree(g, forest, omitted, s = PLAIN) {
+  const out = [];
+  const sessionId = g.sessionId;
+  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(source));
+  out.push(s.dim("Each action sits under the call whose output first held its headline value. Data flow, not the agent's reasons."));
+  for (const root of forest) {
+    out.push("", rootLine(root, g, s));
+    root.children.forEach((child, i) => nodeLines(child, "", i === root.children.length - 1, g, s, out));
+  }
+  if (omitted) out.push("", s.dim(`${omitted} later actions are not shown; run contrail trace for the full timeline.`));
+  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
+  return `${out.join("\n")}
+`;
+}
+function rootLine(root, g, s) {
+  if (root.kind === "unknown") return s.bold("no observed source");
+  if (root.kind === "nothing") return s.bold("nothing to trace") + s.dim(" (no values in these calls to follow)");
+  const src = root.source;
+  const prompt = src.origin === "prompt" ? g.prompts.find((p) => `prompt:${p.promptId}` === src.id) : void 0;
+  const what = prompt ? `${clip(src.label, 100)}  "${clip(prompt.text, 70)}"` : clip(src.label, 100);
+  return `${s.bold(what)}  ${src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`;
+}
+function nodeLines(node, prefix, last, g, s, out) {
+  const a = node.action;
+  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
+  const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : "";
+  const external = node.source?.trust === "external" ? ` ${s.flag("(external)")}` : "";
+  const via = node.link && node.token ? `  ${s.dim("\u2190")} ${s.grade(node.link.grade, 0).trim()} ${clip(node.token, 80)}${line}${external}` : "";
+  out.push(`${s.dim(prefix + (last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 "))}${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kindOf(a), 7)} ${clip(summary(a, g), 60)}${who}${failed}${via}`);
+  const next = prefix + (last ? "    " : "\u2502   ");
+  node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
+}
+function renderStatusline(g, findings, s = PLAIN) {
+  const name2 = s.dim("contrail");
+  if (!g) return `${name2} ${s.dim("recording")}`;
+  const external = findings.filter((f) => f.externalUpstream).length;
+  const unnamed = findings.filter((f) => !f.externalUpstream && f.requested === "NOT_NAMED").length;
+  const parts = [
+    external ? s.flag(`\u25B2 ${external} from external content`) : "",
+    unnamed ? s.bold(`\u25B3 ${unnamed} not named by you`) : "",
+    s.dim(`${g.actions.length} call${g.actions.length === 1 ? "" : "s"}`)
+  ].filter(Boolean);
+  return `${name2} ${parts.join(s.dim(" \xB7 "))}`;
+}
+function renderFind(value, hits, scanned, s = PLAIN) {
+  const found = hits.filter((h) => h.sightings.length);
+  const out = [`${s.bold(`"${clip(value, 80)}"`)} ${s.dim(`in ${found.length} of ${scanned} session${scanned === 1 ? "" : "s"}`)}`];
+  if (!found.length) {
+    out.push("", `  ${s.dim("No recorded input or call contains it. Matching is whole-token and literal; no observed source is not the same as no source.")}`);
+    return `${out.join("\n")}
+`;
+  }
+  for (const { graph: g, sightings } of found) {
+    const sessionId = g.sessionId;
+    const first = g.prompts.find((p) => p.from === "you");
+    const tag3 = sourceTag(g);
+    out.push("", `${s.bold("Session")} ${sessionId.slice(0, 8)}${tag3 ? ` ${s.bold(tag3)}` : ""}  ${s.dim(first ? `"${clip(first.text, 70)}"` : "")}`);
+    let seenSource = false;
+    for (const hit of sightings) {
+      if (hit.source) {
+        const src = hit.source.input;
+        const where2 = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ""}`;
+        const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("HELD", 6)} ${where2}  ${trust2}${seenSource ? "" : `  ${s.accent("first seen")}`}`);
+        seenSource = true;
+        if (hit.source.text) out.push(`              ${s.dim(hit.source.line != null ? `${hit.source.line}\u2502` : "\u2502")} ${clip(hit.source.text, 96)}`);
+        else if (src.hashed) out.push(`              ${s.dim(`${hit.source.line ?? ""}\u2502 (text not stored)`)}`);
+      } else if (hit.use) {
+        const a = hit.use.action;
+        const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+        const kinds = hit.use.kinds.length ? `  ${s.flag(hit.use.kinds.join(" \xB7 "))}` : "";
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("USED", 6)} ${kindOf(a)} ${clip(summary(a, g), 80)} ${s.dim(`(${hit.use.argPath})`)}${who}${kinds}`);
+      }
+    }
+  }
+  out.push("", s.dim(`HELD: an input that held the value. USED: a call whose arguments contain it. Run ${s.bold("contrail why")} on a call for its graded trail.`));
+  if (found.some((h) => h.graph.source !== "hooks")) out.push(s.dim(TRANSCRIPT_LEGEND));
+  return `${out.join("\n")}
+`;
+}
+function renderSessions(sessions2, s = PLAIN) {
+  if (!sessions2.length) return `No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.
+${IMPORT_HINT}
+`;
+  const mixed = sessions2.some((x) => x.graph.source !== "hooks");
+  const SOURCE_WORD = { hooks: "live", transcript: "transcript", both: "both" };
+  const head = ["SESSION", ...mixed ? ["SOURCE"] : [], "LAST ACTIVE", "TURNS", "READS", "WRITES", "SHELL", "WEB/MCP", "SUBAGENTS", "FLAGGED", "FIRST PROMPT"];
+  const rows = sessions2.map((x) => {
+    const g = x.graph;
+    const count2 = (kinds) => g.actions.filter((a) => kinds.includes(kindOf(a))).length;
+    const subagents = new Set(g.actions.map((a) => a.scope.agentId).filter(Boolean)).size;
+    return [
+      x.id.slice(0, 8),
+      ...mixed ? [SOURCE_WORD[g.source]] : [],
+      localTime(x.lastUs),
+      `${g.prompts.length}`,
+      `${count2(["READ", "SEARCH"])}`,
+      `${new Set(g.effects.filter((e) => e.kind === "file").map((e) => e.target)).size}`,
+      `${count2(["SHELL"])}`,
+      `${count2(["WEB", "MCP"])}`,
+      `${subagents}`,
+      `${x.flagged}`,
+      clip(g.prompts.find((p) => p.from === "you")?.text ?? "", 60)
+    ];
+  });
+  const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
+  const line = (cells) => cells.map((c, i) => i === cells.length - 1 ? c : c.padEnd(widths[i])).join("  ");
+  const body = rows.map(line);
+  const flaggedCol = head.indexOf("FLAGGED");
+  return [s.bold(line(head)), ...body.map((b, i) => rows[i][flaggedCol] !== "0" ? highlightFlag(b, s) : b)].join("\n") + `
+
+${s.dim("FLAGGED = sensitive actions whose values trace to external content. See: contrail risks --session <id>")}
+` + (mixed ? `${s.dim("SOURCE: live = recorded by Contrail's hooks; transcript = reconstructed from Claude Code's transcript by contrail import; both = some of each.")}
+` : "");
+}
+function highlightFlag(row, s) {
+  return s.on ? row.replace(/^(\S+)/, (m) => s.flag(m)) : row;
+}
+function renderRisks(findings, scanned, g, s = PLAIN) {
+  const out = [];
+  out.push(
+    `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${counted(scanned.actions, "tool call")} in ${counted(scanned.sessions, "session")})`)}`
+  );
+  if (!scanned.actions) {
+    out.push("", "  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.", `  ${IMPORT_HINT}`);
+    return `${out.join("\n")}
+`;
+  }
+  if (!findings.length) out.push("", "  None found.");
+  for (const f of findings) {
+    const graph = g.get(f.action.scope.sessionId);
+    const mark = f.externalUpstream ? s.flag("\u25B2") : f.requested === "NOT_NAMED" ? s.bold("\u25B3") : s.dim("\xB7");
+    out.push("", `${mark} ${s.bold(describe(f.action, graph))}`);
+    const asked = f.requested === "NAMED" ? "named by you" : f.requested === "NOT_NAMED" ? s.flag("not named by you") : f.requested.toLowerCase().replace(/_/g, " ");
+    const prompt = graph.prompts.find((p) => p.promptId === f.action.promptId);
+    const tag3 = sourceTag(graph);
+    out.push(`  ${s.accent(f.kinds.join(" \xB7 "))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)}`)}${tag3 ? ` ${s.bold(tag3)}` : ""}${s.dim(` \xB7 ${prompt?.label ?? "no turn"} \xB7 ${callId(f.action.id)}`)}`);
+    const external = f.sources.filter((x) => x.input.trust === "external");
+    const shown = (external.length ? external : f.sources).slice(0, 3);
+    if (!shown.length) {
+      out.push(`  ${s.dim("values trace to: no observed source")}`);
+      continue;
+    }
+    out.push(`  ${external.length ? s.flag("values trace to external content:") : s.dim("values trace to:")}`);
+    for (const { link, input } of shown) {
+      const where2 = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""}`;
+      out.push(`    ${s.grade(link.grade)}${clip(link.token ?? "", 80)}  \u2190 ${where2}  ${input.trust === "external" ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
+      if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}\u2502` : "\u2502")} ${clip(link.quote.text, 96)}`);
+      else if (link.quote && input.hashed) out.push(`             ${s.dim(`${link.quote.line ?? ""}\u2502 (text not stored)`)}`);
+    }
+  }
+  out.push(
+    "",
+    s.dim("\u25B2 values trace to web, MCP or dependency content   \u25B3 not named by you   \xB7 named by you"),
+    s.dim("Contrail explains; it does not judge or block. A flagged action is not proof of an attack, and an unflagged one is not proof of safety.")
+  );
+  const imported = [...g.values()].filter((x) => x.source !== "hooks").length;
+  if (imported) {
+    const which = imported === g.size ? g.size === 1 ? "This session was" : `All ${g.size} sessions searched were` : `${imported} of the ${g.size} sessions searched ${imported === 1 ? "was" : "were"}`;
+    const marked = findings.length && imported < g.size ? "; their findings are marked (from transcript)" : "";
+    out.push(s.dim(`${which} reconstructed, wholly or in part, from Claude Code's transcript by contrail import, not recorded live${marked}.`));
+  }
+  return `${out.join("\n")}
+`;
+}
+function renderCommit(r, g, s = PLAIN) {
+  const out = [];
+  const { commit, action, explanation: e } = r;
+  const prompt = g.prompts.find((p) => p.promptId === action.promptId);
+  out.push(`${s.bold("Commit")} ${s.accent(commit.sha)} on ${clip(commit.branch, 60)}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
+  if (r.via === "time") {
+    const at = r.commitSec ? new Date(r.commitSec * 1e3).toISOString().slice(11, 19) : "that second";
+    out.push(
+      `  ${s.grade("LIKELY")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim("[R9]")}`,
+      `           ${s.dim("git printed no commit line for this command, so the join is on time, not on git's output")}`
+    );
+  } else {
+    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${clip(commit.branch, 60)} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
+  }
+  const verdict = e.requested.verdict;
+  const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : "";
+  out.push(`Requested?  ${verdict === "NOT_NAMED" ? s.flag("NOT NAMED") : s.bold(verdict.replace(/_/g, " "))}${said}  ${s.dim(`[R8 ${e.requested.grade}]`)}`);
+  if (prompt) out.push(`Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`);
+  out.push("");
+  if (!r.files) {
+    out.push(s.dim("Commit contents unavailable: git could not show this commit here (run from inside the repository)."));
+    return `${out.join("\n")}
+`;
+  }
+  out.push(s.bold("What the commit contains") + s.dim(" (file list from git now, joined to the agent's changes by path)"));
+  const width = Math.max(...r.files.map((f) => displayPath(f.file, g.env.cwd, g.env.home).length));
+  const order = { LIKELY: 0, POSSIBLE: 1, UNKNOWN: 2 };
+  for (const f of [...r.files].sort((a, b) => order[a.grade] - order[b.grade])) {
+    const shown = displayPath(f.file, g.env.cwd, g.env.home).padEnd(width);
+    if (!f.writer) {
+      out.push(`  ${s.grade("UNKNOWN")}${shown}  ${s.dim("no agent change recorded in this session (you, another process, or an earlier session)")}`);
+      continue;
+    }
+    const w = f.writer;
+    out.push(
+      `  ${s.grade(f.grade)}${shown}  \u2190 ${w.action.tool} ${callId(w.action.id)} ${clip(describe(w.action, g), 44)}  ${w.named ? s.dim("named by you") : s.flag("not named by you")}  ${s.dim("[R7]")}`
+    );
+  }
+  const unnamed = r.files.filter((f) => f.writer && !f.writer.named).length;
+  out.push(
+    "",
+    s.dim("LIKELY, not DIRECT: git lists the file and the agent changed it earlier; whether that exact change is what was committed is not observed."),
+    `${unnamed} of ${r.files.length} files hold agent changes you did not name. ${s.dim("Run contrail why <file> for the trail behind each one.")}`
+  );
+  return `${out.join("\n")}
+`;
+}
+var pad2 = (text, width) => text.padEnd(width);
+var counted = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+function localTime(us) {
+  const d = new Date(Math.floor(us / 1e3));
+  const two = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+var TRIPWIRE_ASKED = {
+  NAMED: "named in your words",
+  NAMED_NEGATED: "named, but your latest mention is negated",
+  PARTLY_NAMED: "partly named in your words",
+  NOT_NAMED: "not named in your words",
+  NOTHING_TO_MATCH: "nothing in it to match against your words"
+};
+function renderTripwire(f, e) {
+  const external = f.sources.find((x) => x.input.trust === "external");
+  const values = [...new Set(f.sources.filter((x) => x.input.id === external.input.id).map((x) => x.link.token).filter((v) => !!v))];
+  const where2 = external.link.quote?.line != null ? `${clip(external.input.label, 80)}:${external.link.quote.line}` : clip(external.input.label, 80);
+  const shown = values.length ? clip(values.map((v) => clip(v, 60)).join(", "), 120) : "a value in it";
+  return `Contrail \u25B2 ${f.kinds.join(" \xB7 ")} \xB7 ${TRIPWIRE_ASKED[f.requested]}: ${shown} first appeared in ${where2} (external, ${external.link.grade}). Trail: /contrail:why ${callId(e.action.id)}`;
+}
+
+// src/query/sessions.ts
 function recentSessions(db, repoKey, limit, all = false) {
   const query = (where2, ...params) => db.all(
     `SELECT session_id AS id, MAX(captured_us) AS lastUs, MAX(cwd) AS cwd FROM events
@@ -3632,7 +4232,8 @@ function recentSessions(db, repoKey, limit, all = false) {
 function pickSession(db, prefix, repoKey) {
   if (!prefix || prefix === "last") {
     const [latest] = recentSessions(db, repoKey, 1);
-    if (!latest) throw new ContrailError("No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.");
+    if (!latest) throw new ContrailError(`No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.
+${IMPORT_HINT}`);
     return latest.id;
   }
   const matches = db.all(
@@ -3678,7 +4279,7 @@ function blameFile(db, path, shown, session = null) {
   if (!rows.length) {
     const where2 = session ? ` in session ${session.slice(0, 8)}` : "";
     throw new ContrailError(
-      `No recorded agent write to ${shown}${where2}. Contrail sees Edit, Write, MultiEdit and NotebookEdit calls, and shell heredocs, in sessions recorded since it was installed.`
+      `No recorded agent write to ${shown}${where2}. Contrail sees Edit, Write, MultiEdit and NotebookEdit calls, and shell heredocs, in sessions recorded since it was installed and earlier ones brought in with contrail import.`
     );
   }
   const notebook = real.endsWith(".ipynb");
@@ -4152,7 +4753,7 @@ function findTarget(db, target, repoKey) {
       real
     );
     if (!rows.length) {
-      throw new ContrailError(`No recorded agent change to ${target.shown}. Contrail only sees sessions recorded since it was installed.`);
+      throw new ContrailError(`No recorded agent change to ${target.shown}. Contrail only sees sessions recorded since it was installed, and earlier ones brought in with contrail import.`);
     }
   } else if (target.kind === "command") {
     rows = db.all(
@@ -4186,606 +4787,12 @@ function findTarget(db, target, repoKey) {
     );
     if (!rows.length) {
       throw new ContrailError(
-        "No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again."
+        `No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again.
+${IMPORT_HINT}`
       );
     }
   }
   return { ...rows[0], total: rows.length };
-}
-
-// src/render/style.ts
-var sgr = (code) => (s) => s ? `\x1B[${code}m${s}\x1B[0m` : s;
-var GRADE_COLOR = {
-  DIRECT: sgr("1;32"),
-  LIKELY: sgr("1;36"),
-  POSSIBLE: sgr("33"),
-  UNKNOWN: sgr("90")
-};
-var pad = (g, width) => " ".repeat(Math.max(1, width - g.length));
-var PLAIN = {
-  on: false,
-  grade: (g, width = 9) => g + pad(g, width),
-  bold: (s) => s,
-  dim: (s) => s,
-  flag: (s) => s,
-  accent: (s) => s
-};
-var COLOR = {
-  on: true,
-  grade: (g, width = 9) => (GRADE_COLOR[g]?.(g) ?? g) + pad(g, width),
-  bold: sgr("1"),
-  dim: sgr("2"),
-  flag: sgr("1;35"),
-  accent: sgr("1;36")
-};
-function styleFor(env, isTTY) {
-  if (env.NO_COLOR) return PLAIN;
-  if (env.FORCE_COLOR && env.FORCE_COLOR !== "0") return COLOR;
-  return isTTY ? COLOR : PLAIN;
-}
-
-// src/render/why.ts
-var HEADING = "Where the values came from (data provenance, not the agent's reasons)";
-var FOOTER = [
-  `LIKELY means "this value first appeared in the agent's context from this source", not "this source made the agent act".`,
-  "Not observable: the agent's reasons for this action."
-];
-function sourceNote(g) {
-  if (g.source === "transcript") return "reconstructed from Claude Code's transcript by contrail import, not recorded live";
-  if (g.source === "both") return "partly reconstructed from Claude Code's transcript by contrail import, partly recorded live";
-  return null;
-}
-function sourceTag(g) {
-  if (g.source === "transcript") return "(from transcript)";
-  if (g.source === "both") return "(partly from transcript)";
-  return "";
-}
-function renderWhy(e, g, note, s = PLAIN) {
-  const out = [];
-  const a = e.action;
-  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
-  const prompt = g.prompts.find((p) => p.promptId === a.promptId);
-  out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
-  out.push(
-    s.dim(
-      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : ` \xB7 ${a.status.toUpperCase()}`)
-    )
-  );
-  const source = sourceNote(g);
-  if (source) out.push(s.bold(`  ${source}`));
-  if (note) out.push(s.dim(`  ${note}`));
-  out.push("");
-  const best = bestPerGroup(e.traces);
-  const credited = new Set(best.filter((t) => t.token.role !== "hint").flatMap((t) => t.links.filter((l) => l.grade !== "UNKNOWN").map((l) => l.to)));
-  const shown = best.filter((t) => t.token.role !== "hint" || t.links.some((l) => l.grade !== "UNKNOWN" && !credited.has(l.to)));
-  const found = shown.filter((t) => t.links.some((l) => l.grade !== "UNKNOWN"));
-  const unfound = shown.filter((t) => !found.includes(t));
-  out.push(...inShort(e, found, unfound, inputs, s), "");
-  out.push(...requestedLines(e, s));
-  out.push(
-    !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
-  );
-  out.push("", s.bold(HEADING));
-  for (const t of found) trace(t, 1, out, inputs, s);
-  if (unfound.length) {
-    out.push(`  ${s.grade("UNKNOWN")}no observed source for: ${unfound.map((t) => clip(t.token.text, 80)).join(", ")}  ${s.dim("[R4]")}`);
-  }
-  if (!e.traces.length) out.push(s.dim("  nothing distinctive in this action to trace"));
-  const searched = e.traces[0]?.searched;
-  if (searched) {
-    out.push(s.dim(`  (searched ${searched.count} input${searched.count === 1 ? "" : "s"} in this agent's context before seq ${searched.beforeSeq})`));
-  }
-  out.push("");
-  const effects = e.effects.map((l) => ({ l, fx: g.effects.find((x) => x.id === l.to) })).filter((x) => !!x.fx);
-  if (effects.length) {
-    out.push(s.bold("Effects"));
-    const target = (fx) => clip(fx.target, 100);
-    const width = Math.max(...effects.map((x) => target(x.fx).length));
-    for (const { l, fx } of effects) {
-      out.push(`  ${s.grade(l.grade)}${target(fx).padEnd(width)}  ${effectWording(fx)}  ${s.dim(`[${l.rule} ${clip(fx.evidence, 40)}]`)}`);
-      for (const line of fx.patch.slice(0, 6)) out.push(s.dim(`      ${clip(line, 100)}`));
-    }
-    out.push("");
-  }
-  out.push(`${s.bold("Weakest link on this trail:")} ${s.grade(e.chainGrade, 0).trim()}`);
-  for (const line of FOOTER) out.push(s.dim(line));
-  const said = a.scope.agentId ? g.agentSaid.byAgent[a.scope.agentId] : a.promptId ? g.agentSaid.byPrompt[a.promptId] : void 0;
-  if (said) out.push(s.dim(`Agent said (shown for context, never used as evidence): "${clip(said, 220)}"`));
-  out.push(s.dim(`Blind spots: ${e.blindSpots.join("; ")}. No observed source is not the same as no source.`));
-  return `${out.join("\n")}
-`;
-}
-function inShort(e, found, unfound, inputs, s) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const t of found) {
-    const chain = [];
-    let cur = t;
-    let next;
-    while (cur) {
-      const link = cur.links.find((l) => l.grade === "LIKELY") ?? cur.links.find((l) => l.firstSeen) ?? cur.links.find((l) => l.grade !== "UNKNOWN");
-      const src = link?.to ? inputs.get(link.to) : void 0;
-      if (!link || !src) break;
-      chain.push({ link, src, value: cur.token.text });
-      if (!cur.upstream && cur.truncated) next = cur.truncated.next;
-      cur = cur.upstream?.trace;
-    }
-    if (!chain.length) continue;
-    const key = chain.map((c) => `${c.src.id}:${c.link.quote?.line ?? ""}`).join(">");
-    const group = groups.get(key) ?? { values: [], chain, next };
-    group.values.push(clip(t.token.text, 60));
-    groups.set(key, group);
-  }
-  const external = [...groups.values()].some((g) => g.chain.some((c) => c.src.trust === "external"));
-  const facts = [
-    ASKED[e.requested.verdict](s),
-    ...sensitivity(e.action).map((k) => s.flag(k)),
-    ...external ? [s.flag("values from external content")] : []
-  ];
-  const out = [s.bold("In short"), `  ${facts.join(s.dim(" \xB7 "))}`];
-  const listed = [...groups.values()].slice(0, 3);
-  for (const g of listed) {
-    out.push(`  ${s.accent(clip(g.values.join(", "), 110))}`);
-    g.chain.forEach(({ link, src, value }, i) => {
-      const where2 = link.quote?.line != null ? `${clip(src.label, 90)}:${link.quote.line}` : clip(src.label, 90);
-      const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-      const via = i > 0 && value !== g.chain[i - 1].value ? s.dim(`  for ${clip(value, 60)}`) : "";
-      out.push(`    ${s.dim("\u2190")} ${s.grade(link.grade)}${where2}  ${trust2}${via}`);
-    });
-    if (g.next !== void 0) out.push(`    ${s.dim(`\u2190 \u2026 further back${g.next ? `: contrail why ${callId(g.next)}` : ""}`)}`);
-  }
-  if (groups.size > listed.length) out.push(s.dim(`  (${groups.size - listed.length} more below)`));
-  if (unfound.length) out.push(`  ${s.dim("no observed source for:")} ${clip(unfound.map((t) => t.token.text).join(", "), 100)}`);
-  if (!found.length && !unfound.length) out.push(s.dim("  nothing distinctive in this action to trace"));
-  return out;
-}
-var ASKED = {
-  NAMED: () => "named in your words",
-  NAMED_NEGATED: (s) => s.flag("named, but your latest mention is negated"),
-  PARTLY_NAMED: () => "partly named in your words",
-  NOT_NAMED: (s) => s.flag("not named in your words"),
-  NOTHING_TO_MATCH: () => "nothing in it to match against your words"
-};
-function trace(t, depth, out, inputs, s) {
-  const pad3 = "  ".repeat(depth);
-  const firstUse2 = t.firstUse ? `, first used in ${callId(t.firstUse.actionId)} at seq ${t.firstUse.preSeq}` : "";
-  out.push(`${pad3}${s.accent(clip(t.token.text, 80))}  ${s.dim(`(${t.token.argPath}${firstUse2})`)}`);
-  for (const l of t.links) {
-    if (!l.to) {
-      out.push(`${pad3}  ${s.grade(l.grade)}${l.note}  ${s.dim(`[${l.rule}]`)}`);
-      continue;
-    }
-    const src = inputs.get(l.to);
-    if (!src) continue;
-    const where2 = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
-    out.push(`${pad3}  ${s.grade(l.grade)}${sourceWording(l, where2)}  ${s.dim(`[${l.rule}]`)}`);
-    if (l.quote?.text) out.push(`${pad3}           ${s.dim(l.quote.line != null ? `${l.quote.line}\u2502` : "\u2502")} ${clip(l.quote.text, 100)}`);
-    else if (l.quote && src.hashed) out.push(`${pad3}           ${s.dim(`${l.quote.line ?? ""}\u2502 (text not stored)`)}`);
-    const origin = originWording(src);
-    out.push(`${pad3}           ${src.trust === "external" ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` \xB7 returned by ${callId(src.producedBy)} (seq ${src.availableAt})` : "")}`);
-  }
-  if (t.links.every((l) => l.grade === "UNKNOWN") && depth > 1) out.push(s.dim(`${pad3}  the trail starts here: the reason is not observable`));
-  if (t.upstream) {
-    const u = t.upstream;
-    const heading = u.kind === "call" ? `how the agent came to call ${u.via?.tool} ${callId(u.via?.id ?? "")}:` : u.kind === "conduit" ? `that text was written by the agent (${u.via?.tool} ${callId(u.via?.id ?? "")}); following the same value back:` : "a compaction summary is agent-written; the same value before the compaction:";
-    out.push(s.dim(`${pad3}  ${heading}`));
-    trace(u.trace, depth + 2, out, inputs, s);
-  }
-  if (t.truncated) {
-    const next = t.truncated.next ? `; contrail why ${callId(t.truncated.next)} picks it up from there` : "";
-    out.push(s.dim(`${pad3}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
-  }
-}
-function sourceWording(l, where2) {
-  if (l.note === "you supplied it") return `you supplied it: ${where2}`;
-  if (l.note === "also in") return `also in ${where2}`;
-  if (l.grade === "LIKELY") return `only observed in ${where2}`;
-  if (l.firstSeen) return `could be from ${where2} (seen first)`;
-  if (l.note) return `${where2} (${l.note})`;
-  return `could be from ${where2}`;
-}
-var ORIGIN_WORDING = {
-  prompt: "your words",
-  template: "slash-command template",
-  instructions: "instructions file",
-  file: "repo file",
-  dependency_file: "dependency file, written by a third party",
-  search: "search output",
-  shell: "shell output",
-  web: "web page, as a model's extraction of it, not the page itself",
-  web_search: "web search results",
-  mcp: "MCP server result",
-  skill: "skill",
-  subagent_prompt: "agent-written instructions to a subagent",
-  subagent_result: "agent-written subagent report",
-  compaction: "agent-written compaction summary",
-  tool_output: "tool output"
-};
-function originWording(i) {
-  if (i.origin === "instructions") {
-    return i.trust === "local" ? "repo instructions (repo content, not you)" : "your instructions (user-level)";
-  }
-  return `${ORIGIN_WORDING[i.origin]} (${i.trust})`;
-}
-function requestedLines(e, s) {
-  const r = e.requested;
-  const quoted = r.sentence ? `"${clip(r.sentence.text, 80)}"` : "";
-  const tag3 = (t) => s.dim(`[${t}]`);
-  switch (r.verdict) {
-    case "NAMED":
-      return [
-        `Requested?  ${s.bold("NAMED")}  ${quoted}  ${tag3(`R8 ${r.grade}`)}`,
-        s.dim('            "Named" means your words contain it. It is not a judgment of intent or permission.')
-      ];
-    case "NAMED_NEGATED":
-      return [`Requested?  ${s.flag("NAMED, BUT YOUR LATEST MENTION IS NEGATED:")} ${quoted}  ${tag3(`R8 ${r.grade}`)}`];
-    case "PARTLY_NAMED":
-      return [`Requested?  ${s.bold("PARTLY NAMED")}  ${quoted} names ${clip(r.matched ?? "", 80)}, not everything this action targets  ${tag3(`R8 ${r.grade}`)}`];
-    case "NOT_NAMED": {
-      const yours = r.searched === 1 ? "Your 1 sentence this session does not" : `None of your ${r.searched} sentences this session`;
-      return [`Requested?  ${s.flag("NOT NAMED")}. ${yours} name it.  ${tag3("R8")}`];
-    }
-    case "NOTHING_TO_MATCH":
-      return [`Requested?  nothing specific in this action to match against your words  ${tag3("R8")}`];
-  }
-}
-function describe(a, g) {
-  const path = str(a.input, "file_path") ?? str(a.input, "notebook_path");
-  if (path) return clip(displayPath(path, g.env.cwd, g.env.home), 120);
-  if (a.tool === "Bash") return clip(str(a.input, "command") ?? "", 90);
-  if (a.tool === "WebFetch") return clip(str(a.input, "url") ?? "", 90);
-  if (a.tool === "Agent" || a.tool === "Task") return clip(str(a.input, "description") ?? str(a.input, "prompt") ?? "", 90);
-  if (a.tool === "Grep" || a.tool === "Glob") {
-    const where2 = str(a.input, "path");
-    return clip(`${JSON.stringify(str(a.input, "pattern") ?? "")}${where2 ? ` in ${displayPath(where2, g.env.cwd, g.env.home)}` : ""}`, 90);
-  }
-  if (a.tool === "WebSearch") return clip(JSON.stringify(str(a.input, "query") ?? ""), 90);
-  if (a.tool === "Skill") return clip(str(a.input, "skill") ?? "", 90);
-  if (a.tool.startsWith("mcp__")) return clip(`${a.tool.slice(5).replace("__", "/")} ${JSON.stringify(a.input)}`, 90);
-  return clip(JSON.stringify(a.input), 90);
-}
-function effectWording(fx) {
-  if (fx.evidence === "filePath") return "written by this call";
-  if (fx.evidence === "bashEditDiff") return "changed while this command ran";
-  if (fx.evidence === "commit_stdout") return "commit made by this command";
-  if (fx.evidence === "expected") return fx.kind === "network" ? "the command names this host; the request itself was not observed" : "expected for this kind of command, not observed";
-  return "request made and answered";
-}
-
-// src/render/session.ts
-var TRANSCRIPT_LEGEND = "(from transcript): reconstructed from Claude Code's transcript by contrail import, not recorded live. (partly from transcript): some of each.";
-var KIND = {
-  Read: "READ",
-  Grep: "SEARCH",
-  Glob: "SEARCH",
-  LS: "SEARCH",
-  Edit: "EDIT",
-  MultiEdit: "EDIT",
-  Write: "WRITE",
-  NotebookEdit: "EDIT",
-  Bash: "SHELL",
-  WebFetch: "WEB",
-  WebSearch: "WEB",
-  Agent: "AGENT",
-  Task: "AGENT",
-  Skill: "SKILL"
-};
-var kindOf = (a) => a.tool.startsWith("mcp__") ? "MCP" : KIND[a.tool] ?? "TOOL";
-var summary = (a, g) => kindOf(a) === "TOOL" ? `${a.tool} ${describe(a, g)}` : describe(a, g);
-var EXPLAINED = /* @__PURE__ */ new Set(["EDIT", "WRITE", "SHELL", "WEB", "MCP", "AGENT"]);
-function matchesFilter(a, g, filter) {
-  if (!filter) return true;
-  const kind = kindOf(a);
-  if (filter === "writes") return g.effects.some((e) => e.actionId === a.id && e.kind === "file");
-  if (filter === "shell") return kind === "SHELL";
-  if (filter === "network") return kind === "WEB" || kind === "MCP" || g.effects.some((e) => e.actionId === a.id && e.kind === "network");
-  if (filter === "mcp") return kind === "MCP";
-  if (filter === "subagents") return kind === "AGENT" || a.scope.agentId !== null;
-  return false;
-}
-function renderTrace(g, explanations, filter, s = PLAIN) {
-  const out = [];
-  const sessionId = g.sessionId;
-  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
-  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
-  const source = sourceNote(g);
-  if (source) out.push(s.bold(source));
-  out.push(
-    s.dim(
-      `${counted(g.prompts.length, "turn")} \xB7 ${counted(g.actions.length, "tool call")} \xB7 ${counted(g.effects.filter((e) => e.kind === "file").length, "file effect")}` + (filter ? ` \xB7 showing --${filter}` : "")
-    )
-  );
-  const items = [];
-  if (!filter) {
-    for (const p of g.prompts) {
-      const head = p.from === "task" ? `${s.dim("background task report, not your words:")} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
-      items.push({ seq: p.seq, line: () => ["", `${s.bold(p.label)}  ${head}`] });
-    }
-  }
-  if (!filter || filter === "instructions") {
-    for (const i of g.inputs.filter((x) => x.origin === "instructions")) {
-      const who = i.scope.agentId ? s.dim(` [subagent ${callId(i.scope.agentId)}]`) : "";
-      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad2(`${i.availableAt}`, 4))} ${pad2("LOADED", 7)} ${clip(i.label, 100)}${who}  ${s.dim(originWording(i))}`] });
-    }
-  }
-  if (!filter) {
-    for (const i of g.inputs.filter((x) => x.origin === "compaction")) {
-      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad2(`${i.availableAt}`, 4))} ${s.dim("COMPACTED  earlier context now visible only through the summary")}`] });
-    }
-  }
-  for (const a of g.actions) {
-    if (filter === "instructions" || !matchesFilter(a, g, filter)) continue;
-    items.push({ seq: a.preSeq, line: () => actionLines(a, g, explanations.get(a.id), inputs, s) });
-  }
-  items.sort((a, b) => a.seq - b.seq);
-  for (const item of items) out.push(...item.line());
-  if (!items.length) out.push("", s.dim("  nothing matches this filter"));
-  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
-  return `${out.join("\n")}
-`;
-}
-function actionLines(a, g, e, inputs, s) {
-  const kind = kindOf(a);
-  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
-  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
-  const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${summary(a, g)}${who}${failed}`];
-  if (!e) return lines;
-  const detail = trailDetail(e, inputs, s);
-  if (detail) lines.push(`         ${s.dim("\u21B3")} ${detail}`);
-  const effects = g.effects.filter((x) => x.actionId === a.id && x.kind !== "network");
-  if (effects.length && kind === "SHELL") {
-    const shown = effects.slice(0, 4).map((x) => clip(x.target, 80)).join(", ") + (effects.length > 4 ? `, +${effects.length - 4} more` : "");
-    const how = effects.every((x) => x.evidence === "expected") ? s.dim(" (expected, not observed)") : "";
-    lines.push(`         ${s.dim("\u2192")} ${shown}${how}`);
-  }
-  return lines;
-}
-function trailDetail(e, inputs, s) {
-  const head = headlineTrace(e);
-  const from = head ? traceSource(head, inputs, s) : "";
-  const found = from || (e.traces.length ? `${s.grade("UNKNOWN", 0).trim()} ${s.dim("no observed source")}` : "");
-  const asked = e.requested.verdict === "NAMED" ? s.dim("named by you") : e.requested.verdict === "NOT_NAMED" ? s.flag("not named by you") : "";
-  return [found, asked].filter(Boolean).join("   ");
-}
-function traceSource(t, inputs, s) {
-  const link = t.links.find((l) => l.grade !== "UNKNOWN");
-  const src = link?.to ? inputs.get(link.to) : void 0;
-  if (!src || !link) return "";
-  const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-  return `${s.grade(link.grade, 0).trim()} ${clip(t.token.text, 80)} \u2190 ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""} ${trust2}`;
-}
-function renderTree(g, forest, omitted, s = PLAIN) {
-  const out = [];
-  const sessionId = g.sessionId;
-  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
-  const source = sourceNote(g);
-  if (source) out.push(s.bold(source));
-  out.push(s.dim("Each action sits under the call whose output first held its headline value. Data flow, not the agent's reasons."));
-  for (const root of forest) {
-    out.push("", rootLine(root, g, s));
-    root.children.forEach((child, i) => nodeLines(child, "", i === root.children.length - 1, g, s, out));
-  }
-  if (omitted) out.push("", s.dim(`${omitted} later actions are not shown; run contrail trace for the full timeline.`));
-  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
-  return `${out.join("\n")}
-`;
-}
-function rootLine(root, g, s) {
-  if (root.kind === "unknown") return s.bold("no observed source");
-  if (root.kind === "nothing") return s.bold("nothing to trace") + s.dim(" (no values in these calls to follow)");
-  const src = root.source;
-  const prompt = src.origin === "prompt" ? g.prompts.find((p) => `prompt:${p.promptId}` === src.id) : void 0;
-  const what = prompt ? `${clip(src.label, 100)}  "${clip(prompt.text, 70)}"` : clip(src.label, 100);
-  return `${s.bold(what)}  ${src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`;
-}
-function nodeLines(node, prefix, last, g, s, out) {
-  const a = node.action;
-  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
-  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
-  const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : "";
-  const external = node.source?.trust === "external" ? ` ${s.flag("(external)")}` : "";
-  const via = node.link && node.token ? `  ${s.dim("\u2190")} ${s.grade(node.link.grade, 0).trim()} ${clip(node.token, 80)}${line}${external}` : "";
-  out.push(`${s.dim(prefix + (last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 "))}${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kindOf(a), 7)} ${clip(summary(a, g), 60)}${who}${failed}${via}`);
-  const next = prefix + (last ? "    " : "\u2502   ");
-  node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
-}
-function renderStatusline(g, findings, s = PLAIN) {
-  const name2 = s.dim("contrail");
-  if (!g) return `${name2} ${s.dim("recording")}`;
-  const external = findings.filter((f) => f.externalUpstream).length;
-  const unnamed = findings.filter((f) => !f.externalUpstream && f.requested === "NOT_NAMED").length;
-  const parts = [
-    external ? s.flag(`\u25B2 ${external} from external content`) : "",
-    unnamed ? s.bold(`\u25B3 ${unnamed} not named by you`) : "",
-    s.dim(`${g.actions.length} call${g.actions.length === 1 ? "" : "s"}`)
-  ].filter(Boolean);
-  return `${name2} ${parts.join(s.dim(" \xB7 "))}`;
-}
-function renderFind(value, hits, scanned, s = PLAIN) {
-  const found = hits.filter((h) => h.sightings.length);
-  const out = [`${s.bold(`"${clip(value, 80)}"`)} ${s.dim(`in ${found.length} of ${scanned} session${scanned === 1 ? "" : "s"}`)}`];
-  if (!found.length) {
-    out.push("", `  ${s.dim("No recorded input or call contains it. Matching is whole-token and literal; no observed source is not the same as no source.")}`);
-    return `${out.join("\n")}
-`;
-  }
-  for (const { graph: g, sightings } of found) {
-    const sessionId = g.sessionId;
-    const first = g.prompts.find((p) => p.from === "you");
-    const tag3 = sourceTag(g);
-    out.push("", `${s.bold("Session")} ${sessionId.slice(0, 8)}${tag3 ? ` ${s.bold(tag3)}` : ""}  ${s.dim(first ? `"${clip(first.text, 70)}"` : "")}`);
-    let seenSource = false;
-    for (const hit of sightings) {
-      if (hit.source) {
-        const src = hit.source.input;
-        const where2 = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ""}`;
-        const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("HELD", 6)} ${where2}  ${trust2}${seenSource ? "" : `  ${s.accent("first seen")}`}`);
-        seenSource = true;
-        if (hit.source.text) out.push(`              ${s.dim(hit.source.line != null ? `${hit.source.line}\u2502` : "\u2502")} ${clip(hit.source.text, 96)}`);
-        else if (src.hashed) out.push(`              ${s.dim(`${hit.source.line ?? ""}\u2502 (text not stored)`)}`);
-      } else if (hit.use) {
-        const a = hit.use.action;
-        const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
-        const kinds = hit.use.kinds.length ? `  ${s.flag(hit.use.kinds.join(" \xB7 "))}` : "";
-        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("USED", 6)} ${kindOf(a)} ${clip(summary(a, g), 80)} ${s.dim(`(${hit.use.argPath})`)}${who}${kinds}`);
-      }
-    }
-  }
-  out.push("", s.dim(`HELD: an input that held the value. USED: a call whose arguments contain it. Run ${s.bold("contrail why")} on a call for its graded trail.`));
-  if (found.some((h) => h.graph.source !== "hooks")) out.push(s.dim(TRANSCRIPT_LEGEND));
-  return `${out.join("\n")}
-`;
-}
-function renderSessions(sessions2, s = PLAIN) {
-  if (!sessions2.length) return "No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n";
-  const mixed = sessions2.some((x) => x.graph.source !== "hooks");
-  const SOURCE_WORD = { hooks: "live", transcript: "transcript", both: "both" };
-  const head = ["SESSION", ...mixed ? ["SOURCE"] : [], "LAST ACTIVE", "TURNS", "READS", "WRITES", "SHELL", "WEB/MCP", "SUBAGENTS", "FLAGGED", "FIRST PROMPT"];
-  const rows = sessions2.map((x) => {
-    const g = x.graph;
-    const count2 = (kinds) => g.actions.filter((a) => kinds.includes(kindOf(a))).length;
-    const subagents = new Set(g.actions.map((a) => a.scope.agentId).filter(Boolean)).size;
-    return [
-      x.id.slice(0, 8),
-      ...mixed ? [SOURCE_WORD[g.source]] : [],
-      localTime(x.lastUs),
-      `${g.prompts.length}`,
-      `${count2(["READ", "SEARCH"])}`,
-      `${new Set(g.effects.filter((e) => e.kind === "file").map((e) => e.target)).size}`,
-      `${count2(["SHELL"])}`,
-      `${count2(["WEB", "MCP"])}`,
-      `${subagents}`,
-      `${x.flagged}`,
-      clip(g.prompts.find((p) => p.from === "you")?.text ?? "", 60)
-    ];
-  });
-  const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
-  const line = (cells) => cells.map((c, i) => i === cells.length - 1 ? c : c.padEnd(widths[i])).join("  ");
-  const body = rows.map(line);
-  const flaggedCol = head.indexOf("FLAGGED");
-  return [s.bold(line(head)), ...body.map((b, i) => rows[i][flaggedCol] !== "0" ? highlightFlag(b, s) : b)].join("\n") + `
-
-${s.dim("FLAGGED = sensitive actions whose values trace to external content. See: contrail risks --session <id>")}
-` + (mixed ? `${s.dim("SOURCE: live = recorded by Contrail's hooks; transcript = reconstructed from Claude Code's transcript by contrail import; both = some of each.")}
-` : "");
-}
-function highlightFlag(row, s) {
-  return s.on ? row.replace(/^(\S+)/, (m) => s.flag(m)) : row;
-}
-function renderRisks(findings, scanned, g, s = PLAIN) {
-  const out = [];
-  out.push(
-    `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${counted(scanned.actions, "tool call")} in ${counted(scanned.sessions, "session")})`)}`
-  );
-  if (!scanned.actions) {
-    out.push("", "  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.");
-    return `${out.join("\n")}
-`;
-  }
-  if (!findings.length) out.push("", "  None found.");
-  for (const f of findings) {
-    const graph = g.get(f.action.scope.sessionId);
-    const mark = f.externalUpstream ? s.flag("\u25B2") : f.requested === "NOT_NAMED" ? s.bold("\u25B3") : s.dim("\xB7");
-    out.push("", `${mark} ${s.bold(describe(f.action, graph))}`);
-    const asked = f.requested === "NAMED" ? "named by you" : f.requested === "NOT_NAMED" ? s.flag("not named by you") : f.requested.toLowerCase().replace(/_/g, " ");
-    const prompt = graph.prompts.find((p) => p.promptId === f.action.promptId);
-    const tag3 = sourceTag(graph);
-    out.push(`  ${s.accent(f.kinds.join(" \xB7 "))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)}`)}${tag3 ? ` ${s.bold(tag3)}` : ""}${s.dim(` \xB7 ${prompt?.label ?? "no turn"} \xB7 ${callId(f.action.id)}`)}`);
-    const external = f.sources.filter((x) => x.input.trust === "external");
-    const shown = (external.length ? external : f.sources).slice(0, 3);
-    if (!shown.length) {
-      out.push(`  ${s.dim("values trace to: no observed source")}`);
-      continue;
-    }
-    out.push(`  ${external.length ? s.flag("values trace to external content:") : s.dim("values trace to:")}`);
-    for (const { link, input } of shown) {
-      const where2 = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""}`;
-      out.push(`    ${s.grade(link.grade)}${clip(link.token ?? "", 80)}  \u2190 ${where2}  ${input.trust === "external" ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
-      if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}\u2502` : "\u2502")} ${clip(link.quote.text, 96)}`);
-      else if (link.quote && input.hashed) out.push(`             ${s.dim(`${link.quote.line ?? ""}\u2502 (text not stored)`)}`);
-    }
-  }
-  out.push(
-    "",
-    s.dim("\u25B2 values trace to web, MCP or dependency content   \u25B3 not named by you   \xB7 named by you"),
-    s.dim("Contrail explains; it does not judge or block. A flagged action is not proof of an attack, and an unflagged one is not proof of safety.")
-  );
-  const imported = [...g.values()].filter((x) => x.source !== "hooks").length;
-  if (imported) {
-    const which = imported === g.size ? g.size === 1 ? "This session was" : `All ${g.size} sessions searched were` : `${imported} of the ${g.size} sessions searched ${imported === 1 ? "was" : "were"}`;
-    const marked = findings.length && imported < g.size ? "; their findings are marked (from transcript)" : "";
-    out.push(s.dim(`${which} reconstructed, wholly or in part, from Claude Code's transcript by contrail import, not recorded live${marked}.`));
-  }
-  return `${out.join("\n")}
-`;
-}
-function renderCommit(r, g, s = PLAIN) {
-  const out = [];
-  const { commit, action, explanation: e } = r;
-  const prompt = g.prompts.find((p) => p.promptId === action.promptId);
-  out.push(`${s.bold("Commit")} ${s.accent(commit.sha)} on ${clip(commit.branch, 60)}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
-  if (r.via === "time") {
-    const at = r.commitSec ? new Date(r.commitSec * 1e3).toISOString().slice(11, 19) : "that second";
-    out.push(
-      `  ${s.grade("LIKELY")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim("[R9]")}`,
-      `           ${s.dim("git printed no commit line for this command, so the join is on time, not on git's output")}`
-    );
-  } else {
-    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${clip(commit.branch, 60)} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
-  }
-  const verdict = e.requested.verdict;
-  const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : "";
-  out.push(`Requested?  ${verdict === "NOT_NAMED" ? s.flag("NOT NAMED") : s.bold(verdict.replace(/_/g, " "))}${said}  ${s.dim(`[R8 ${e.requested.grade}]`)}`);
-  if (prompt) out.push(`Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`);
-  out.push("");
-  if (!r.files) {
-    out.push(s.dim("Commit contents unavailable: git could not show this commit here (run from inside the repository)."));
-    return `${out.join("\n")}
-`;
-  }
-  out.push(s.bold("What the commit contains") + s.dim(" (file list from git now, joined to the agent's changes by path)"));
-  const width = Math.max(...r.files.map((f) => displayPath(f.file, g.env.cwd, g.env.home).length));
-  const order = { LIKELY: 0, POSSIBLE: 1, UNKNOWN: 2 };
-  for (const f of [...r.files].sort((a, b) => order[a.grade] - order[b.grade])) {
-    const shown = displayPath(f.file, g.env.cwd, g.env.home).padEnd(width);
-    if (!f.writer) {
-      out.push(`  ${s.grade("UNKNOWN")}${shown}  ${s.dim("no agent change recorded in this session (you, another process, or an earlier session)")}`);
-      continue;
-    }
-    const w = f.writer;
-    out.push(
-      `  ${s.grade(f.grade)}${shown}  \u2190 ${w.action.tool} ${callId(w.action.id)} ${clip(describe(w.action, g), 44)}  ${w.named ? s.dim("named by you") : s.flag("not named by you")}  ${s.dim("[R7]")}`
-    );
-  }
-  const unnamed = r.files.filter((f) => f.writer && !f.writer.named).length;
-  out.push(
-    "",
-    s.dim("LIKELY, not DIRECT: git lists the file and the agent changed it earlier; whether that exact change is what was committed is not observed."),
-    `${unnamed} of ${r.files.length} files hold agent changes you did not name. ${s.dim("Run contrail why <file> for the trail behind each one.")}`
-  );
-  return `${out.join("\n")}
-`;
-}
-var pad2 = (text, width) => text.padEnd(width);
-var counted = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-function localTime(us) {
-  const d = new Date(Math.floor(us / 1e3));
-  const two = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
-}
-var TRIPWIRE_ASKED = {
-  NAMED: "named in your words",
-  NAMED_NEGATED: "named, but your latest mention is negated",
-  PARTLY_NAMED: "partly named in your words",
-  NOT_NAMED: "not named in your words",
-  NOTHING_TO_MATCH: "nothing in it to match against your words"
-};
-function renderTripwire(f, e) {
-  const external = f.sources.find((x) => x.input.trust === "external");
-  const values = [...new Set(f.sources.filter((x) => x.input.id === external.input.id).map((x) => x.link.token).filter((v) => !!v))];
-  const where2 = external.link.quote?.line != null ? `${clip(external.input.label, 80)}:${external.link.quote.line}` : clip(external.input.label, 80);
-  const shown = values.length ? clip(values.map((v) => clip(v, 60)).join(", "), 120) : "a value in it";
-  return `Contrail \u25B2 ${f.kinds.join(" \xB7 ")} \xB7 ${TRIPWIRE_ASKED[f.requested]}: ${shown} first appeared in ${where2} (external, ${external.link.grade}). Trail: /contrail:why ${callId(e.action.id)}`;
 }
 
 // src/render/blame.ts
@@ -6081,7 +6088,7 @@ async function why(args, flags, io, s) {
       const use = latestUse(db, value, repoKey, io.home, hashToken);
       if (!use) {
         throw new ContrailError(
-          `Nothing recorded matches "${value}": no agent change to that file, no shell command containing it, and no call that used it. Contrail only sees sessions recorded since it was installed. Run /contrail:why with no argument for the last action.`
+          `Nothing recorded matches "${value}": no agent change to that file, no shell command containing it, and no call that used it. Contrail only sees sessions recorded since it was installed, and earlier ones brought in with contrail import. Run /contrail:why with no argument for the last action.`
         );
       }
       hit = use;
@@ -6517,7 +6524,7 @@ async function doctor(flags, io) {
       `content          ${config.storeContent ? "stored as redacted text" : "stored as keyed hashes only (store_content: false)"}`,
       `launcher         ${existsSync3(join8(dataDir, "bin", "contrail")) ? join8(dataDir, "bin", "contrail") : "written at the next session start"}`,
       ...hook ? [`capture hook     ${hook} ms per event (median of 5)`] : [],
-      stats.events === 0 && backlog === 0 ? "No events yet. Run a Claude Code session with the plugin enabled, then check again." : "Recording and queries work."
+      stats.events === 0 && backlog === 0 ? `No events yet. Run a Claude Code session with the plugin enabled, then check again. ${IMPORT_HINT}` : "Recording and queries work."
     ];
     io.out(`${lines.join("\n")}
 `);

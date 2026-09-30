@@ -23,7 +23,10 @@ test('only the PreToolUse tripwire may print, and only for tools that can touch 
   const tripwires = Object.entries(hooks as Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; async?: boolean }> }>>).flatMap(([event, groups]) =>
     groups.filter(g => g.hooks.some(h => h.command.includes('tripwire.sh'))).map(g => ({ event, matcher: g.matcher, async: g.hooks[0]!.async })),
   );
-  assert.deepEqual(tripwires, [{ event: 'PreToolUse', matcher: 'Bash|Read|Edit|MultiEdit|Write', async: undefined }]);
+  assert.deepEqual(tripwires, [
+    { event: 'PreToolUse', matcher: 'Bash', async: undefined },
+    { event: 'PreToolUse', matcher: 'Read|Edit|MultiEdit|Write', async: undefined },
+  ]);
   // Its one output is a systemMessage for the person: never additionalContext, a decision or a permission.
   const script = readFileSync(join(import.meta.dirname, '..', 'plugin', 'hooks', 'tripwire.sh'), 'utf8');
   assert.doesNotMatch(script, /additionalContext|permissionDecision|"decision"|exit 2/);

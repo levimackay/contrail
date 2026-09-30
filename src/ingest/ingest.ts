@@ -149,7 +149,7 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
 }
 
 /** Cap before redacting, so no pattern ever scans more than STRING_CAP characters; hash last, when asked. */
-function stored(p: Record<string, unknown>, hookEvent: string, hmac?: Hmac): unknown {
+export function stored(p: Record<string, unknown>, hookEvent: string, hmac?: Hmac): unknown {
   const clean = redactValue(capValue(dropBulky(p))) as Record<string, unknown>;
   if (!hmac) return clean;
   hashContent(clean, hookEvent, hmac);

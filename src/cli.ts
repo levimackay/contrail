@@ -14,7 +14,7 @@ import { ContrailError } from './errors.ts';
 import { buildGraph } from './graph/build.ts';
 import { contentHmac } from './ingest/content.ts';
 import { redactString } from './ingest/redact.ts';
-import { ingest } from './ingest/ingest.ts';
+import { ingest, stored } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
 import { commitFiles, findCommit, isCommit } from './query/commit.ts';
@@ -476,7 +476,9 @@ async function tripwire(flags: Flags, io: Io): Promise<number> {
           prompt_id: typeof payload.prompt_id === 'string' ? payload.prompt_id : null,
           agent_id: typeof payload.agent_id === 'string' ? payload.agent_id : null,
           hook_event: 'PreToolUse', tool_name: typeof payload.tool_name === 'string' ? payload.tool_name : null,
-          tool_use_id: toolUseId, cwd: typeof payload.cwd === 'string' ? payload.cwd : null, payload: raw, parse_error: null,
+          tool_use_id: toolUseId, cwd: typeof payload.cwd === 'string' ? payload.cwd : null,
+          // Capped and redacted exactly as ingest stores it, so a huge write costs no more here.
+          payload: JSON.stringify(stored(payload, 'PreToolUse')), parse_error: null,
         });
       }
       const graph = buildGraph(rows, { home: io.home, user: basename(io.home) }, hashToken);

@@ -4029,7 +4029,8 @@ async function tripwire(flags, io) {
           tool_name: typeof payload.tool_name === "string" ? payload.tool_name : null,
           tool_use_id: toolUseId,
           cwd: typeof payload.cwd === "string" ? payload.cwd : null,
-          payload: raw,
+          // Capped and redacted exactly as ingest stores it, so a huge write costs no more here.
+          payload: JSON.stringify(stored(payload, "PreToolUse")),
           parse_error: null
         });
       }

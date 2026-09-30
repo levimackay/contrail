@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -136,4 +136,22 @@ test('the data directory resolves as the capture hook does: CONTRAIL_HOME before
   assert.equal(resolveDataDir(undefined, { CONTRAIL_HOME: '/home' }, '/Users/dev', '/plugin'), '/home');
   assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev', '/plugin'), '/plugin');
   assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev'), '/env');
+});
+
+test('with no runtime, the launcher says what to install, and the Stop hook stays quiet', () => {
+  // A PATH holding only what the launcher itself needs: no node, no bun.
+  const bin = mkdtempSync(join(tmpdir(), 'contrail-bin-'));
+  for (const tool of ['sh', 'dirname']) {
+    symlinkSync(spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim(), join(bin, tool));
+  }
+  const sh = join(bin, 'sh');
+  const launcher = new URL('../plugin/bin/contrail', import.meta.url).pathname;
+  const env = { PATH: bin };
+  const query = spawnSync(sh, [launcher, 'why', 'last'], { env, encoding: 'utf8' });
+  assert.equal(query.status, 127);
+  assert.equal(query.stdout, '');
+  assert.match(query.stderr, /^contrail: queries need Node 22\.13\+ or Bun, and neither is on PATH\. Install one, then run this again\. Recording still works/);
+  const hook = spawnSync(sh, [launcher, 'ingest', '--from-hook'], { env, encoding: 'utf8' });
+  assert.equal(hook.status, 0);
+  assert.equal(hook.stdout + hook.stderr, '');
 });

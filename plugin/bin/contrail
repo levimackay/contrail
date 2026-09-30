@@ -12,5 +12,6 @@ fi
 
 # The Stop hook runs `ingest`; without a runtime the events simply wait in the spool.
 [ "$1" = ingest ] && exit 0
-echo "contrail: needs Node 22.13+ or Bun to answer queries. Recording still works." >&2
+msg="contrail: queries need Node 22.13+ or Bun, and neither is on PATH. Install one, then run this again. Recording still works in the meantime."
+echo "$msg" >&2
 exit 127

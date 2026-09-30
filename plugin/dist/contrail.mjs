@@ -1608,10 +1608,182 @@ import { join as join2 } from "node:path";
 
 // src/ingest/redact.ts
 var tag = (id) => `[REDACTED:${id}]`;
-var PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w{0,127}\}?|<[^<>\n]{0,128}>|x{3,64}|\*{3,64}|\.{3}|changeme|your[-_a-z]{0,64})$/i;
-var CODE_REF = /^(?:[A-Za-z_][\w.]{0,127}(?:\(.{0,512}\)|\[.{0,512}\]|\[)|[A-Za-z_]\w{0,63}(?:\.[A-Za-z_]\w{0,63}){1,12}|\d{1,6})$/;
-var namesSecret = (v) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.startsWith("[REDACTED");
-var SECRET_NAME = /secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie/i;
+var isTag = (v) => v.startsWith("[REDACTED");
+var PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w{0,127}\}?|\$\(.{0,512}|\$?\{\{.{0,256}\}\}|%[A-Za-z_]\w{0,127}%|<[^<>\n]{0,128}>|x{3,64}|\*{3,64}|\.{3}|…|change[-_]?me|your[-_a-z]{0,64}|redacted|placeholder)$/i;
+var KEYWORD = /^(?:true|false|yes|no|on|off|null|nil|none|undefined|empty|required|optional|enabled|disabled|include|omit|same-origin|string|str|number|int|bool|boolean|bytes|any|unknown|object|SecretStr|await|new|yield|typeof|lambda|function|async|not|infer|keyof)$/i;
+var TYPE_NAME = /^(?:[A-Z][a-z]{2,31}(?:8|16|32|64)?){1,8}(?:<[\w$<>, |[\].]{0,128}>)?(?:\[\])?$/;
+var ID = String.raw`[A-Za-z_$][\w$]{0,63}`;
+var ARG = String.raw`(?:"[^"\n]{0,128}"|'[^'\n]{0,128}'|${ID}(?:\.${ID}){0,8}|\d{1,10})`;
+var CALL_START = /^(?:[A-Za-z_$][\w$]{1,63}|[A-Za-z_$](?=\??\.))(?:\??\.[A-Za-z_$][\w$]{0,63}){0,12}[([]/;
+var CODE_CHARS = /^[\w$.?,'"\s()[\]:=/+*-]{0,1024}$/;
+var AFTER_BRACKET = /[)\]][\w$]/;
+var MEMBER = new RegExp(
+  String.raw`^(?:process|import\.meta|os|env|Deno|Bun|System|config|cfg|conf|settings|options|opts|props|args|argv|params|parameters|inputs|secrets|vars|variables|credentials|creds|ctx|context|req|request|app|window|globalThis|global|module|exports|this|self|cls|data|values|form|state|store|environment|vault|session|user|account|client|locals|kwargs|payload|body|headers|query|github|steps|needs|matrix|Rails)(?:\??\.${ID}|\[${ARG}\]){1,12}$`,
+  "i"
+);
+var CHAIN = new RegExp(String.raw`^${ID}(?:\.${ID}){0,12}$`);
+var EXPRESSION = /^\{[\w$.?()[\] ,]{1,256}\}$/;
+function namesSecret(value, name = "", literal = false) {
+  if (value === "" || isTag(value) || PLACEHOLDER.test(value) || KEYWORD.test(value)) return true;
+  if (literal) return false;
+  if (CALL_START.test(value) && CODE_CHARS.test(value) && !AFTER_BRACKET.test(value)) return true;
+  if (MEMBER.test(value) || EXPRESSION.test(value)) return true;
+  if (CHAIN.test(value)) {
+    const parts = value.split(".");
+    const tail = name.slice(name.lastIndexOf(".") + 1);
+    if (flat(parts[parts.length - 1]) === flat(tail)) return true;
+    if (/[_.]|[a-z][A-Z]/.test(value) && parts.some(isSecretName)) return true;
+  }
+  return false;
+}
+var flat = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+function segments2(name) {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z0-9]{1,64}/).filter(Boolean);
+}
+var STRONG = /secret|passw(?:or)?d|passphrase|credential|authori[sz]ation|cookie|^pass$|^pw$|pwd$|^creds?$|(?:api|access|private|signing|master|encryption|auth|app)key|token(?!s$|iz)/;
+var WEAK = /* @__PURE__ */ new Set(["key", "auth", "private", "master", "signing", "encryption", "crypt"]);
+var KEY_QUALIFIER = /* @__PURE__ */ new Set([
+  "api",
+  "app",
+  "access",
+  "secret",
+  "private",
+  "master",
+  "signing",
+  "sign",
+  "encryption",
+  "encrypt",
+  "crypto",
+  "cipher",
+  "hmac",
+  "jwt",
+  "auth",
+  "client",
+  "license",
+  "licence",
+  "service",
+  "account",
+  "shared",
+  "webhook",
+  "deploy",
+  "ssh",
+  "gpg",
+  "pgp",
+  "aes",
+  "rsa",
+  "consumer",
+  "subscription",
+  "session",
+  "csrf",
+  "admin",
+  "root",
+  "write",
+  "storage"
+]);
+var ABOUT = /* @__PURE__ */ new Set([
+  "file",
+  "files",
+  "path",
+  "dir",
+  "directory",
+  "filename",
+  "fd",
+  "stdin",
+  "url",
+  "uri",
+  "endpoint",
+  "host",
+  "hostname",
+  "port",
+  "name",
+  "names",
+  "id",
+  "ids",
+  "type",
+  "types",
+  "kind",
+  "length",
+  "len",
+  "size",
+  "count",
+  "limit",
+  "max",
+  "min",
+  "budget",
+  "usage",
+  "used",
+  "ttl",
+  "timeout",
+  "expiry",
+  "expires",
+  "expiration",
+  "lifetime",
+  "prefix",
+  "suffix",
+  "field",
+  "env",
+  "mode",
+  "method",
+  "provider",
+  "policy",
+  "algorithm",
+  "alg",
+  "version",
+  "format",
+  "encoding",
+  "strategy",
+  "scheme",
+  "helper",
+  "enabled",
+  "disabled",
+  "required",
+  "rotation",
+  "hint",
+  "prompt",
+  "label",
+  "placeholder",
+  "description",
+  "title",
+  "message",
+  "error",
+  "user",
+  "username",
+  "email",
+  "ip",
+  "address",
+  "domain",
+  "issuer",
+  "audience",
+  "scope",
+  "scopes",
+  "callback",
+  "redirect",
+  "store",
+  "backend",
+  "driver",
+  "manager",
+  "command",
+  "cmd"
+]);
+var WHOLE = /* @__PURE__ */ new Set(["auth", "identitytoken", "clientcertificatedata"]);
+function isSecretName(name) {
+  if (/^(?:old)?pwd$/i.test(name)) return false;
+  const segs = segments2(name);
+  if (segs.length === 0 || ABOUT.has(segs[segs.length - 1])) return false;
+  if (WHOLE.has(segs.join(""))) return true;
+  const envStyle = !/[a-z]/.test(name);
+  return segs.some((s, i) => {
+    if (STRONG.test(s)) return true;
+    if (s === "key") return envStyle || i > 0 && KEY_QUALIFIER.has(segs[i - 1]);
+    return WEAK.has(s) && (envStyle || segs.length > 1 && i === segs.length - 1);
+  });
+}
+var BASE64ISH = /^[A-Za-z0-9+/=_-]{8,8192}$/;
+var credentialBlob = (v) => BASE64ISH.test(v) && (/[0-9+/=]/.test(v) || /[a-z]/.test(v) && /[A-Z]/.test(v));
+function secretValue(name, value, literal = false) {
+  if (!isSecretName(name) || namesSecret(value, name, literal)) return false;
+  return flat(name) === "auth" ? credentialBlob(value) : true;
+}
 var PEM_BEGIN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
 var PEM_END = /-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
 var PEM_BODY = /(?:(?:\r?\n|\\r\\n|\\n)[A-Za-z0-9+/=]{1,1024}(?=\r?\n|\\[rn]|["']|$)){0,1024}/y;
@@ -1641,6 +1813,7 @@ function redactPrivateKeys(s) {
   }
   return out + s.slice(last);
 }
+var NAME = String.raw`(?<![A-Za-z0-9_.])(?<![A-Za-z0-9_.]-)(?=[A-Za-z_])([A-Za-z0-9_.-]{0,128}(?:secret|token|pass|pwd|pw|key|auth|credential|cred|private|master|signing|encryption|crypt|cookie|certificate)[A-Za-z0-9_.-]{0,64})`;
 var RULES = [
   { id: "aws-access-key", re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
   { id: "github-token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g },
@@ -1694,7 +1867,7 @@ var RULES = [
   {
     id: "auth-header",
     re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s{0,4}[:=]\s{0,4}["']?)((?:bearer|basic|token)\s{1,4})?([^\s"',;]{1,4096})/gi,
-    replace: (m, name, sep, scheme, value) => PLACEHOLDER.test(value) || value.startsWith("[REDACTED") ? m : `${name}${sep}${scheme ?? ""}${tag("auth-header")}`
+    replace: (m, name, sep, scheme, value) => PLACEHOLDER.test(value) || isTag(value) ? m : `${name}${sep}${scheme ?? ""}${tag("auth-header")}`
   },
   {
     id: "cookie",
@@ -1724,11 +1897,12 @@ var RULES = [
   },
   {
     id: "env-secret",
-    re: /\b([A-Za-z0-9_.-]{0,64}(?:secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_]{0,64})(["']?\s{0,4}[:=]\s{0,4})(?:(["'])([^"'\n]{6,512})\3|([^\s"',;]{6,512}))/gi,
-    replace: (m, key, sep, quote2, quoted, bare) => {
+    re: new RegExp(`${NAME}(["']?\\s{0,4}[:=]\\s{0,4})(?:(["'])([^"'\\n]{6,512})\\3|([^\\s"',;]{6,512}))`, "gi"),
+    replace: (m, name, sep, quote2, quoted, bare) => {
       const value = quoted ?? bare ?? "";
-      if (namesSecret(value)) return m;
-      return quote2 ? `${key}${sep}${quote2}${tag("env-secret")}${quote2}` : `${key}${sep}${tag("env-secret")}`;
+      if (!secretValue(name, value, quote2 !== void 0)) return m;
+      if (!quote2 && /^["']?[ \t]*:[ \t]*$/.test(sep) && TYPE_NAME.test(value)) return m;
+      return quote2 ? `${name}${sep}${quote2}${tag("env-secret")}${quote2}` : `${name}${sep}${tag("env-secret")}`;
     }
   }
 ];
@@ -1742,21 +1916,37 @@ function redactString(s) {
 }
 function redactValue(value, key = "") {
   if (typeof value === "string") {
-    if (key && SECRET_NAME.test(key) && value.length >= 6 && !namesSecret(value)) return tag("secret-field");
+    if (key && secretValue(key, value, true)) return tag("secret-field");
     return redactString(value);
   }
   if (Array.isArray(value)) return value.map((v) => redactValue(v));
   if (value && typeof value === "object") {
     const o = value;
     const pairName = typeof o.key === "string" ? o.key : typeof o.name === "string" ? o.name : "";
-    const secretPair = pairName !== "" && SECRET_NAME.test(pairName);
+    const secretPair = pairName !== "" && isSecretName(pairName);
     return Object.fromEntries(
       Object.entries(o).map(([k, v]) => [k, redactValue(v, secretPair && k === "value" ? "secret" : k)])
     );
   }
   return value;
 }
-var PATTERNS = [...RULES.map((r) => r.re), PLACEHOLDER, CODE_REF, SECRET_NAME, PEM_BEGIN, PEM_END, PEM_BODY];
+var PATTERNS = [
+  ...RULES.map((r) => r.re),
+  PLACEHOLDER,
+  KEYWORD,
+  TYPE_NAME,
+  CALL_START,
+  CODE_CHARS,
+  AFTER_BRACKET,
+  MEMBER,
+  CHAIN,
+  EXPRESSION,
+  STRONG,
+  BASE64ISH,
+  PEM_BEGIN,
+  PEM_END,
+  PEM_BODY
+];
 
 // src/ingest/ingest.ts
 var STRING_CAP = 256 * 1024;

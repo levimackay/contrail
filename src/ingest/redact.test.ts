@@ -229,3 +229,99 @@ test('token patterns redact hostile 256 KB input in linear time', () => {
     assert.ok(ms < 200, `${s.slice(0, 12)}: ${Math.round(ms)} ms`);
   }
 });
+
+const PW = repeat('Pw9', 4);
+const B64 = Buffer.from(`user:${PW}`).toString('base64');
+
+/** [what, text, the part that must not survive] */
+const LEAKS: Array<[string, string, string]> = [
+  // Credential files
+  ['docker config auth', `{"auths":{"https://index.docker.io/v1/":{"auth":"${B64}"}}}`, B64],
+  ['docker config identitytoken', `{"auths":{"r":{"identitytoken":"${PW}"}}}`, PW],
+  ['kubeconfig client-key-data', `    client-key-data: ${B64}`, B64],
+  ['kubeconfig client-certificate-data', `    client-certificate-data: ${B64}`, B64],
+  ['kubeconfig token', `    token: ${PW}`, PW],
+  ['azure AccountKey', `DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=${B64};EndpointSuffix=core.windows.net`, B64],
+  ['azure SharedAccessKey', `Endpoint=sb://x.servicebus.windows.net/;SharedAccessKeyName=Root;SharedAccessKey=${B64}`, B64],
+  ['npm _auth', `_auth=${B64}`, B64],
+  ['npm _authToken', `_authToken=${PW}`, PW],
+  ['npm registry _authToken', `//registry.npmjs.org/:_authToken=${PW}`, PW],
+  // .env names
+  ['ENCRYPTION_KEY', `ENCRYPTION_KEY=${repeat('9f86', 8)}`, repeat('9f86', 8)],
+  ['SIGNING_KEY', `SIGNING_KEY=${B64}`, B64],
+  ['APP_KEY=base64:', `APP_KEY=base64:${B64}`, B64],
+  ['RAILS_MASTER_KEY', `RAILS_MASTER_KEY=${repeat('0a1b', 8)}`, repeat('0a1b', 8)],
+  ['TWILIO_AUTH', `TWILIO_AUTH=${repeat('0a1b', 8)}`, repeat('0a1b', 8)],
+  ['an all-digit password', 'DB_PASSWORD=123456', '123456'],
+  ['a dotted password', 'PASSWORD=Summer.Winter', 'Summer'],
+  ['a password with brackets', 'PASSWORD=P(ssw0rd!)', 'ssw0rd'],
+  ['a quoted password that reads like code', 'password = "Hello(World).x"', 'World'],
+  ['-Dapp.password=X', `java -Dspring.datasource.password=${PW} -jar app.jar`, PW],
+];
+for (const [what, text, secret] of LEAKS) {
+  test(`redacts ${what}`, () => {
+    const out = redactString(text);
+    assert.ok(!out.includes(secret), out);
+    assert.match(out, /\[REDACTED:/);
+  });
+}
+
+// Ordinary code and config that names secrets without holding one.
+const CODE = [
+  'const tokenCount = 5',
+  'const tokenCount = 123456',
+  'password: string',
+  '  password: string;',
+  'password?: string',
+  'privateKey: Uint8Array;',
+  'apiKey: config.apiKey',
+  'apiKey: config.apiKey,',
+  'const apiKey = process.env.API_KEY',
+  'max_tokens: 200000',
+  '"input_tokens": 123456,',
+  'tokenizer: "gpt2"',
+  'PWD=/home/user/project',
+  "credentials: 'include'",
+  'const password = await getPassword()',
+  'token = jwt.sign(payload, secret)',
+  'password = request.form["password"]',
+  'password: z.string().min(8)',
+  'password = Column(String(128))',
+  'this.password = password;',
+  'isPrivate={isPrivate}',
+  'auth: true',
+  "queryKey: ['todos']",
+  'sortKey: "createdAt"',
+  'SECRET_NAME=prod-db-creds',
+  'TOKEN_URL=https://oauth2.googleapis.com/token',
+  'PASSWORD=${DB_PASSWORD}',
+  'PASSWORD=$(cat /run/secrets/db)',
+  'PASSWORD=<your-password>',
+  'PASSWORD=changeme',
+  'PASSWORD=xxxxxxxx',
+  'PASSWORD=********',
+  'PASSWORD=',
+  '"auth": "required"',
+];
+for (const text of CODE) {
+  test(`leaves alone: ${text.slice(0, 40)}`, () => assert.equal(redactString(text), text));
+}
+
+test('values under secret-named JSON keys are redacted whatever they look like', () => {
+  const out = redactValue({ password: '123456', token: 'Summer.Winter', auth: B64, max_tokens: '1024', auths: { auth: 'required' } });
+  assert.deepEqual(out, {
+    password: '[REDACTED:secret-field]', token: '[REDACTED:secret-field]', auth: '[REDACTED:secret-field]', max_tokens: '1024', auths: { auth: 'required' },
+  });
+});
+
+test('name patterns redact hostile 256 KB input in linear time', () => {
+  const inputs = [
+    fill('a_token='), fill('password="'), fill("key: '"), fill('secret:'), fill('a.b.password.'), fill('x-key-'), fill('KEY=,'),
+    fill('x', 'PASSWORD='), fill('(', 'PASSWORD=ab'), fill('a.', 'PASSWORD=ab'), fill('{"auth":"a","token":"b","key":1},'),
+    fill('const password = getPassword(a, b);\n'),
+  ];
+  for (const s of inputs) {
+    const ms = fastest(() => redactString(s));
+    assert.ok(ms < 200, `${JSON.stringify(s.slice(0, 16))}: ${Math.round(ms)} ms`);
+  }
+});

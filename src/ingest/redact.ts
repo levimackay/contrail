@@ -16,18 +16,120 @@ interface Rule {
 }
 
 const tag = (id: string) => `[REDACTED:${id}]`;
+const isTag = (v: string) => v.startsWith('[REDACTED');
 
-/** Obvious stand-ins, never secrets. */
-const PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w{0,127}\}?|<[^<>\n]{0,128}>|x{3,64}|\*{3,64}|\.{3}|changeme|your[-_a-z]{0,64})$/i;
+/** Obvious stand-ins, never secrets: $VAR, ${VAR}, $(cmd), {{ template }}, <placeholder>, xxx, ***, changeme. */
+const PLACEHOLDER =
+  /^(?:\$\{?[A-Za-z_]\w{0,127}\}?|\$\(.{0,512}|\$?\{\{.{0,256}\}\}|%[A-Za-z_]\w{0,127}%|<[^<>\n]{0,128}>|x{3,64}|\*{3,64}|\.{3}|…|change[-_]?me|your[-_a-z]{0,64}|redacted|placeholder)$/i;
 
-/** Code that names a secret instead of holding one: getToken(), os.environ[, process.env.API_KEY, 1024. */
-const CODE_REF = /^(?:[A-Za-z_][\w.]{0,127}(?:\(.{0,512}\)|\[.{0,512}\]|\[)|[A-Za-z_]\w{0,63}(?:\.[A-Za-z_]\w{0,63}){1,12}|\d{1,6})$/;
+/** Values that are words in code or config, not secrets: `auth: true`, `password: string`, `credentials: 'include'`. */
+const KEYWORD =
+  /^(?:true|false|yes|no|on|off|null|nil|none|undefined|empty|required|optional|enabled|disabled|include|omit|same-origin|string|str|number|int|bool|boolean|bytes|any|unknown|object|SecretStr|await|new|yield|typeof|lambda|function|async|not|infer|keyof)$/i;
 
-const namesSecret = (v: string) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.startsWith('[REDACTED');
+/**
+ * A type after a colon is an annotation: token: Buffer, sharedKey: ArrayBuffer, key: Uint8Array[].
+ * Each capitalised word is letters, with only a bit width after it (Uint8Array), so Pw9Pw9, P4SSW0RD
+ * and Hunter2 are not types.
+ */
+const TYPE_NAME = /^(?:[A-Z][a-z]{2,31}(?:8|16|32|64)?){1,8}(?:<[\w$<>, |[\].]{0,128}>)?(?:\[\])?$/;
 
-/** JSON keys and KEY=VALUE names whose values are secrets. */
-export const SECRET_NAME =
-  /secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie/i;
+const ID = String.raw`[A-Za-z_$][\w$]{0,63}`;
+const ARG = String.raw`(?:"[^"\n]{0,128}"|'[^'\n]{0,128}'|${ID}(?:\.${ID}){0,8}|\d{1,10})`;
+/**
+ * A call or lookup on a named function or object: getToken(), get_secret("db"), os.environ["X"],
+ * z.string().min(8), or one cut short at a quote or space (getenv(, jwt.sign(payload). The name
+ * takes two characters or more and nothing but code follows a closing bracket, so P(ssw0rd!) and
+ * Sup3r(Secret)123 are passwords, not calls.
+ */
+const CALL_START = /^(?:[A-Za-z_$][\w$]{1,63}|[A-Za-z_$](?=\??\.))(?:\??\.[A-Za-z_$][\w$]{0,63}){0,12}[([]/;
+const CODE_CHARS = /^[\w$.?,'"\s()[\]:=/+*-]{0,1024}$/;
+const AFTER_BRACKET = /[)\]][\w$]/;
+/** A member of something that holds settings: process.env.X, config.apiKey, self.password, import.meta.env.X. */
+const MEMBER = new RegExp(
+  String.raw`^(?:process|import\.meta|os|env|Deno|Bun|System|config|cfg|conf|settings|options|opts|props|args|argv|params|parameters|inputs|secrets|vars|variables|credentials|creds|ctx|context|req|request|app|window|globalThis|global|module|exports|this|self|cls|data|values|form|state|store|environment|vault|session|user|account|client|locals|kwargs|payload|body|headers|query|github|steps|needs|matrix|Rails)(?:\??\.${ID}|\[${ARG}\]){1,12}$`,
+  'i',
+);
+const CHAIN = new RegExp(String.raw`^${ID}(?:\.${ID}){0,12}$`);
+/** A JSX or template expression: {apiKey}, {props.token}. */
+const EXPRESSION = /^\{[\w$.?()[\] ,]{1,256}\}$/;
+
+/**
+ * A value that names or stands in for a secret instead of holding one. A quoted value is a string
+ * literal, not code, so only a placeholder or keyword excuses it.
+ */
+function namesSecret(value: string, name = '', literal = false): boolean {
+  if (value === '' || isTag(value) || PLACEHOLDER.test(value) || KEYWORD.test(value)) return true;
+  if (literal) return false;
+  if (CALL_START.test(value) && CODE_CHARS.test(value) && !AFTER_BRACKET.test(value)) return true;
+  if (MEMBER.test(value) || EXPRESSION.test(value)) return true;
+  if (CHAIN.test(value)) {
+    const parts = value.split('.');
+    const tail = name.slice(name.lastIndexOf('.') + 1);
+    // Passing a variable on under its own name: password=password, api_key=self.api_key.
+    if (flat(parts[parts.length - 1]!) === flat(tail)) return true;
+    // A variable named for a secret: password=db_password, token=tokenInput.value. Summer.Winter is not one.
+    if (/[_.]|[a-z][A-Z]/.test(value) && parts.some(isSecretName)) return true;
+  }
+  return false;
+}
+
+const flat = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** CamelCase and snake_case words, lower-cased: SecretAccessKey → secret, access, key. */
+function segments(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .split(/[^a-z0-9]{1,64}/)
+    .filter(Boolean);
+}
+
+/** Words that alone make a name secret, in any case and position. */
+const STRONG = /secret|passw(?:or)?d|passphrase|credential|authori[sz]ation|cookie|^pass$|^pw$|pwd$|^creds?$|(?:api|access|private|signing|master|encryption|auth|app)key|token(?!s$|iz)/;
+/** Words that make a name secret when it is an environment variable (APP_KEY, TWILIO_AUTH), or end it (basicAuth). */
+const WEAK = new Set(['key', 'auth', 'private', 'master', 'signing', 'encryption', 'crypt']);
+/** A lower- or camel-case name ending in key is secret after one of these: apiKey, signing_key, client-key-data. */
+const KEY_QUALIFIER = new Set([
+  'api', 'app', 'access', 'secret', 'private', 'master', 'signing', 'sign', 'encryption', 'encrypt', 'crypto', 'cipher',
+  'hmac', 'jwt', 'auth', 'client', 'license', 'licence', 'service', 'account', 'shared', 'webhook', 'deploy', 'ssh',
+  'gpg', 'pgp', 'aes', 'rsa', 'consumer', 'subscription', 'session', 'csrf', 'admin', 'root', 'write', 'storage',
+]);
+/** A name ending in one of these holds something about a secret, not the secret: TOKEN_URL, token_file, password_min_length. */
+const ABOUT = new Set([
+  'file', 'files', 'path', 'dir', 'directory', 'filename', 'fd', 'stdin', 'url', 'uri', 'endpoint', 'host', 'hostname', 'port',
+  'name', 'names', 'id', 'ids', 'type', 'types', 'kind', 'length', 'len', 'size', 'count', 'limit', 'max', 'min', 'budget',
+  'usage', 'used', 'ttl', 'timeout', 'expiry', 'expires', 'expiration', 'lifetime', 'prefix', 'suffix', 'field', 'env',
+  'mode', 'method', 'provider', 'policy', 'algorithm', 'alg', 'version', 'format', 'encoding', 'strategy', 'scheme', 'helper',
+  'enabled', 'disabled', 'required', 'rotation', 'hint', 'prompt', 'label', 'placeholder', 'description', 'title', 'message',
+  'error', 'user', 'username', 'email', 'ip', 'address', 'domain', 'issuer', 'audience', 'scope', 'scopes', 'callback',
+  'redirect', 'store', 'backend', 'driver', 'manager', 'command', 'cmd',
+]);
+/** Names that are secret only as whole names: Docker's and npm's "auth", kubeconfig's certificate data. */
+const WHOLE = new Set(['auth', 'identitytoken', 'clientcertificatedata']);
+
+/** Is this the name of a setting whose value is a secret? DB_PASSWORD, apiKey, client-key-data: yes. max_tokens, TOKEN_URL, PWD: no. */
+export function isSecretName(name: string): boolean {
+  if (/^(?:old)?pwd$/i.test(name)) return false; // the shell's working directory
+  const segs = segments(name);
+  if (segs.length === 0 || ABOUT.has(segs[segs.length - 1]!)) return false;
+  if (WHOLE.has(segs.join(''))) return true;
+  const envStyle = !/[a-z]/.test(name);
+  return segs.some((s, i) => {
+    if (STRONG.test(s)) return true;
+    if (s === 'key') return envStyle || (i > 0 && KEY_QUALIFIER.has(segs[i - 1]!));
+    return WEAK.has(s) && (envStyle || (segs.length > 1 && i === segs.length - 1));
+  });
+}
+
+/** A Docker or npm "auth" value is base64 user:password; "auth": "required" is not. */
+const BASE64ISH = /^[A-Za-z0-9+/=_-]{8,8192}$/;
+const credentialBlob = (v: string) => BASE64ISH.test(v) && (/[0-9+/=]/.test(v) || (/[a-z]/.test(v) && /[A-Z]/.test(v)));
+
+/** Does a value stored under this name look like the secret itself? */
+function secretValue(name: string, value: string, literal = false): boolean {
+  if (!isSecretName(name) || namesSecret(value, name, literal)) return false;
+  return flat(name) === 'auth' ? credentialBlob(value) : true;
+}
 
 const PEM_BEGIN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
 const PEM_END = /-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
@@ -64,6 +166,13 @@ function redactPrivateKeys(s: string): string {
   }
   return out + s.slice(last);
 }
+
+/**
+ * A name that may hold a secret; isSecretName decides. A name starts only where a run of name
+ * characters starts (or after a flag's dash, as in -Dapp.password=), so a long a-b-c-key-… run
+ * is tried once, not at every word in it.
+ */
+const NAME = String.raw`(?<![A-Za-z0-9_.])(?<![A-Za-z0-9_.]-)(?=[A-Za-z_])([A-Za-z0-9_.-]{0,128}(?:secret|token|pass|pwd|pw|key|auth|credential|cred|private|master|signing|encryption|crypt|cookie|certificate)[A-Za-z0-9_.-]{0,64})`;
 
 const RULES: Rule[] = [
   { id: 'aws-access-key', re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
@@ -119,7 +228,7 @@ const RULES: Rule[] = [
     id: 'auth-header',
     re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s{0,4}[:=]\s{0,4}["']?)((?:bearer|basic|token)\s{1,4})?([^\s"',;]{1,4096})/gi,
     replace: (m, name, sep, scheme, value) =>
-      PLACEHOLDER.test(value!) || value!.startsWith('[REDACTED') ? m : `${name}${sep}${scheme ?? ''}${tag('auth-header')}`,
+      PLACEHOLDER.test(value!) || isTag(value!) ? m : `${name}${sep}${scheme ?? ''}${tag('auth-header')}`,
   },
   {
     id: 'cookie',
@@ -149,11 +258,12 @@ const RULES: Rule[] = [
   },
   {
     id: 'env-secret',
-    re: /\b([A-Za-z0-9_.-]{0,64}(?:secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_]{0,64})(["']?\s{0,4}[:=]\s{0,4})(?:(["'])([^"'\n]{6,512})\3|([^\s"',;]{6,512}))/gi,
-    replace: (m, key, sep, quote, quoted, bare) => {
+    re: new RegExp(`${NAME}(["']?\\s{0,4}[:=]\\s{0,4})(?:(["'])([^"'\\n]{6,512})\\3|([^\\s"',;]{6,512}))`, 'gi'),
+    replace: (m, name, sep, quote, quoted, bare) => {
       const value = quoted ?? bare ?? '';
-      if (namesSecret(value)) return m;
-      return quote ? `${key}${sep}${quote}${tag('env-secret')}${quote}` : `${key}${sep}${tag('env-secret')}`;
+      if (!secretValue(name!, value, quote !== undefined)) return m;
+      if (!quote && /^["']?[ \t]*:[ \t]*$/.test(sep!) && TYPE_NAME.test(value)) return m; // secret: NonSharedBuffer
+      return quote ? `${name}${sep}${quote}${tag('env-secret')}${quote}` : `${name}${sep}${tag('env-secret')}`;
     },
   },
 ];
@@ -174,14 +284,14 @@ export function redactString(s: string): string {
  */
 export function redactValue(value: unknown, key = ''): unknown {
   if (typeof value === 'string') {
-    if (key && SECRET_NAME.test(key) && value.length >= 6 && !namesSecret(value)) return tag('secret-field');
+    if (key && secretValue(key, value, true)) return tag('secret-field');
     return redactString(value);
   }
   if (Array.isArray(value)) return value.map(v => redactValue(v));
   if (value && typeof value === 'object') {
     const o = value as Record<string, unknown>;
     const pairName = typeof o.key === 'string' ? o.key : typeof o.name === 'string' ? o.name : '';
-    const secretPair = pairName !== '' && SECRET_NAME.test(pairName);
+    const secretPair = pairName !== '' && isSecretName(pairName);
     return Object.fromEntries(
       Object.entries(o).map(([k, v]) => [k, redactValue(v, secretPair && k === 'value' ? 'secret' : k)]),
     );
@@ -190,4 +300,8 @@ export function redactValue(value: unknown, key = ''): unknown {
 }
 
 /** Every pattern this module runs, for the test that checks each quantifier is bounded. */
-export const PATTERNS: RegExp[] = [...RULES.map(r => r.re), PLACEHOLDER, CODE_REF, SECRET_NAME, PEM_BEGIN, PEM_END, PEM_BODY];
+export const PATTERNS: RegExp[] = [
+  ...RULES.map(r => r.re),
+  PLACEHOLDER, KEYWORD, TYPE_NAME, CALL_START, CODE_CHARS, AFTER_BRACKET, MEMBER, CHAIN, EXPRESSION, STRONG, BASE64ISH,
+  PEM_BEGIN, PEM_END, PEM_BODY,
+];

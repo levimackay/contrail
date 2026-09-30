@@ -179,6 +179,28 @@ test('watch prints each new prompt and finished call once, with where its values
   assert.equal(out.match(/SHELL/g)?.length, 1, 'printed once');
 });
 
+test("a call denied at a permission prompt is read back from the session's own transcript, and nowhere else", async () => {
+  const config = mkdtempSync(join(tmpdir(), 'contrail-config-'));
+  const projects = join(config, 'projects', '-r');
+  mkdirSync(projects, { recursive: true });
+  const transcript = join(projects, 's1.jsonl');
+  const denialLine = JSON.stringify({
+    type: 'user', sessionId: 's1', toolDenialKind: 'user-rejected',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b9', is_error: true, content: "The user doesn't want to proceed with this tool use." }] },
+  });
+  writeFileSync(transcript, `{"type":"summary"}\n${denialLine}\n`);
+  const outside = join(config, 'elsewhere.jsonl');
+  writeFileSync(outside, `${denialLine}\n`);
+  const why = async (path: string) => {
+    const data = spoolFrom(session([d.prompt('clean up', 'p1'), { ...d.pre('b9', 'Bash', { command: 'rm -rf build' }), payload: { tool_use_id: 'b9', tool_name: 'Bash', tool_input: { command: 'rm -rf build' }, transcript_path: path } }]));
+    let out = '';
+    await main(['why', '--data', data], { out: t => (out += t), err: t => (out += t), cwd: '/r', env: { CLAUDE_CONFIG_DIR: config }, home: '/Users/dev' });
+    return out;
+  };
+  assert.match(await why(transcript), /· DENIED by you, never ran: The user doesn't want to proceed with this tool use\./);
+  assert.match(await why(outside), /· no result recorded \(denied, stopped, or still running\)/);
+});
+
 test('an unknown target is a clear error, not a stack trace', async () => {
   const data = spoolFrom();
   const r = await run(['why', 'src/never-touched.ts', '--data', data]);

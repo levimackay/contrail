@@ -438,7 +438,7 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync4, readFileSync as readFileSync6, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync4, readFileSync as readFileSync7, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename as basename7, dirname as dirname3, join as join8, resolve as resolve7 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2450,12 +2450,12 @@ var RULES = [
   {
     id: "auth-header",
     re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s{0,4}[:=]\s{0,4}["']?)((?:bearer|basic|token)\s{1,4})?([^\s"',;]{1,4096})/gi,
-    replace: (m, name2, sep, scheme, value) => PLACEHOLDER.test(value) || isTag(value) ? m : `${name2}${sep}${scheme ?? ""}${tag2("auth-header")}`
+    replace: (m, name2, sep2, scheme, value) => PLACEHOLDER.test(value) || isTag(value) ? m : `${name2}${sep2}${scheme ?? ""}${tag2("auth-header")}`
   },
   {
     id: "cookie",
     re: /\b((?:set-)?cookie)(\s{0,4}:\s{0,4})[^\r\n]{1,4096}/gi,
-    replace: (_m, name2, sep) => `${name2}${sep}${tag2("cookie")}`
+    replace: (_m, name2, sep2) => `${name2}${sep2}${tag2("cookie")}`
   },
   {
     id: "url-password",
@@ -2541,17 +2541,17 @@ var RULES = [
   {
     id: "env-secret",
     re: new RegExp(`${NAME}${SEP}((?:bearer|basic|token)[ \\t]{1,4})?(?:${QUOTED}|${BARE})`, "gi"),
-    replace: (m, name2, sep, scheme, dq, sq, bare) => {
+    replace: (m, name2, sep2, scheme, dq, sq, bare) => {
       if (dq !== void 0 || sq !== void 0) {
         const value2 = dq ?? sq ?? "";
         if (!secretValue(name2, value2, true)) return m;
         const quote2 = dq !== void 0 ? '"' : "'";
-        return `${name2}${sep}${scheme ?? ""}${quote2}${tag2("env-secret")}${quote2}`;
+        return `${name2}${sep2}${scheme ?? ""}${quote2}${tag2("env-secret")}${quote2}`;
       }
       const [value, trailing] = splitTrailing(bare ?? "");
       if (value.length < 4 || !secretValue(name2, value)) return m;
-      if (/^["']?[ \t]*:[ \t]*$/.test(sep) && TYPE_NAME.test(value)) return m;
-      return `${name2}${sep}${scheme ?? ""}${tag2("env-secret")}${trailing}`;
+      if (/^["']?[ \t]*:[ \t]*$/.test(sep2) && TYPE_NAME.test(value)) return m;
+      return `${name2}${sep2}${scheme ?? ""}${tag2("env-secret")}${trailing}`;
     }
   }
 ];
@@ -4704,6 +4704,54 @@ function commitFiles(cwd, sha) {
   }
 }
 
+// src/query/denial.ts
+import { closeSync as closeSync4, constants as constants3, fstatSync as fstatSync4, openSync as openSync3, readFileSync as readFileSync6 } from "node:fs";
+import { sep } from "node:path";
+var MAX_TRANSCRIPT = 256 * 1024 * 1024;
+function denialFor(db, action, projectsRoot2) {
+  if (action.status !== "pending") return null;
+  const row = db.get(
+    `SELECT json_extract(payload, '$.transcript_path') AS path FROM events
+      WHERE session_id = ? AND source IS NULL AND json_extract(payload, '$.transcript_path') IS NOT NULL LIMIT 1`,
+    action.scope.sessionId
+  );
+  if (!row?.path) return null;
+  const root = realPath(projectsRoot2);
+  const file = realPath(row.path);
+  if (!file.startsWith(root + sep) || !file.endsWith(".jsonl")) return null;
+  let text;
+  try {
+    const fd = openSync3(file, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0) | (constants3.O_NONBLOCK ?? 0));
+    try {
+      const st = fstatSync4(fd);
+      if (!st.isFile() || st.size > MAX_TRANSCRIPT) return null;
+      text = readFileSync6(fd, "utf8");
+    } finally {
+      closeSync4(fd);
+    }
+  } catch {
+    return null;
+  }
+  const needle = `"tool_use_id":"${action.id}"`;
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + needle.length)) {
+    const line = text.slice(text.lastIndexOf("\n", at) + 1, text.indexOf("\n", at) === -1 ? text.length : text.indexOf("\n", at));
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const kind = typeof entry.toolDenialKind === "string" ? entry.toolDenialKind : null;
+    if (!kind) continue;
+    const content = entry.message?.content;
+    const block = Array.isArray(content) ? content.find((b) => b?.tool_use_id === action.id) : void 0;
+    const body = block?.content;
+    const reason = typeof body === "string" ? body : Array.isArray(body) ? body.map((b) => b?.text).filter((t) => typeof t === "string").join(" ") : "";
+    return { kind: kind.slice(0, 64), reason: redactString(reason.slice(0, 4e3)) };
+  }
+  return null;
+}
+
 // src/query/review.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { join as join7 } from "node:path";
@@ -6314,6 +6362,8 @@ async function why(args, flags, io, s) {
     }
     const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const explanation = explain(hit.toolUseId, graph);
+    const denial = denialFor(db, explanation.action, projectsRoot(io.env, io.home));
+    if (denial) Object.assign(explanation.action, { status: "denied", deniedBy: denial.kind, denial: denial.reason });
     if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}
 `);
     else io.out(renderWhy(explanation, graph, note, s));
@@ -6617,7 +6667,7 @@ function writePrivate(path, text) {
     throw new ContrailError(`Cannot write ${path}: ${e.message}`);
   }
 }
-var readStdin = (io) => io.stdin ? io.stdin() : readFileSync6(0, "utf8");
+var readStdin = (io) => io.stdin ? io.stdin() : readFileSync7(0, "utf8");
 async function statusline(flags, io) {
   const s = io.env.NO_COLOR ? PLAIN : COLOR;
   try {

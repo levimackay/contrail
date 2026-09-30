@@ -20,6 +20,7 @@ import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
 import { blameFile, explainCalls } from './query/blame.ts';
 import { commitFiles, findCommit, isCommit } from './query/commit.ts';
+import { denialFor } from './query/denial.ts';
 import { reviewBranch } from './query/review.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget, unquote, type Target } from './query/target.ts';
@@ -266,6 +267,9 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
     }
     const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const explanation = explain(hit.toolUseId, graph);
+    // No result recorded: the session's own transcript may say the call was denied, and by whom.
+    const denial = denialFor(db, explanation.action, projectsRoot(io.env, io.home));
+    if (denial) Object.assign(explanation.action, { status: 'denied', deniedBy: denial.kind, denial: denial.reason });
     if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}\n`);
     else io.out(renderWhy(explanation, graph, note, s));
     return 0;

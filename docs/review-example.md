@@ -87,4 +87,4 @@ You, another process, or a session Contrail did not record.
 
 <sub>Blind spots: model knowledge and reasoning; system prompt; AGENTS.md; context injected by other hooks; changes made outside recorded Claude Code sessions (by you, another tool, or before Contrail was installed); which part of a recorded write the diff holds (files are joined by path and time, not content); commits rebased, amended or squashed after they were recorded (their new shas match no recorded commit line); sessions removed by retention. No observed source is not the same as no source.</sub>
 
-<sub>Written by `contrail review` 0.4.0 from the local record on the author's machine; nothing was sent anywhere. Run `contrail why <path>` there for the full trail behind any file.</sub>
+<sub>Written by `contrail review` 0.5.0 from the local record on the author's machine; nothing was sent anywhere. Run `contrail why <path>` there for the full trail behind any file.</sub>

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/levimackay/contrail/actions/workflows/ci.yml"><img src="https://github.com/levimackay/contrail/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/version-0.4.0-green.svg" alt="Version 0.4.0"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-0.5.0-green.svg" alt="Version 0.5.0"></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Claude%20Code-plugin-d97757.svg" alt="Claude Code plugin"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/runtime-Node%2022.13%2B%20%7C%20Bun-339933.svg" alt="Node 22.13+ or Bun"></a>
   <a href="#privacy-and-security"><img src="https://img.shields.io/badge/data-local%20only-555.svg" alt="Local only"></a>

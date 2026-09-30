@@ -1,5 +1,5 @@
 import { str } from '../util.ts';
-import { bestPerGroup } from './explain.ts';
+import { bestPerGroup, explain } from './explain.ts';
 import type { Action, Explanation, Graph, Input, Link, TokenTrace, Verdict } from './types.ts';
 
 export type Sensitivity = 'credentials' | 'runs remote code' | 'network' | 'install' | 'destructive';
@@ -40,26 +40,34 @@ export interface Finding {
   externalUpstream: boolean;
 }
 
-/** One sensitive action, with the facts that decide how much attention it deserves. */
-export function assess(e: Explanation, g: Graph): Finding | null {
-  const kinds = sensitivity(e.action);
-  if (!kinds.length) return null;
+/**
+ * Every source credited anywhere on an action's trail, nearest first: the action's own values
+ * (breadth first) before anything further upstream. UNKNOWN links credit nothing.
+ */
+export function creditedSources(e: Explanation, g: Graph): Array<{ link: Link; input: Input }> {
   const inputs = new Map(g.inputs.map(i => [i.id, i]));
-  const sources: Finding['sources'] = [];
-  // Breadth first: the action's own values before anything further upstream.
+  const sources: Array<{ link: Link; input: Input }> = [];
   let level: TokenTrace[] = bestPerGroup(e.traces);
   while (level.length) {
     for (const t of level) {
       for (const link of t.links) {
         const input = link.to ? inputs.get(link.to) : undefined;
         if (!input || link.grade === 'UNKNOWN') continue;
-        const sameLine = (s: Finding['sources'][number]) => s.input.id === input.id && s.link.quote?.line === link.quote?.line;
+        const sameLine = (s: (typeof sources)[number]) => s.input.id === input.id && s.link.quote?.line === link.quote?.line;
         const seen = sources.some(s => (s.input.id === input.id && s.link.token === link.token) || (t.token.role === 'hint' && sameLine(s)));
         if (!seen) sources.push({ link, input });
       }
     }
     level = level.flatMap(t => (t.upstream ? [t.upstream.trace] : []));
   }
+  return sources;
+}
+
+/** One sensitive action, with the facts that decide how much attention it deserves. */
+export function assess(e: Explanation, g: Graph): Finding | null {
+  const kinds = sensitivity(e.action);
+  if (!kinds.length) return null;
+  const sources = creditedSources(e, g);
   return {
     action: e.action,
     kinds,
@@ -67,6 +75,14 @@ export function assess(e: Explanation, g: Graph): Finding | null {
     sources,
     externalUpstream: sources.some(s => s.input.trust === 'external'),
   };
+}
+
+/** The sensitive actions of one session, each assessed. */
+export function findingsFor(g: Graph, explainOne: (actionId: string) => Explanation = id => explain(id, g)): Finding[] {
+  return g.actions
+    .filter(a => sensitivity(a).length)
+    .map(a => assess(explainOne(a.id), g))
+    .filter((f): f is Finding => f !== null);
 }
 
 /** External trail first, then actions you did not name, then the rest; newest first within each. */

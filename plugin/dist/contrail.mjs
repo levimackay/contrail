@@ -1438,9 +1438,7 @@ function sensitivity(action) {
   }
   return [...kinds];
 }
-function assess(e, g) {
-  const kinds = sensitivity(e.action);
-  if (!kinds.length) return null;
+function creditedSources(e, g) {
   const inputs = new Map(g.inputs.map((i) => [i.id, i]));
   const sources = [];
   let level = bestPerGroup(e.traces);
@@ -1456,6 +1454,12 @@ function assess(e, g) {
     }
     level = level.flatMap((t) => t.upstream ? [t.upstream.trace] : []);
   }
+  return sources;
+}
+function assess(e, g) {
+  const kinds = sensitivity(e.action);
+  if (!kinds.length) return null;
+  const sources = creditedSources(e, g);
   return {
     action: e.action,
     kinds,
@@ -1463,6 +1467,9 @@ function assess(e, g) {
     sources,
     externalUpstream: sources.some((s) => s.input.trust === "external")
   };
+}
+function findingsFor(g, explainOne = (id) => explain(id, g)) {
+  return g.actions.filter((a) => sensitivity(a).length).map((a) => assess(explainOne(a.id), g)).filter((f) => f !== null);
 }
 function rankFindings(findings) {
   const weight = (f) => f.externalUpstream ? 0 : f.requested === "NAMED" ? 2 : 1;
@@ -1994,30 +2001,38 @@ function findCommit(db, sha, cwd, repoKey) {
   }
   const info = cwd ? commitInfo(cwd, wanted) : null;
   if (info) {
-    const window = 3600 * 1e6;
-    const calls = db.all(
-      `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
-                json_extract(payload, '$.tool_input.command') AS command
-           FROM events
-          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')
-            AND captured_us BETWEEN ? AND ? ${repoKey ? "AND repo_key = ?" : ""}`,
-      info.sec * 1e6 - window,
-      info.sec * 1e6 + window,
-      ...repoKey ? [repoKey] : []
-    ).reduce((byId, e) => {
-      const c = byId.get(e.toolUseId) ?? { sessionId: e.sessionId, toolUseId: e.toolUseId, cwd: e.cwd, command: "", preUs: 0, postUs: 0 };
-      if (e.hook === "PreToolUse") c.preUs = e.us;
-      else c.postUs = e.us;
-      c.command ||= e.command ?? "";
-      return byId.set(e.toolUseId, c);
-    }, /* @__PURE__ */ new Map());
-    const { match, candidates } = commitByTime(info.sec, [...calls.values()].filter((c) => c.preUs && c.postUs));
+    const { match, candidates } = commitByTime(info.sec, bashCallsBetween(db, info.sec * 1e6 - WINDOW_US, info.sec * 1e6 + WINDOW_US, repoKey));
     if (match) return { sessionId: match.sessionId, toolUseId: match.toolUseId, cwd: match.cwd, commit: info.commit, via: "time", commitSec: info.sec };
     if (candidates > 1) {
       throw new ContrailError(`${candidates} recorded git commits were running when git dated commit ${sha}, and git printed no commit line, so Contrail cannot tell which one made it.`);
     }
   }
   throw new ContrailError(`No recorded agent action made commit ${sha}. Contrail sees commits made by Claude Code through its shell tool.`);
+}
+var WINDOW_US = 3600 * 1e6;
+var MIGHT_COMMIT = `(command LIKE '%commit%' OR command LIKE '%merge%' OR command LIKE '%cherry-pick%' OR command LIKE '%revert%')`;
+function bashCallsBetween(db, fromUs, toUs, repoKey, mightCommit = false) {
+  const rows = db.all(
+    `SELECT * FROM (
+       SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
+              json_extract(payload, '$.tool_input.command') AS command
+         FROM events
+        WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')
+          AND captured_us BETWEEN ? AND ? ${repoKey ? "AND repo_key = ?" : ""}
+     ) ${mightCommit ? `WHERE ${MIGHT_COMMIT}` : ""}`,
+    fromUs,
+    toUs,
+    ...repoKey ? [repoKey] : []
+  );
+  const byId = /* @__PURE__ */ new Map();
+  for (const e of rows) {
+    const c = byId.get(e.toolUseId) ?? { sessionId: e.sessionId, toolUseId: e.toolUseId, cwd: e.cwd, command: "", preUs: 0, postUs: 0 };
+    if (e.hook === "PreToolUse") c.preUs = e.us;
+    else c.postUs = e.us;
+    c.command ||= e.command ?? "";
+    byId.set(e.toolUseId, c);
+  }
+  return [...byId.values()].filter((c) => c.preUs && c.postUs);
 }
 function commitInfo(cwd, sha) {
   try {
@@ -3774,9 +3789,6 @@ function treeJson(root) {
 function kindForExplain(tool) {
   if (tool.startsWith("mcp__")) return "MCP";
   return { Edit: "EDIT", MultiEdit: "EDIT", NotebookEdit: "EDIT", Write: "WRITE", Bash: "SHELL", WebFetch: "WEB", WebSearch: "WEB", Agent: "AGENT", Task: "AGENT" }[tool] ?? "";
-}
-function findingsFor(graph) {
-  return graph.actions.filter((a) => sensitivity(a).length).map((a) => assess(explain(a.id, graph), graph)).filter((f) => f !== null);
 }
 async function risks(flags, io, s) {
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {

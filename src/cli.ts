@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { commitContains } from './engine/effects.ts';
 import { explain } from './engine/explain.ts';
-import { assess, rankFindings, sensitivity, type Finding } from './engine/risks.ts';
+import { findingsFor, rankFindings, type Finding } from './engine/risks.ts';
 import { findValue } from './engine/find.ts';
 import { trailForest, type TreeNode, type TreeRoot } from './engine/tree.ts';
 import type { Explanation, Graph } from './engine/types.ts';
@@ -293,13 +293,6 @@ function treeJson(root: TreeRoot): unknown {
 function kindForExplain(tool: string): string {
   if (tool.startsWith('mcp__')) return 'MCP';
   return ({ Edit: 'EDIT', MultiEdit: 'EDIT', NotebookEdit: 'EDIT', Write: 'WRITE', Bash: 'SHELL', WebFetch: 'WEB', WebSearch: 'WEB', Agent: 'AGENT', Task: 'AGENT' } as Record<string, string>)[tool] ?? '';
-}
-
-function findingsFor(graph: Graph): Finding[] {
-  return graph.actions
-    .filter(a => sensitivity(a).length)
-    .map(a => assess(explain(a.id, graph), graph))
-    .filter((f): f is Finding => f !== null);
 }
 
 async function risks(flags: Flags, io: Io, s: Style): Promise<number> {

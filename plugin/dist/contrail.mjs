@@ -1909,18 +1909,36 @@ var RULES = [
   },
   {
     id: "cli-password",
-    re: /((?:^|\s)--(?:password|passwd|pass)(?:=|\s{1,4}))(["']?)([^\s"']{1,256})/g,
-    replace: (m, flag, quote2, value) => PLACEHOLDER.test(value) ? m : `${flag}${quote2}${tag("cli-password")}`
-  },
-  {
-    id: "cli-password",
-    re: /((?:^|\s)(?:-u|--user)(?:=|\s{1,4})["']?[^\s:"']{1,128}:)([^\s"']{1,256})/g,
+    re: /((?:^|\s)(?:-u|--user|--auth)(?:=|\s{1,4})["']?[^\s:"']{1,128}:)([^\s"']{1,256})/g,
     replace: (_m, prefix) => `${prefix}${tag("cli-password")}`
   },
   {
+    // A password glued to its flag: mysql -pSECRET, 7z -pSECRET.
     id: "cli-password",
-    re: /(\bmysql(?:dump|admin)?\b[^\n]{0,200}?\s-p)([^\s-][^\s]{2,255})/g,
+    re: /(\b(?:mysql(?:dump|admin|import|check|sh)?|mariadb(?:-dump|-admin)?|7z[az]?)\b[^\n]{0,200}?\s-p)([^\s-][^\s]{2,255})/g,
     replace: (_m, prefix) => `${prefix}${tag("cli-password")}`
+  },
+  {
+    // The short flags that take a password in these commands: sshpass -p, docker login -p, twine -p, redis-cli -a, ldapsearch -w, zip -P.
+    id: "cli-password",
+    re: /(\b(?:(?:sshpass|twine|mongo(?:sh|dump|restore|export|import|stat|top|files)?)\b[^\n;|&]{0,256}?[ \t]-p|(?:docker|podman|nerdctl|buildah|skopeo|oras|finch|helm[ \t]{1,4}registry)[ \t]{1,4}login\b[^\n;|&]{0,256}?[ \t]-p|redis-cli\b[^\n;|&]{0,256}?[ \t]-a|ldap(?:search|add|modify|delete|whoami|passwd|compare|modrdn)\b[^\n;|&]{0,256}?[ \t]-w|(?:zip|unzip)\b[^\n;|&]{0,256}?[ \t]-P)(?:=|[ \t]{0,4}))(["']?)([^\s"'-][^\s"']{0,4095})/g,
+    replace: (m, prefix, quote2, value) => namesSecret(value) ? m : `${prefix}${quote2}${tag("cli-password")}`
+  },
+  {
+    // aws configure set aws_secret_access_key X, npm config set //registry/:_authToken X.
+    id: "cli-password",
+    re: /(\bconfig(?:ure)?[ \t]{1,4}set[ \t]{1,4}(?:--?[\w-]{1,32}[ \t]{1,4}){0,3}([^\s="']{1,256})(?:=|[ \t]{1,4}))(["']?)([^\s"']{1,4096})/g,
+    replace: (m, prefix, name, quote2, value) => secretValue(name, value, quote2 !== "") ? `${prefix}${quote2}${tag("cli-password")}` : m
+  },
+  {
+    // --password X, --token=X, --api-key X, -storepass X. A value starting with - is the next flag, unless it came after =.
+    id: "cli-password",
+    re: /((?:^|[\s(])--?([A-Za-z][A-Za-z0-9_-]{1,63})(?:=(["']?)([^\s"']{1,4096})|[ \t]{1,4}(["']?)([^\s"'-][^\s"']{0,4095})))/g,
+    replace: (m, _all, flag, q1, v1, q2, v2) => {
+      const value = v1 ?? v2 ?? "";
+      if (!secretFlag(flag) || namesSecret(value, flag, Boolean(q1 || q2))) return m;
+      return m.slice(0, m.length - value.length) + tag("cli-password");
+    }
   },
   {
     // {"Name": "DB_PASSWORD", "Value": "…"} as text: ECS task definitions, CloudFormation parameters.
@@ -1968,6 +1986,11 @@ var RULES = [
     }
   }
 ];
+function secretFlag(flag) {
+  if (FLAG_SWITCH.test(flag)) return false;
+  return isSecretName(flag) || /^(?:(?:store|key|src|dest|new|old|srcstore|deststore)pass|pass(?:in|out))$/i.test(flag);
+}
+var FLAG_SWITCH = /^(?:no|ask|prompt|use|with|without|skip|show|print|reset|rotate|generate|gen|allow|enable|disable|require|ignore|keep|save|read|refresh|revoke|check|verify)-/i;
 function redactString(s) {
   let out = redactPrivateKeys(s);
   for (const rule of RULES) {
@@ -2007,6 +2030,7 @@ var PATTERNS = [
   EXPRESSION,
   STRONG,
   BASE64ISH,
+  FLAG_SWITCH,
   PEM_BEGIN,
   PEM_END,
   PEM_BODY

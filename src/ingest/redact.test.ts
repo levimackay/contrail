@@ -250,6 +250,22 @@ const LEAKS: Array<[string, string, string]> = [
   ['npm _auth', `_auth=${B64}`, B64],
   ['npm _authToken', `_authToken=${PW}`, PW],
   ['npm registry _authToken', `//registry.npmjs.org/:_authToken=${PW}`, PW],
+  // A secret after a secret-named flag or in a command that takes one
+  ['aws configure set', `aws configure set aws_secret_access_key ${PW}`, PW],
+  ['npm config set', `npm config set //registry.npmjs.org/:_authToken ${PW}`, PW],
+  ['--token X', `gh auth login --token ${PW}`, PW],
+  ['--api-key X', `curl https://api.example.com --api-key ${PW}`, PW],
+  ['--password X', `tool --verbose --password ${PW}`, PW],
+  ['--client-secret=X', `tool --client-secret="${PW}"`, PW],
+  ['docker login -p', `docker login -u me -p ${PW} registry.example.com`, PW],
+  ['docker login --password', `docker login -u me --password ${PW} registry.example.com`, PW],
+  ['sshpass -p', `sshpass -p ${PW} ssh host`, PW],
+  ['twine -p', `twine upload -u __token__ -p ${PW}`, PW],
+  ['mysql -pSECRET', `mysql -uroot -p${PW} app`, PW],
+  ['redis-cli -a', `redis-cli -h cache -a ${PW} ping`, PW],
+  ['keytool -storepass', `keytool -list -keystore k.jks -storepass ${PW}`, PW],
+  ['openssl -passin', `openssl pkcs12 -in x.p12 -passin pass:${PW}`, PW],
+  ['httpie --auth', `http --auth admin:${PW} https://api.example.com`, PW],
   // .env names
   ['ENCRYPTION_KEY', `ENCRYPTION_KEY=${repeat('9f86', 8)}`, repeat('9f86', 8)],
   ['SIGNING_KEY', `SIGNING_KEY=${B64}`, B64],
@@ -337,6 +353,18 @@ CODE.push(
   'root:x:0:0:root:/root:/bin/bash',
   'machine learning is great; the password reset link was sent',
 );
+// ...and flags that mention a secret but do not hold one. A --token-file path is left alone: it is not the token.
+CODE.push(
+  '--token-file /run/secrets/token',
+  'docker login --password-stdin registry.example.com',
+  'mysql --no-password -h db',
+  'ansible-playbook --ask-pass site.yml',
+  'aws s3api get-object --bucket b --key path/to/object.txt out',
+  'docker run -p 8080:80 nginx',
+  'ssh -p 2222 host',
+  'aws configure set region us-east-1',
+  'gh auth login --token $GITHUB_TOKEN',
+);
 for (const text of CODE) {
   test(`leaves alone: ${text.slice(0, 40)}`, () => assert.equal(redactString(text), text));
 }
@@ -380,7 +408,8 @@ test('name patterns redact hostile 256 KB input in linear time', () => {
     fill('password=a,'), fill('password=a, b'), fill('PASSWORD=x&y'), fill('token: str ='), fill('token=bearer '), fill('password=\\"'),
     fill('"name":"PASSWORD","value":"'), fill('"value":"x","name":"'), fill('name: A\nvalue: '), fill("define('A',"),
     fill("set('PASSWORD', 'x"), fill('password ', 'machine x login y\n'), fill('machine a password b '), fill('a:1:b:c:d\n'),
-    fill('a:1:b:c:'),
+    fill('a:1:b:c:'), fill(' --password'), fill(' --token x'), fill(' -storepass'), fill(' --a=--b='), fill('sshpass '),
+    fill(' -x', 'sshpass'), fill('docker login '), fill('redis-cli -'), fill('config set a '), fill('mysql -p'), fill(' -u a:'),
     fill('x', 'PASSWORD='), fill('(', 'PASSWORD=ab'), fill('a.', 'PASSWORD=ab'), fill('{"auth":"a","token":"b","key":1},'),
     fill('const password = getPassword(a, b);\n'),
   ];

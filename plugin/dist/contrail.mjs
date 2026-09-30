@@ -3178,7 +3178,7 @@ function renderWhy(e, g, note, s = PLAIN) {
   out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
   out.push(
     s.dim(
-      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}${a.status === "ok" ? "" : ` \xB7 ${a.status.toUpperCase()}`}`
+      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : ` \xB7 ${a.status.toUpperCase()}`)
     )
   );
   if (note) out.push(s.dim(`  ${note}`));
@@ -3233,7 +3233,7 @@ function inShort(e, found, unfound, inputs, s) {
       const link = cur.links.find((l) => l.grade === "LIKELY") ?? cur.links.find((l) => l.firstSeen) ?? cur.links.find((l) => l.grade !== "UNKNOWN");
       const src = link?.to ? inputs.get(link.to) : void 0;
       if (!link || !src) break;
-      chain.push({ link, src });
+      chain.push({ link, src, value: cur.token.text });
       if (!cur.upstream && cur.truncated) next = cur.truncated.next;
       cur = cur.upstream?.trace;
     }
@@ -3253,11 +3253,12 @@ function inShort(e, found, unfound, inputs, s) {
   const listed = [...groups.values()].slice(0, 3);
   for (const g of listed) {
     out.push(`  ${s.accent(clip(g.values.join(", "), 110))}`);
-    for (const { link, src } of g.chain) {
+    g.chain.forEach(({ link, src, value }, i) => {
       const where2 = link.quote?.line != null ? `${clip(src.label, 90)}:${link.quote.line}` : clip(src.label, 90);
       const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-      out.push(`    ${s.dim("\u2190")} ${s.grade(link.grade)}${where2}  ${trust2}`);
-    }
+      const via = i > 0 && value !== g.chain[i - 1].value ? s.dim(`  for ${clip(value, 60)}`) : "";
+      out.push(`    ${s.dim("\u2190")} ${s.grade(link.grade)}${where2}  ${trust2}${via}`);
+    });
     if (g.next !== void 0) out.push(`    ${s.dim(`\u2190 \u2026 further back${g.next ? `: contrail why ${callId(g.next)}` : ""}`)}`);
   }
   if (groups.size > listed.length) out.push(s.dim(`  (${groups.size - listed.length} more below)`));

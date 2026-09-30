@@ -27,7 +27,8 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
   out.push(
     s.dim(
       `  session ${a.scope.sessionId.slice(0, 8)} · ${prompt ? `turn ${prompt.label}` : 'turn not recorded'} · ${callId(a.id)} · seq ${a.preSeq}` +
-        ` · ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : 'main agent'}${a.status === 'ok' ? '' : ` · ${a.status.toUpperCase()}`}`,
+        ` · ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : 'main agent'}` +
+        (a.status === 'ok' ? '' : a.status === 'pending' ? ' · no result recorded (denied, stopped, or still running)' : ` · ${a.status.toUpperCase()}`),
     ),
   );
   if (note) out.push(s.dim(`  ${note}`));
@@ -90,16 +91,16 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
  * follows below it.
  */
 function inShort(e: Explanation, found: TokenTrace[], unfound: TokenTrace[], inputs: Map<string, Input>, s: Style): string[] {
-  const groups = new Map<string, { values: string[]; chain: Array<{ link: Link; src: Input }>; next: string | null | undefined }>();
+  const groups = new Map<string, { values: string[]; chain: Array<{ link: Link; src: Input; value: string }>; next: string | null | undefined }>();
   for (const t of found) {
-    const chain: Array<{ link: Link; src: Input }> = [];
+    const chain: Array<{ link: Link; src: Input; value: string }> = [];
     let cur: TokenTrace | undefined = t;
     let next: string | null | undefined;
     while (cur) {
       const link: Link | undefined = cur.links.find(l => l.grade === 'LIKELY') ?? cur.links.find(l => l.firstSeen) ?? cur.links.find(l => l.grade !== 'UNKNOWN');
       const src = link?.to ? inputs.get(link.to) : undefined;
       if (!link || !src) break;
-      chain.push({ link, src });
+      chain.push({ link, src, value: cur.token.text });
       if (!cur.upstream && cur.truncated) next = cur.truncated.next;
       cur = cur.upstream?.trace;
     }
@@ -120,11 +121,13 @@ function inShort(e: Explanation, found: TokenTrace[], unfound: TokenTrace[], inp
   const listed = [...groups.values()].slice(0, 3);
   for (const g of listed) {
     out.push(`  ${s.accent(clip(g.values.join(', '), 110))}`);
-    for (const { link, src } of g.chain) {
+    g.chain.forEach(({ link, src, value }, i) => {
       const where = link.quote?.line != null ? `${clip(src.label, 90)}:${link.quote.line}` : clip(src.label, 90);
       const trust = src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-      out.push(`    ${s.dim('←')} ${s.grade(link.grade)}${where}  ${trust}`);
-    }
+      // A step further back traces how the agent reached the source above, often through another value.
+      const via = i > 0 && value !== g.chain[i - 1]!.value ? s.dim(`  for ${clip(value, 60)}`) : '';
+      out.push(`    ${s.dim('←')} ${s.grade(link.grade)}${where}  ${trust}${via}`);
+    });
     if (g.next !== undefined) out.push(`    ${s.dim(`← … further back${g.next ? `: contrail why ${callId(g.next)}` : ''}`)}`);
   }
   if (groups.size > listed.length) out.push(s.dim(`  (${groups.size - listed.length} more below)`));

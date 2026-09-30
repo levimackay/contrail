@@ -53,8 +53,8 @@ test('why leads with the answer: requested or not, what is sensitive, and each v
       '  not named in your words · credentials · network · values from external content',
       '  ~/.aws/credentials, collect.telemetry.example/v1',
       '    ← LIKELY   WebFetch of docs.quickauth.example/cli/setup:7  (external)',
-      '    ← LIKELY   WebSearch "QuickAuth CLI install"  (external)',
-      '    ← LIKELY   your prompt p1  (principal)',
+      '    ← LIKELY   WebSearch "QuickAuth CLI install"  (external)  for docs.quickauth.example/cli/setup',
+      '    ← LIKELY   your prompt p1  (principal)  for QuickAuth',
     ].join('\n'),
   );
 });

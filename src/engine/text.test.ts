@@ -43,3 +43,22 @@ test('lineOf falls back to the position in the text, and single lines have no nu
   assert.deepEqual(lineOf(text, findMention(text, 'foo-auth-helper')), { line: 3, text: 'use foo-auth-helper' });
   assert.deepEqual(lineOf('install foo-auth-helper', 8), { line: null, text: 'install foo-auth-helper' });
 });
+
+test('lineOf finds the same line as splitting the text, at every index', () => {
+  // The first version of lineOf, which split the whole text into lines for every quote.
+  const bySplit = (text: string, index: number) => {
+    const lineIndex = normalize(text).slice(0, Math.max(0, index)).split('\n').length - 1;
+    const lines = text.split('\n');
+    const raw = lines[lineIndex] ?? '';
+    const prefixed = /^\s*(\d+)(?:→|\t)(.*)$/.exec(raw);
+    if (prefixed) return { line: Number(prefixed[1]), text: prefixed[2]!.trim() };
+    return { line: lines.length > 1 ? lineIndex + 1 : null, text: raw.trim() };
+  };
+  const texts = ['', 'one line', 'a\nb\n\nc', '\n', '\n\n', '    1\tx\n    2\ty\n', 'ﬁle​\nNext\n  3→z', 'x\r\ny\n'];
+  for (const text of texts) {
+    for (let index = -1; index <= normalize(text).length + 2; index++) {
+      assert.deepEqual(lineOf(text, index), bySplit(text, index), `${JSON.stringify(text)} at ${index}`);
+      assert.deepEqual(lineOf(text, index, normalize(text)), bySplit(text, index));
+    }
+  }
+});

@@ -36,13 +36,23 @@ export function isWordCode(c: number): boolean {
 
 /**
  * The line a match sits on, for quoting. Uses Read's "  83→" / "    83\t" prefix when present,
- * else the 1-based line in the text; single-line text has no line number.
+ * else the 1-based line in the text; single-line text has no line number. `index` is in the
+ * normalized text, which a caller that already has it passes as `normalized`.
  */
-export function lineOf(text: string, index: number): { line: number | null; text: string } {
-  const lineIndex = normalize(text).slice(0, Math.max(0, index)).split('\n').length - 1;
-  const lines = text.split('\n');
-  const raw = lines[lineIndex] ?? '';
+export function lineOf(text: string, index: number, normalized = normalize(text)): { line: number | null; text: string } {
+  // Which line: the newlines before the match in the normalized text.
+  const end = Math.max(0, index);
+  let lineIndex = 0;
+  for (let k = normalized.indexOf('\n'); k !== -1 && k < end; k = normalized.indexOf('\n', k + 1)) lineIndex++;
+  // That line of the text as stored, or nothing when the text has fewer lines.
+  let start = 0;
+  for (let n = 0; n < lineIndex && start !== -1; n++) {
+    const next = text.indexOf('\n', start);
+    start = next === -1 ? -1 : next + 1;
+  }
+  const stop = start === -1 ? -1 : text.indexOf('\n', start);
+  const raw = start === -1 ? '' : text.slice(start, stop === -1 ? text.length : stop);
   const prefixed = READ_PREFIX.exec(raw);
   if (prefixed) return { line: Number(prefixed[1]), text: prefixed[2]!.trim() };
-  return { line: lines.length > 1 ? lineIndex + 1 : null, text: raw.trim() };
+  return { line: text.includes('\n') ? lineIndex + 1 : null, text: raw.trim() };
 }

@@ -543,13 +543,20 @@ function findNormalized(hay, needle) {
 function isWordCode(c) {
   return c >= 97 && c <= 122 || c >= 48 && c <= 57 || c === 95 || c === 45;
 }
-function lineOf(text, index) {
-  const lineIndex = normalize(text).slice(0, Math.max(0, index)).split("\n").length - 1;
-  const lines = text.split("\n");
-  const raw = lines[lineIndex] ?? "";
+function lineOf(text, index, normalized = normalize(text)) {
+  const end = Math.max(0, index);
+  let lineIndex = 0;
+  for (let k = normalized.indexOf("\n"); k !== -1 && k < end; k = normalized.indexOf("\n", k + 1)) lineIndex++;
+  let start = 0;
+  for (let n = 0; n < lineIndex && start !== -1; n++) {
+    const next = text.indexOf("\n", start);
+    start = next === -1 ? -1 : next + 1;
+  }
+  const stop = start === -1 ? -1 : text.indexOf("\n", start);
+  const raw = start === -1 ? "" : text.slice(start, stop === -1 ? text.length : stop);
   const prefixed = READ_PREFIX.exec(raw);
   if (prefixed) return { line: Number(prefixed[1]), text: prefixed[2].trim() };
-  return { line: lines.length > 1 ? lineIndex + 1 : null, text: raw.trim() };
+  return { line: text.includes("\n") ? lineIndex + 1 : null, text: raw.trim() };
 }
 
 // src/engine/tokens.ts
@@ -1086,98 +1093,6 @@ function commitContains(commitSeq, files, writes, earlierCommits) {
   });
 }
 
-// src/engine/grade.ts
-var ORDER = ["DIRECT", "LIKELY", "POSSIBLE", "UNKNOWN"];
-function minGrade(grades) {
-  if (grades.length === 0) return "UNKNOWN";
-  return grades.reduce((weakest, g) => ORDER.indexOf(g) > ORDER.indexOf(weakest) ? g : weakest);
-}
-function maxGrade(grades) {
-  return grades.reduce((best, g) => ORDER.indexOf(g) < ORDER.indexOf(best) ? g : best, "UNKNOWN");
-}
-function gradeSources(token, candidates, actionId, indexIn) {
-  const base = { type: "value_from", from: actionId, recorded: false, token: token.text };
-  if (candidates.length === 0) {
-    return [{ ...base, to: null, grade: "UNKNOWN", rule: "R4", note: "no observed input contains it" }];
-  }
-  const bySource = /* @__PURE__ */ new Map();
-  for (const c of [...candidates].sort((a, b) => a.availableAt - b.availableAt)) {
-    if (!bySource.has(c.ref)) bySource.set(c.ref, c);
-  }
-  const sources = [...bySource.values()];
-  const link = (input, grade, extra = {}) => ({
-    ...base,
-    to: input.id,
-    grade,
-    rule: "R3",
-    quote: quote(input, indexIn ? indexIn(input) : findMention(input.text, token.text)),
-    ...extra
-  });
-  const yours = sources.find((s) => s.trust === "principal");
-  if (yours) {
-    return sources.map(
-      (s) => s === yours ? link(s, token.shaped ? "LIKELY" : "POSSIBLE", { note: "you supplied it" }) : link(s, "POSSIBLE", { note: "also in" })
-    );
-  }
-  if (sources.length === 1) {
-    const only = sources[0];
-    return [token.shaped ? link(only, "LIKELY") : link(only, "POSSIBLE", { note: "plain word; the model may know it" })];
-  }
-  if (sources.length <= 3) {
-    return sources.map((s, i) => link(s, "POSSIBLE", i === 0 ? { firstSeen: true } : {}));
-  }
-  return [{ ...base, to: null, grade: "UNKNOWN", rule: "R3", note: `in ${sources.length} observed inputs; too common to attribute` }];
-}
-function quote(input, index) {
-  const { line, text } = lineOf(input.text, index);
-  return { ref: input.ref, line, text: input.hashed ? "" : text };
-}
-
-// src/engine/requested.ts
-var NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
-var CLAUSE_BREAK = /[,;:()]|\s(?:but|then|just|so|and then)\s/gi;
-function negates(text, index) {
-  const before = text.slice(0, index);
-  let start = 0;
-  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
-  return NEGATOR.test(before.slice(start));
-}
-function splitSentences(text) {
-  return text.replace(/```[\s\S]*?(?:```|$)/g, "\n").split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
-}
-function requested(action, tokens, sentences) {
-  const before = sentences.filter((s) => s.seq < action.preSeq);
-  const searched = before.length;
-  const groups = /* @__PURE__ */ new Map();
-  for (const t of tokens) {
-    if (t.role === "target" && t.group !== null) groups.set(t.group, [...groups.get(t.group) ?? [], t]);
-  }
-  if (groups.size === 0) return { verdict: "NOTHING_TO_MATCH", grade: "UNKNOWN", searched };
-  const kept = [];
-  for (const alternatives of groups.values()) {
-    let latest2 = null;
-    for (const s of before) {
-      const hit = alternatives.find((t) => !t.derived && findMention(s.text, t.text) >= 0) ?? alternatives.find((t) => findMention(s.text, t.text) >= 0);
-      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived, negated: negates(s.text, findMention(s.text, hit.text)) };
-    }
-    if (latest2) kept.push(latest2);
-  }
-  if (kept.length === 0) return { verdict: "NOT_NAMED", grade: "UNKNOWN", searched };
-  const negated = kept.find((k) => k.negated);
-  if (negated) {
-    return { verdict: "NAMED_NEGATED", grade: "POSSIBLE", searched, sentence: negated.sentence, matched: negated.token.text };
-  }
-  const latest = kept.reduce((a, b) => b.sentence.seq > a.sentence.seq ? b : a);
-  const verdict = kept.length === groups.size && kept.every((k) => k.strong) ? "NAMED" : "PARTLY_NAMED";
-  return {
-    verdict,
-    grade: verdict === "NAMED" ? "LIKELY" : "POSSIBLE",
-    searched,
-    sentence: latest.sentence,
-    matched: latest.token.text
-  };
-}
-
 // src/engine/scope.ts
 var scopeKey = (s) => `${s.sessionId}/${s.agentId ?? "main"}`;
 var sameScope = (a, b) => a.sessionId === b.sessionId && a.agentId === b.agentId;
@@ -1351,6 +1266,98 @@ function mayHoldWords(bits, hashes) {
     if (!(bits[a >>> 5] & 1 << (a & 31)) || !(bits[b >>> 5] & 1 << (b & 31))) return false;
   }
   return true;
+}
+
+// src/engine/grade.ts
+var ORDER = ["DIRECT", "LIKELY", "POSSIBLE", "UNKNOWN"];
+function minGrade(grades) {
+  if (grades.length === 0) return "UNKNOWN";
+  return grades.reduce((weakest, g) => ORDER.indexOf(g) > ORDER.indexOf(weakest) ? g : weakest);
+}
+function maxGrade(grades) {
+  return grades.reduce((best, g) => ORDER.indexOf(g) < ORDER.indexOf(best) ? g : best, "UNKNOWN");
+}
+function gradeSources(token, candidates, actionId, indexIn) {
+  const base = { type: "value_from", from: actionId, recorded: false, token: token.text };
+  if (candidates.length === 0) {
+    return [{ ...base, to: null, grade: "UNKNOWN", rule: "R4", note: "no observed input contains it" }];
+  }
+  const bySource = /* @__PURE__ */ new Map();
+  for (const c of [...candidates].sort((a, b) => a.availableAt - b.availableAt)) {
+    if (!bySource.has(c.ref)) bySource.set(c.ref, c);
+  }
+  const sources = [...bySource.values()];
+  const link = (input, grade, extra = {}) => ({
+    ...base,
+    to: input.id,
+    grade,
+    rule: "R3",
+    quote: quote(input, indexIn ? indexIn(input) : findMention(input.text, token.text)),
+    ...extra
+  });
+  const yours = sources.find((s) => s.trust === "principal");
+  if (yours) {
+    return sources.map(
+      (s) => s === yours ? link(s, token.shaped ? "LIKELY" : "POSSIBLE", { note: "you supplied it" }) : link(s, "POSSIBLE", { note: "also in" })
+    );
+  }
+  if (sources.length === 1) {
+    const only = sources[0];
+    return [token.shaped ? link(only, "LIKELY") : link(only, "POSSIBLE", { note: "plain word; the model may know it" })];
+  }
+  if (sources.length <= 3) {
+    return sources.map((s, i) => link(s, "POSSIBLE", i === 0 ? { firstSeen: true } : {}));
+  }
+  return [{ ...base, to: null, grade: "UNKNOWN", rule: "R3", note: `in ${sources.length} observed inputs; too common to attribute` }];
+}
+function quote(input, index) {
+  const { line, text } = lineOf(input.text, index, normalizedText(input));
+  return { ref: input.ref, line, text: input.hashed ? "" : text };
+}
+
+// src/engine/requested.ts
+var NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
+var CLAUSE_BREAK = /[,;:()]|\s(?:but|then|just|so|and then)\s/gi;
+function negates(text, index) {
+  const before = text.slice(0, index);
+  let start = 0;
+  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
+  return NEGATOR.test(before.slice(start));
+}
+function splitSentences(text) {
+  return text.replace(/```[\s\S]*?(?:```|$)/g, "\n").split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+}
+function requested(action, tokens, sentences) {
+  const before = sentences.filter((s) => s.seq < action.preSeq);
+  const searched = before.length;
+  const groups = /* @__PURE__ */ new Map();
+  for (const t of tokens) {
+    if (t.role === "target" && t.group !== null) groups.set(t.group, [...groups.get(t.group) ?? [], t]);
+  }
+  if (groups.size === 0) return { verdict: "NOTHING_TO_MATCH", grade: "UNKNOWN", searched };
+  const kept = [];
+  for (const alternatives of groups.values()) {
+    let latest2 = null;
+    for (const s of before) {
+      const hit = alternatives.find((t) => !t.derived && findMention(s.text, t.text) >= 0) ?? alternatives.find((t) => findMention(s.text, t.text) >= 0);
+      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived, negated: negates(s.text, findMention(s.text, hit.text)) };
+    }
+    if (latest2) kept.push(latest2);
+  }
+  if (kept.length === 0) return { verdict: "NOT_NAMED", grade: "UNKNOWN", searched };
+  const negated = kept.find((k) => k.negated);
+  if (negated) {
+    return { verdict: "NAMED_NEGATED", grade: "POSSIBLE", searched, sentence: negated.sentence, matched: negated.token.text };
+  }
+  const latest = kept.reduce((a, b) => b.sentence.seq > a.sentence.seq ? b : a);
+  const verdict = kept.length === groups.size && kept.every((k) => k.strong) ? "NAMED" : "PARTLY_NAMED";
+  return {
+    verdict,
+    grade: verdict === "NAMED" ? "LIKELY" : "POSSIBLE",
+    searched,
+    sentence: latest.sentence,
+    matched: latest.token.text
+  };
 }
 
 // src/engine/trace.ts
@@ -1587,7 +1594,7 @@ function findValue(g, value) {
     if (input.producedBy && own.has(input.producedBy) || input.origin === "prompt" && /^\s*\/contrail:/.test(input.text)) continue;
     const index = findInInput(input, needle, g.hashToken);
     if (index < 0) continue;
-    const { line, text } = lineOf(input.text, index);
+    const { line, text } = lineOf(input.text, index, normalizedText(input));
     out.push({ seq: input.availableAt, source: { input, line, text: input.hashed ? "" : text } });
   }
   for (const action of g.actions) {

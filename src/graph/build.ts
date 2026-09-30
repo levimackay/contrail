@@ -241,7 +241,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
 
 /** Results the graph reads only as text (outputInput), with no effect or agent id taken from them. */
 export const TEXT_RESULT_TOOLS: readonly string[] = ['Read', 'NotebookRead', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch'];
-export const onlyTextUsed = (tool: string) => TEXT_RESULT_TOOLS.includes(tool) || tool.startsWith('mcp__');
+const onlyTextUsed = (tool: string) => TEXT_RESULT_TOOLS.includes(tool) || tool.startsWith('mcp__');
 /** Smaller results are parsed as they are read: deferring them saves nothing worth the indirection. */
 const DEFER_OVER = 16 * 1024;
 

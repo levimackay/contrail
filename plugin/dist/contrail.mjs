@@ -438,9 +438,9 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync5, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync4, readFileSync as readFileSync6, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename7, dirname as dirname3, join as join7, resolve as resolve7 } from "node:path";
+import { basename as basename7, dirname as dirname3, join as join8, resolve as resolve7 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -741,8 +741,8 @@ function extractTokens(action, env) {
       else b.hints(leaf.value, leaf.path);
     }
   } else if (tool === "Skill") {
-    const name = str(input, "skill");
-    if (name) b.target(name, 0, "$.skill", true);
+    const name2 = str(input, "skill");
+    if (name2) b.target(name2, 0, "$.skill", true);
   } else if (tool === "Agent" || tool === "Task") {
     b.hints(str(input, "prompt") ?? "", "$.prompt");
   } else {
@@ -861,15 +861,15 @@ function shellSegments(command) {
 function segments(command) {
   const out = [];
   for (const line of withoutHeredocs(logicalLines(command)).map(withoutFdNumbers)) {
-    let entries;
+    let entries2;
     try {
-      entries = (0, import_shell_quote.parse)(line, (key) => `$${key}`);
+      entries2 = (0, import_shell_quote.parse)(line, (key) => `$${key}`);
     } catch {
-      entries = line.split(/\s+/).filter(Boolean);
+      entries2 = line.split(/\s+/).filter(Boolean);
     }
     let cur = { words: [], redirects: [] };
     let redirectNext = false;
-    for (const e of entries) {
+    for (const e of entries2) {
       if (typeof e === "string") {
         if ((redirectNext === ">&" || redirectNext === "<&") && /^(\d{1,4}|-)$/.test(e)) {
           redirectNext = false;
@@ -1722,7 +1722,7 @@ function buildGraph(rows, who, hashToken) {
     effects.push(...effectsOf(a, env));
     const body = skillBodies.get(a.id);
     if (body) {
-      const name = str(a.input, "skill") ?? "";
+      const name2 = str(a.input, "skill") ?? "";
       const yours = Boolean(env.home) && body.path.startsWith(`${env.home}/.claude/`);
       inputs.push({
         // ref is the file, so a Read of the same SKILL.md is the same source, not a second one.
@@ -1731,7 +1731,7 @@ function buildGraph(rows, who, hashToken) {
         origin: "skill",
         trust: yours ? "config" : "local",
         ref: displayPath(body.path, env.cwd, env.home),
-        label: `skill ${name} (${displayPath(body.path, env.cwd, env.home)})`,
+        label: `skill ${name2} (${displayPath(body.path, env.cwd, env.home)})`,
         text: body.text,
         truncated: body.text.includes("[contrail: truncated"),
         fidelity: "read-at-ingest",
@@ -1825,7 +1825,7 @@ function newAction(id, scope, row, p, seq) {
   };
 }
 var TASK_NOTIFICATION = /^\s*<task-notification>/;
-var tag = (text, name) => new RegExp(`<${name}>([^<]{1,200})</${name}>`).exec(text)?.[1]?.trim() ?? null;
+var tag = (text, name2) => new RegExp(`<${name2}>([^<]{1,200})</${name2}>`).exec(text)?.[1]?.trim() ?? null;
 function taskNotification(text) {
   if (!TASK_NOTIFICATION.test(text)) return null;
   const head = text.slice(0, 4e3);
@@ -1907,8 +1907,8 @@ function classify(a, env) {
     return { origin: "mcp", trust: "external", ref: `mcp:${a.id}`, label: `MCP ${tool.slice(5).replace("__", "/")} result` };
   }
   if (tool === "Skill") {
-    const name = str(a.input, "skill") ?? "";
-    return { origin: "skill", trust: name.includes(":") ? "external" : "local", ref: `skill:${name}`, label: `skill ${name}` };
+    const name2 = str(a.input, "skill") ?? "";
+    return { origin: "skill", trust: name2.includes(":") ? "external" : "local", ref: `skill:${name2}`, label: `skill ${name2}` };
   }
   if (tool === "Agent" || tool === "Task") {
     return { origin: "subagent_result", trust: "agent", ref: `agent:${a.id}`, label: `subagent report from ${callId(a.id)}` };
@@ -2045,22 +2045,22 @@ var MEMBER = new RegExp(
 );
 var CHAIN = new RegExp(String.raw`^${ID}(?:\.${ID}){0,12}$`);
 var EXPRESSION = /^\{[\w$.?()[\] ,]{1,256}\}$/;
-function namesSecret(value, name = "", literal = false) {
+function namesSecret(value, name2 = "", literal = false) {
   if (value === "" || isTag(value) || PLACEHOLDER.test(value) || KEYWORD.test(value)) return true;
   if (literal) return false;
   if (CALL_START.test(value) && CODE_CHARS.test(value) && !AFTER_BRACKET.test(value)) return true;
   if (MEMBER.test(value) || EXPRESSION.test(value)) return true;
   if (CHAIN.test(value)) {
     const parts = value.split(".");
-    const tail = name.slice(name.lastIndexOf(".") + 1);
+    const tail = name2.slice(name2.lastIndexOf(".") + 1);
     if (flat(parts[parts.length - 1]) === flat(tail)) return true;
     if (/[_.]|[a-z][A-Z]/.test(value) && parts.some(isSecretName)) return true;
   }
   return false;
 }
 var flat = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-function segments2(name) {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z0-9]{1,64}/).filter(Boolean);
+function segments2(name2) {
+  return name2.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z0-9]{1,64}/).filter(Boolean);
 }
 var STRONG = /secret|passw(?:or)?d|passphrase|credential|authori[sz]ation|cookie|^pass$|^pw$|pwd$|^creds?$|(?:api|access|private|signing|master|encryption|auth|app)key|token(?!s$|iz)/;
 var WEAK = /* @__PURE__ */ new Set(["key", "auth", "private", "master", "signing", "encryption", "crypt"]);
@@ -2188,12 +2188,12 @@ var ABOUT = /* @__PURE__ */ new Set([
   "cmd"
 ]);
 var WHOLE = /* @__PURE__ */ new Set(["auth", "identitytoken", "clientcertificatedata"]);
-function isSecretName(name) {
-  if (/^(?:old)?pwd$/i.test(name)) return false;
-  const segs = segments2(name);
+function isSecretName(name2) {
+  if (/^(?:old)?pwd$/i.test(name2)) return false;
+  const segs = segments2(name2);
   if (segs.length === 0 || ABOUT.has(segs[segs.length - 1])) return false;
   if (WHOLE.has(segs.join(""))) return true;
-  const envStyle = !/[a-z]/.test(name);
+  const envStyle = !/[a-z]/.test(name2);
   return segs.some((s, i) => {
     if (STRONG.test(s)) return true;
     if (s === "key") return envStyle || i > 0 && KEY_QUALIFIER.has(segs[i - 1]);
@@ -2202,9 +2202,9 @@ function isSecretName(name) {
 }
 var BASE64ISH = /^[A-Za-z0-9+/=_-]{8,8192}$/;
 var credentialBlob = (v) => BASE64ISH.test(v) && (/[0-9+/=]/.test(v) || /[a-z]/.test(v) && /[A-Z]/.test(v));
-function secretValue(name, value, literal = false) {
-  if (!isSecretName(name) || namesSecret(value, name, literal)) return false;
-  return flat(name) === "auth" ? credentialBlob(value) : true;
+function secretValue(name2, value, literal = false) {
+  if (!isSecretName(name2) || namesSecret(value, name2, literal)) return false;
+  return flat(name2) === "auth" ? credentialBlob(value) : true;
 }
 function splitTrailing(value) {
   let end = value.length;
@@ -2304,12 +2304,12 @@ var RULES = [
   {
     id: "auth-header",
     re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s{0,4}[:=]\s{0,4}["']?)((?:bearer|basic|token)\s{1,4})?([^\s"',;]{1,4096})/gi,
-    replace: (m, name, sep, scheme, value) => PLACEHOLDER.test(value) || isTag(value) ? m : `${name}${sep}${scheme ?? ""}${tag2("auth-header")}`
+    replace: (m, name2, sep, scheme, value) => PLACEHOLDER.test(value) || isTag(value) ? m : `${name2}${sep}${scheme ?? ""}${tag2("auth-header")}`
   },
   {
     id: "cookie",
     re: /\b((?:set-)?cookie)(\s{0,4}:\s{0,4})[^\r\n]{1,4096}/gi,
-    replace: (_m, name, sep) => `${name}${sep}${tag2("cookie")}`
+    replace: (_m, name2, sep) => `${name2}${sep}${tag2("cookie")}`
   },
   {
     id: "url-password",
@@ -2351,7 +2351,7 @@ var RULES = [
     // aws configure set aws_secret_access_key X, npm config set //registry/:_authToken X.
     id: "cli-password",
     re: /(\bconfig(?:ure)?[ \t]{1,4}set[ \t]{1,4}(?:--?[\w-]{1,32}[ \t]{1,4}){0,3}([^\s="']{1,256})(?:=|[ \t]{1,4}))(["']?)([^\s"']{1,4096})/g,
-    replace: (m, prefix, name, quote2, value) => secretValue(name, value, quote2 !== "") ? `${prefix}${quote2}${tag2("cli-password")}` : m
+    replace: (m, prefix, name2, quote2, value) => secretValue(name2, value, quote2 !== "") ? `${prefix}${quote2}${tag2("cli-password")}` : m
   },
   {
     // --password X, --token=X, --api-key X, -storepass X. A value starting with - is the next flag, unless it came after =.
@@ -2367,22 +2367,22 @@ var RULES = [
     // {"Name": "DB_PASSWORD", "Value": "…"} as text: ECS task definitions, CloudFormation parameters.
     id: "secret-pair",
     re: /("(?:name|key|parametername|parameterkey)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}"([A-Za-z0-9_./:-]{1,128})"[ \t\r\n]{0,64},[ \t\r\n]{0,64}"(?:value|parametervalue)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}")((?:[^"\\\n]|\\.){1,16384})"/gi,
-    replace: (m, prefix, name, value) => secretValue(name, value, true) ? `${prefix}${tag2("secret-pair")}"` : m
+    replace: (m, prefix, name2, value) => secretValue(name2, value, true) ? `${prefix}${tag2("secret-pair")}"` : m
   },
   {
     id: "secret-pair",
     re: /("(?:value|parametervalue)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}")((?:[^"\\\n]|\\.){1,16384})("[ \t\r\n]{0,64},[ \t\r\n]{0,64}"(?:name|key|parametername|parameterkey)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}"([A-Za-z0-9_./:-]{1,128})")/gi,
-    replace: (m, prefix, value, suffix, name) => secretValue(name, value, true) ? `${prefix}${tag2("secret-pair")}${suffix}` : m
+    replace: (m, prefix, value, suffix, name2) => secretValue(name2, value, true) ? `${prefix}${tag2("secret-pair")}${suffix}` : m
   },
   {
     // - name: DB_PASSWORD
     //   value: hunter2        (Kubernetes env, GitHub Actions inputs)
     id: "secret-pair",
     re: /(\bname:[ \t]{1,4}["']?([A-Za-z0-9_.-]{1,128})["']?[ \t]{0,4}\r?\n[ \t]{0,64}value:[ \t]{1,4})(?:"((?:[^"\\\n]|\\.){1,16384})"|'([^'\n]{1,16384})'|([^\s#'"][^\r\n]{0,16383}))/g,
-    replace: (m, prefix, name, dq, sq, bare) => {
+    replace: (m, prefix, name2, dq, sq, bare) => {
       const value = dq ?? sq ?? bare?.trimEnd() ?? "";
       const quote2 = dq !== void 0 ? '"' : sq !== void 0 ? "'" : "";
-      if (!secretValue(name, value, quote2 !== "")) return m;
+      if (!secretValue(name2, value, quote2 !== "")) return m;
       return `${prefix}${quote2}${tag2("secret-pair")}${quote2}`;
     }
   },
@@ -2390,22 +2390,22 @@ var RULES = [
     // define('DB_PASSWORD', 'x'), os.environ.setdefault("SECRET_KEY", "x"), headers.set("Authorization", "x").
     id: "secret-pair",
     re: /(\b(?:define|setdefault|setenv|putenv|set|env|getenv|get|fetch|header|setHeader|append|add|put)\([ \t]{0,4}(["'])([A-Za-z0-9_.-]{1,128})\2[ \t]{0,4},[ \t]{0,4})(["'])((?:(?!\4)[^\n\\]|\\.){1,4096})\4/g,
-    replace: (m, prefix, _q, name, vq, value) => secretValue(name, value, true) ? `${prefix}${vq}${tag2("secret-pair")}${vq}` : m
+    replace: (m, prefix, _q, name2, vq, value) => secretValue(name2, value, true) ? `${prefix}${vq}${tag2("secret-pair")}${vq}` : m
   },
   {
     id: "env-secret",
     re: new RegExp(`${NAME}${SEP}((?:bearer|basic|token)[ \\t]{1,4})?(?:${QUOTED}|${BARE})`, "gi"),
-    replace: (m, name, sep, scheme, dq, sq, bare) => {
+    replace: (m, name2, sep, scheme, dq, sq, bare) => {
       if (dq !== void 0 || sq !== void 0) {
         const value2 = dq ?? sq ?? "";
-        if (!secretValue(name, value2, true)) return m;
+        if (!secretValue(name2, value2, true)) return m;
         const quote2 = dq !== void 0 ? '"' : "'";
-        return `${name}${sep}${scheme ?? ""}${quote2}${tag2("env-secret")}${quote2}`;
+        return `${name2}${sep}${scheme ?? ""}${quote2}${tag2("env-secret")}${quote2}`;
       }
       const [value, trailing] = splitTrailing(bare ?? "");
-      if (value.length < 4 || !secretValue(name, value)) return m;
+      if (value.length < 4 || !secretValue(name2, value)) return m;
       if (/^["']?[ \t]*:[ \t]*$/.test(sep) && TYPE_NAME.test(value)) return m;
-      return `${name}${sep}${scheme ?? ""}${tag2("env-secret")}${trailing}`;
+      return `${name2}${sep}${scheme ?? ""}${tag2("env-secret")}${trailing}`;
     }
   }
 ];
@@ -2459,10 +2459,10 @@ function jsonText(root) {
       }
       stack.push({ raw: "[" });
     } else if (v && typeof v === "object") {
-      const entries = Object.entries(v).filter(([, x]) => x !== void 0);
+      const entries2 = Object.entries(v).filter(([, x]) => x !== void 0);
       stack.push({ raw: "}" });
-      for (let i = entries.length - 1; i >= 0; i--) {
-        const [k, x] = entries[i];
+      for (let i = entries2.length - 1; i >= 0; i--) {
+        const [k, x] = entries2[i];
         stack.push({ value: x });
         stack.push({ raw: `${i > 0 ? "," : ""}${JSON.stringify(k)}:` });
       }
@@ -2482,11 +2482,11 @@ function redactValue(value, options = {}) {
     if (!v || typeof v !== "object") return v;
     if (depth >= MAX_DEPTH2) return text(jsonText(v));
     if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1, ""));
-    const entries = Object.entries(v);
-    const pair = entries.find(([k, x]) => PAIR_NAME.has(k.toLowerCase()) && typeof x === "string");
+    const entries2 = Object.entries(v);
+    const pair = entries2.find(([k, x]) => PAIR_NAME.has(k.toLowerCase()) && typeof x === "string");
     const pairName = pair && isSecretName(pair[1]) ? pair[1] : "";
     const keyOf = (k) => PAIR_NAME.has(k.toLowerCase()) ? "" : pairName && PAIR_VALUE.has(k.toLowerCase()) ? pairName : k;
-    return Object.fromEntries(entries.map(([k, x]) => [k, walk(x, depth + 1, keyOf(k))]));
+    return Object.fromEntries(entries2.map(([k, x]) => [k, walk(x, depth + 1, keyOf(k))]));
   };
   return walk(value, 0, "");
 }
@@ -2510,11 +2510,80 @@ var PATTERNS = [
   TOKEN_CHAR
 ];
 
+// src/ingest/import.ts
+import { closeSync as closeSync3, fstatSync as fstatSync3, lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync4, readSync } from "node:fs";
+import { join as join5 } from "node:path";
+
+// src/store/retention.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
+var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true, tripwire: true };
+function loadConfig(dataDir) {
+  let raw;
+  try {
+    raw = readFileSync2(join3(dataDir, "config.json"), "utf8");
+  } catch {
+    return { config: DEFAULTS, problem: null };
+  }
+  try {
+    const c = JSON.parse(raw);
+    const positive = (v, fallback) => typeof v === "number" && v > 0 ? v : fallback;
+    return {
+      config: {
+        retentionDays: positive(c.retention_days, DEFAULTS.retentionDays),
+        maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb),
+        storeContent: c.store_content !== false,
+        tripwire: c.tripwire !== false
+      },
+      problem: null
+    };
+  } catch (e) {
+    return { config: DEFAULTS, problem: `config.json is not valid JSON (${e.message}); using defaults` };
+  }
+}
+function prune(db, config, nowMs) {
+  const cutoffUs = (nowMs - config.retentionDays * 864e5) * 1e3;
+  let removed = 0;
+  const drop = (sessionId) => {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (sessionId === null) db.run("DELETE FROM events WHERE session_id IS NULL AND captured_us < ?", cutoffUs);
+      else db.run("DELETE FROM events WHERE session_id = ?", sessionId);
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+  };
+  const old = db.all("SELECT session_id AS id FROM events WHERE session_id IS NOT NULL GROUP BY session_id HAVING MAX(captured_us) < ?", cutoffUs);
+  for (const { id } of old) {
+    drop(id);
+    removed++;
+  }
+  drop(null);
+  const limit = config.maxDbMb * 1024 * 1024;
+  while (liveBytes(db) > limit) {
+    const oldest = db.get(
+      "SELECT session_id AS id FROM events WHERE session_id IS NOT NULL GROUP BY session_id ORDER BY MAX(captured_us) LIMIT 1"
+    );
+    if (!oldest) break;
+    drop(oldest.id);
+    removed++;
+  }
+  return { sessionsRemoved: removed };
+}
+function liveBytes(db) {
+  const pages = db.get("PRAGMA page_count")?.page_count ?? 0;
+  const free = db.get("PRAGMA freelist_count")?.freelist_count ?? 0;
+  const size = db.get("PRAGMA page_size")?.page_size ?? 4096;
+  return (pages - free) * size;
+}
+
 // src/ingest/ingest.ts
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync as readFileSync2, rmSync, statSync, unlinkSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync as readFileSync3, rmSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 var STRING_CAP = 256 * 1024;
 var STALE_TMP_MS = 60 * 60 * 1e3;
 var WRITE_TOOLS2 = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
@@ -2527,13 +2596,13 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
   } catch {
     return report2;
   }
-  for (const name of names) {
-    const file = join3(spoolDir, name);
-    if (name.startsWith(".tmp.")) {
+  for (const name2 of names) {
+    const file = join4(spoolDir, name2);
+    if (name2.startsWith(".tmp.")) {
       if (removeIfStale(file, now)) report2.staleTmpRemoved++;
       continue;
     }
-    if (!name.endsWith(".json")) continue;
+    if (!name2.endsWith(".json")) continue;
     let raw;
     let mtimeNs;
     try {
@@ -2550,14 +2619,14 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     const capturedUs = Number(mtimeNs / 1000n);
     let row;
     try {
-      row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
+      row = toRow(name2, raw, capturedUs, repoKeyOf, hmac);
     } catch (e) {
-      row = failedRow(capturedUs, errorText(name, e));
+      row = failedRow(capturedUs, errorText(name2, e));
     }
     if (row.parseError) report2.parseErrors++;
     db.exec("BEGIN IMMEDIATE");
     try {
-      if (insertRow(db, name, row)) report2.ingested++;
+      if (insertRow(db, name2, row)) report2.ingested++;
       else report2.duplicates++;
       db.exec("COMMIT");
     } catch (e) {
@@ -2571,12 +2640,12 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
   }
   return report2;
 }
-function insertRow(db, name, row, source = null) {
+function insertRow(db, name2, row, source = null) {
   const inserted = db.run(
     `INSERT OR IGNORE INTO events
        (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error, source)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    name,
+    name2,
     row.capturedUs,
     row.sessionId,
     row.promptId,
@@ -2591,16 +2660,16 @@ function insertRow(db, name, row, source = null) {
     source
   );
   if (!inserted) return false;
-  const id = db.get("SELECT id FROM events WHERE spool_name = ?", name).id;
+  const id = db.get("SELECT id FROM events WHERE spool_name = ?", name2).id;
   for (const t of row.touches) db.run("INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)", id, t.path, t.kind);
   return true;
 }
-function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
+function toRow(name2, raw, capturedUs, repoKeyOf, hmac) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return { ...failedRow(capturedUs, errorText(name, e)), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
+    return { ...failedRow(capturedUs, errorText(name2, e)), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
   }
   const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
   const hookEvent = str(p, "hook_event_name") ?? "unknown";
@@ -2626,7 +2695,7 @@ function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
       touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
     };
   } catch (e) {
-    return { ...meta, payload: "{}", parseError: errorText(name, e), touches: [] };
+    return { ...meta, payload: "{}", parseError: errorText(name2, e), touches: [] };
   }
 }
 function stored(p, hookEvent, hmac) {
@@ -2652,9 +2721,9 @@ function failedRow(capturedUs, parseError) {
   };
 }
 var QUOTED_INPUT = /(?:\.{3})?"[\s\S]{0,1024}"(?:\.{3})?(?= is not valid JSON$)/;
-function errorText(name, e) {
+function errorText(name2, e) {
   const message = e instanceof Error ? e.message : String(e);
-  return redactString(`${name}: ${message.replace(QUOTED_INPUT, '"\u2026"')}`);
+  return redactString(`${name2}: ${message.replace(QUOTED_INPUT, '"\u2026"')}`);
 }
 var INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$/i;
 function attachInstructionText(p, capturedUs) {
@@ -2664,10 +2733,10 @@ function attachInstructionText(p, capturedUs) {
 }
 var SKILL_NAME = /^[A-Za-z0-9][\w.-]{0,63}$/;
 function attachSkillText(p, capturedUs) {
-  const name = str(obj(p, "tool_input"), "skill");
+  const name2 = str(obj(p, "tool_input"), "skill");
   const cwd = str(p, "cwd");
-  if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
-  const candidates = [join3(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join3(cwd, ".claude", "skills", name, "SKILL.md")] : []];
+  if (!name2 || !SKILL_NAME.test(name2) || name2.includes("..")) return;
+  const candidates = [join4(homedir(), ".claude", "skills", name2, "SKILL.md"), ...cwd ? [join4(cwd, ".claude", "skills", name2, "SKILL.md")] : []];
   const found = [...new Set(candidates)].filter((path) => {
     try {
       return statSync(path).isFile();
@@ -2687,7 +2756,7 @@ function attachFileText(p, path, capturedUs) {
       return;
     }
     const changedSinceLoad = Number(st.mtimeNs / 1000n) > capturedUs;
-    const text = changedSinceLoad ? "" : readFileSync2(path, "utf8");
+    const text = changedSinceLoad ? "" : readFileSync3(path, "utf8");
     p._contrail = { text, sha256: text ? sha256(text) : null, changedSinceLoad };
   } catch {
     p._contrail ??= { missing: true };
@@ -2755,9 +2824,596 @@ function readSpoolFile(file) {
   try {
     const st = fstatSync(fd, { bigint: true });
     if (!st.isFile()) return null;
-    return { raw: readFileSync2(fd, "utf8"), mtimeNs: st.mtimeNs };
+    return { raw: readFileSync3(fd, "utf8"), mtimeNs: st.mtimeNs };
   } finally {
     closeSync(fd);
+  }
+}
+
+// src/ingest/transcript.ts
+import { createHash as createHash2 } from "node:crypto";
+import { closeSync as closeSync2, constants as constants2, createReadStream, fstatSync as fstatSync2, openSync as openSync2 } from "node:fs";
+var MAX_LINE = 32 * 1024 * 1024;
+var IGNORED = /* @__PURE__ */ new Set(["queue-operation", "atis-latch", "last-prompt", "cost-state", "mode", "summary", "custom-title", "ai-title", "tag", "agent-name", "file-history-snapshot", "pr-link", "progress"]);
+var YOURS = /* @__PURE__ */ new Set(["human", "sdk"]);
+var TASK = /^\s{0,64}<task-notification>/;
+var LOCAL = /^\s{0,64}<(?:bash-input|bash-stdout|bash-stderr|local-command-stdout|local-command-stderr|local-command-caveat)>/;
+var CAVEAT = /^\s{0,64}<local-command-caveat>/;
+var INTERRUPTED = /^\[Request interrupted by user/;
+var COMMAND_NAME = /<command-name>\s{0,8}\/?([^<\s]{1,200})\s{0,8}<\/command-name>/;
+var COMMAND_ARGS = /<command-args>([\s\S]{0,20000}?)<\/command-args>/;
+var SKILL_DIR = /^Base directory for this skill: ([^\n]{1,4096})\n/;
+var TranscriptStream = class {
+  events = [];
+  stats = { entries: 0, malformed: 0, unknown: 0, skipped: 0 };
+  lastUs = 0;
+  cwd = null;
+  turn = null;
+  lastPromptId = null;
+  said = null;
+  calls = /* @__PURE__ */ new Map();
+  seenCalls = /* @__PURE__ */ new Set();
+  batch = { message: null, key: null, results: [] };
+  compactTrigger = null;
+  instructionsSeen = /* @__PURE__ */ new Set();
+  localCommands = /* @__PURE__ */ new Set();
+  skillPosts = /* @__PURE__ */ new Map();
+  started = false;
+  sessionId;
+  agentId;
+  agentType;
+  store;
+  /** agentId: null for the main thread. store: how payloads are kept (as they are, unless given). */
+  constructor(sessionId, agentId = null, agentType = null, store2 = (p) => p) {
+    this.sessionId = sessionId;
+    this.agentId = agentId;
+    this.agentType = agentType;
+    this.store = store2;
+  }
+  /** One line of the file; null for a line that was too long to read. */
+  line(text) {
+    if (text === null) {
+      this.stats.malformed++;
+      return;
+    }
+    if (!text.trim()) return;
+    let e;
+    try {
+      e = JSON.parse(text);
+    } catch {
+      this.stats.malformed++;
+      return;
+    }
+    if (!e || typeof e !== "object" || Array.isArray(e)) {
+      this.stats.malformed++;
+      return;
+    }
+    this.entry(e);
+  }
+  /** One parsed entry. An entry of an odd shape is counted and skipped, never thrown. */
+  entry(e) {
+    this.stats.entries++;
+    try {
+      this.handle(e);
+    } catch {
+      this.stats.malformed++;
+    }
+  }
+  end() {
+    this.flush();
+    if (!this.agentId) {
+      this.stop();
+      return;
+    }
+    if (!this.started) return;
+    this.emit("SubagentStop", this.tick(), "subagent-stop", {
+      agent_id: this.agentId,
+      ...this.agentType ? { agent_type: this.agentType } : {},
+      last_assistant_message: this.said?.text ?? ""
+    }, { promptId: this.lastPromptId });
+  }
+  handle(e) {
+    const type = str(e, "type");
+    const sessionId = str(e, "sessionId");
+    if (sessionId && sessionId !== this.sessionId) {
+      this.stats.skipped++;
+      return;
+    }
+    if (!this.agentId && e.isSidechain === true) {
+      this.stats.skipped++;
+      return;
+    }
+    const cwd = str(e, "cwd");
+    if (cwd) this.cwd = cwd;
+    const promptId = str(e, "promptId");
+    if (promptId) this.lastPromptId = promptId;
+    if (this.agentId && !this.started && (type === "user" || type === "assistant" || type === "attachment")) {
+      this.started = true;
+      this.emit("SubagentStart", this.at(e), "subagent-start", { agent_id: this.agentId, ...this.agentType ? { agent_type: this.agentType } : {} }, { promptId: promptId ?? null });
+    }
+    switch (type) {
+      case "user":
+        return this.user(e);
+      case "assistant":
+        return this.assistant(e);
+      case "attachment":
+        return this.attachment(e);
+      case "system":
+        if (str(e, "subtype") === "compact_boundary") this.compactTrigger = str(obj(e, "compactMetadata"), "trigger") ?? null;
+        return;
+      default:
+        if (!type || !IGNORED.has(type)) this.stats.unknown++;
+    }
+  }
+  user(e) {
+    const content = field(obj(e, "message"), "content");
+    const promptId = str(e, "promptId") ?? null;
+    if (e.isCompactSummary === true) {
+      this.flush();
+      this.emit("PostCompact", this.at(e), this.key(e, "compact"), {
+        compact_summary: textOf(content),
+        ...this.compactTrigger ? { trigger: this.compactTrigger } : {}
+      }, { promptId });
+      this.compactTrigger = null;
+      this.instructionsSeen.clear();
+      return;
+    }
+    const results = arr(content).filter((b) => str(b, "type") === "tool_result");
+    if (results.length) {
+      results.forEach((block, i) => this.result(e, block, i, results.length));
+      return;
+    }
+    const text = textOf(content);
+    if (e.isMeta === true) {
+      this.meta(e, text, promptId);
+      return;
+    }
+    if (this.agentId) return;
+    this.prompt(e, text, promptId);
+  }
+  /** Text Claude Code added itself: never your words. A skill's body is kept on its Skill call. */
+  meta(e, text, promptId) {
+    if (promptId && CAVEAT.test(text)) this.localCommands.add(promptId);
+    const source = str(e, "sourceToolUseID");
+    const post = source ? this.skillPosts.get(source) : void 0;
+    if (!post) return;
+    const name2 = str(obj(post.payload, "tool_input"), "skill") ?? "";
+    const dir = SKILL_DIR.exec(text);
+    if (!dir || !name2 || name2.includes(":")) return;
+    const body = text.slice(dir[0].length).replace(/^\n/, "");
+    const path = `${dir[1].trim()}/SKILL.md`;
+    const extra = this.store({ _contrail: { text: body, sha256: sha2562(body), path } }, "InstructionsLoaded");
+    post.payload._contrail = extra._contrail;
+    this.skillPosts.delete(source);
+  }
+  prompt(e, text, promptId) {
+    if (!text.trim() || LOCAL.test(text)) return;
+    const task = TASK.test(text);
+    const origin = str(obj(e, "origin"), "kind") ?? str(e, "turnOrigin");
+    if (!task && origin && !YOURS.has(origin)) {
+      this.stats.skipped++;
+      return;
+    }
+    const command = task ? null : COMMAND_NAME.exec(text);
+    if (command && promptId && this.localCommands.has(promptId)) return;
+    this.flush();
+    this.stop();
+    const id = promptId ?? `transcript-${str(e, "uuid") ?? this.stats.entries}`;
+    this.turn = id;
+    this.said = null;
+    if (command) {
+      const name2 = command[1].replace(/^\//, "");
+      const args = (COMMAND_ARGS.exec(text)?.[1] ?? "").trim();
+      this.emit("UserPromptSubmit", this.at(e), this.key(e, "prompt"), { prompt: `/${name2}${args ? ` ${args}` : ""}` }, { promptId: id });
+      this.emit("UserPromptExpansion", this.at(e), this.key(e, "expansion"), { command_name: name2, command_args: args }, { promptId: id });
+      return;
+    }
+    this.emit("UserPromptSubmit", this.at(e), this.key(e, "prompt"), { prompt: text }, { promptId: id });
+  }
+  result(e, block, index, count2) {
+    const id = str(block, "tool_use_id");
+    const call = id ? this.calls.get(id) : void 0;
+    if (!id || !call) {
+      this.stats.skipped++;
+      return;
+    }
+    this.calls.delete(id);
+    const promptId = str(e, "promptId") ?? null;
+    if (promptId) {
+      call.pre.promptId = promptId;
+      call.pre.payload.prompt_id = promptId;
+    }
+    if (str(e, "toolDenialKind")) return;
+    const content = field(block, "content");
+    const text = textOf(content);
+    const interrupted = INTERRUPTED.test(text);
+    const base = { tool_name: call.name, tool_input: call.input, tool_use_id: id };
+    const ids = { promptId, toolName: call.name, toolUseId: id };
+    const key = this.key(e, `result-${index}`);
+    if (field(block, "is_error") === true || interrupted) {
+      this.emit("PostToolUseFailure", this.at(e), key, { ...base, error: text, is_interrupt: interrupted }, ids);
+    } else {
+      const structured = count2 === 1 ? e.toolUseResult : void 0;
+      const post = this.emit("PostToolUse", this.at(e), key, { ...base, tool_response: structured ?? content }, ids);
+      if (call.name === "Skill") this.skillPosts.set(id, post);
+    }
+    this.batch.key ??= key;
+    this.batch.results.push({ tool_use_id: id, tool_name: call.name, tool_input: call.input, tool_response: content ?? "" });
+  }
+  assistant(e) {
+    const message = obj(e, "message");
+    const messageId = str(message, "id") ?? str(e, "requestId") ?? str(e, "uuid") ?? null;
+    if (this.batch.results.length && messageId !== this.batch.message) this.flush();
+    this.batch.message = messageId;
+    const content = field(message, "content");
+    const blocks = typeof content === "string" ? [{ type: "text", text: content }] : arr(content);
+    blocks.forEach((b, i) => {
+      const type = str(b, "type");
+      if (type === "text") {
+        const text = str(b, "text");
+        if (text?.trim()) this.said = { text, key: this.key(e, `text-${i}`) };
+        return;
+      }
+      if (type !== "tool_use") return;
+      const id = str(b, "id");
+      const name2 = str(b, "name");
+      if (!id || !name2) {
+        this.stats.skipped++;
+        return;
+      }
+      if (this.seenCalls.has(id)) return;
+      this.seenCalls.add(id);
+      const input = obj(b, "input") ?? {};
+      const pre = this.emit("PreToolUse", this.at(e), this.key(e, `call-${i}`), { tool_name: name2, tool_input: input, tool_use_id: id }, { toolName: name2, toolUseId: id });
+      this.calls.set(id, { name: name2, input, pre });
+    });
+  }
+  attachment(e) {
+    const a = obj(e, "attachment");
+    const type = str(a, "type");
+    if (type === "instructions") {
+      arr(field(a, "files")).forEach((f, i) => {
+        const path = str(f, "path");
+        const text = str(f, "content");
+        if (!path || text === void 0) return;
+        const seen = `${path}\0${sha2562(text)}`;
+        if (this.instructionsSeen.has(seen)) return;
+        this.instructionsSeen.add(seen);
+        this.emit("InstructionsLoaded", this.at(e), this.key(e, `instructions-${i}`), {
+          file_path: path,
+          memory_type: str(f, "type") ?? "",
+          // The text as the transcript holds it: what the agent was given, not the file as it is now.
+          _contrail: { text, sha256: sha2562(text), fromTranscript: true }
+        }, {});
+      });
+      return;
+    }
+    if (type === "queued_command" && !this.agentId && a?.isMeta !== true) {
+      const text = textOf(field(a, "prompt"));
+      if (!text.trim()) return;
+      const origin = str(obj(a, "origin"), "kind");
+      if (!TASK.test(text) && (str(a, "commandMode") !== "prompt" || origin && !YOURS.has(origin))) {
+        this.stats.skipped++;
+        return;
+      }
+      this.emit("UserPromptSubmit", this.at(e), this.key(e, "queued"), { prompt: text }, { promptId: `queued-${str(e, "uuid") ?? this.stats.entries}` });
+    }
+  }
+  /** Closes the current batch: the results the model received together, in one PostToolBatch. */
+  flush() {
+    if (!this.batch.results.length) return;
+    this.emit("PostToolBatch", this.tick(), `${this.batch.key}/batch`, { tool_calls: this.batch.results }, { promptId: this.lastPromptId });
+    this.batch = { message: this.batch.message, key: null, results: [] };
+  }
+  /** The end of a turn: the agent's last words in it, for display only. */
+  stop() {
+    if (this.agentId || !this.turn || !this.said) return;
+    this.emit("Stop", this.tick(), `${this.said.key}/stop`, { last_assistant_message: this.said.text }, { promptId: this.turn });
+    this.said = null;
+  }
+  emit(hook, us, key, body, ids) {
+    const raw = {
+      hook_event_name: hook,
+      session_id: this.sessionId,
+      ...this.cwd ? { cwd: this.cwd } : {},
+      ...ids.promptId ? { prompt_id: ids.promptId } : {},
+      ...this.agentId ? { agent_id: this.agentId } : {},
+      ...body
+    };
+    const event = {
+      key: `${this.agentId ?? "main"}/${key}`,
+      hook,
+      us,
+      promptId: ids.promptId ?? null,
+      agentId: this.agentId,
+      toolName: ids.toolName ?? null,
+      toolUseId: ids.toolUseId ?? null,
+      cwd: this.cwd,
+      touches: hook === "PostToolUse" ? touchesOf(raw, this.cwd ?? "") : [],
+      // Stored form at once, so a long transcript is never held in memory unredacted.
+      payload: this.store(raw, hook)
+    };
+    this.events.push(event);
+    return event;
+  }
+  /** The entry's time in microseconds, kept strictly increasing so file order is event order. */
+  at(e) {
+    const ms = Date.parse(str(e, "timestamp") ?? "");
+    this.lastUs = Math.max(Number.isFinite(ms) ? ms * 1e3 : 0, this.lastUs + 1);
+    return this.lastUs;
+  }
+  tick() {
+    return ++this.lastUs;
+  }
+  key(e, what) {
+    return `${str(e, "uuid") ?? `line-${this.stats.entries}`}/${what}`;
+  }
+};
+function textOf(content) {
+  if (typeof content === "string") return content;
+  return arr(content).map((b) => str(b, "type") === "text" ? str(b, "text") ?? "" : "").filter(Boolean).join("\n");
+}
+async function* readLines(file, max = MAX_LINE) {
+  const fd = openRegular(file);
+  let buf = "";
+  let skipping = false;
+  for await (const chunk of createReadStream("", { fd, encoding: "utf8", highWaterMark: 1 << 16 })) {
+    let start = 0;
+    for (; ; ) {
+      const nl = chunk.indexOf("\n", start);
+      if (nl < 0) {
+        if (!skipping) {
+          buf += chunk.slice(start);
+          if (buf.length > max) {
+            buf = "";
+            skipping = true;
+          }
+        }
+        break;
+      }
+      if (skipping) {
+        skipping = false;
+        yield null;
+      } else {
+        yield buf + chunk.slice(start, nl);
+      }
+      buf = "";
+      start = nl + 1;
+    }
+  }
+  if (skipping) yield null;
+  else if (buf) yield buf;
+}
+function openRegular(file) {
+  const fd = openSync2(file, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0) | (constants2.O_NONBLOCK ?? 0));
+  if (!fstatSync2(fd).isFile()) {
+    closeSync2(fd);
+    throw new Error(`${file} is not a regular file`);
+  }
+  return fd;
+}
+function sha2562(s) {
+  return createHash2("sha256").update(s).digest("hex");
+}
+
+// src/ingest/import.ts
+var UNIT_MS = { h: 36e5, d: 864e5, w: 6048e5 };
+function parseSince(value, nowMs) {
+  const v = value.trim();
+  const d = /^(\d{1,6})([hdw])$/i.exec(v);
+  if (d) return nowMs - Number(d[1]) * UNIT_MS[d[2].toLowerCase()];
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) {
+    const ms = Date.parse(v);
+    if (Number.isFinite(ms)) return ms;
+  }
+  throw new ContrailError("--since takes a date such as 2026-09-01, or a duration back from now such as 12h, 30d or 2w.");
+}
+function projectsRoot(env, home) {
+  return join5(env.CLAUDE_CONFIG_DIR || join5(home, ".claude"), "projects");
+}
+var SESSION_FILE = /^[\w-]{1,128}\.jsonl$/;
+function listSessions(root, folder) {
+  const folders = folder ? [folder] : entries(root).map((name2) => join5(root, name2));
+  const out = [];
+  for (const dir of folders) {
+    for (const name2 of entries(dir)) {
+      if (!SESSION_FILE.test(name2)) continue;
+      const file = join5(dir, name2);
+      const st = regularFile(file);
+      if (!st) continue;
+      const sessionId = name2.slice(0, -".jsonl".length);
+      const subDir = join5(dir, sessionId, "subagents");
+      const subagents = entries(subDir).filter((n) => /^agent-[\w-]{1,128}\.jsonl$/.test(n) && regularFile(join5(subDir, n))).map((n) => {
+        const agentId = n.slice("agent-".length, -".jsonl".length);
+        return { file: join5(subDir, n), agentId, agentType: agentTypeOf(join5(subDir, `agent-${agentId}.meta.json`)) };
+      });
+      out.push({ sessionId, file, mtimeMs: st.mtimeMs, subagents });
+    }
+  }
+  return out.sort((a, b) => a.mtimeMs - b.mtimeMs || a.file.localeCompare(b.file));
+}
+async function importSessions(db, files, o) {
+  const summary2 = { found: 0, sessions: [], stats: { entries: 0, malformed: 0, unknown: 0, skipped: 0 } };
+  const done = /* @__PURE__ */ new Set();
+  for (const f of files) {
+    const cwd = firstCwd(f.file);
+    if (cwd === null ? !o.belongs(null) : !o.belongs(cwd)) continue;
+    summary2.found++;
+    const result = { sessionId: f.sessionId, file: f.file, cwd, status: "imported", events: 0, lastUs: null };
+    summary2.sessions.push(result);
+    if (cwd === null) {
+      result.status = "unparseable";
+      continue;
+    }
+    const lastUs = f.mtimeMs * 1e3;
+    if (done.has(f.sessionId)) result.status = "duplicate";
+    else if (lastUs < o.retentionUs) result.status = "expired";
+    else if (o.sinceUs !== null && lastUs < o.sinceUs) result.status = "older";
+    else if (db && recordedLive(db, f.sessionId)) result.status = "recorded";
+    if (result.status !== "imported") continue;
+    done.add(f.sessionId);
+    const parsed = await parseSession(f, o.hmac);
+    for (const k of Object.keys(summary2.stats)) summary2.stats[k] += parsed.stats[k];
+    result.lastUs = parsed.events.reduce((max, e) => Math.max(max, e.us), 0) || null;
+    if (!parsed.events.length) {
+      result.status = parsed.stats.entries ? "empty" : "unparseable";
+      continue;
+    }
+    if (result.lastUs !== null && result.lastUs < o.retentionUs) {
+      result.status = "expired";
+      continue;
+    }
+    if (o.sinceUs !== null && result.lastUs !== null && result.lastUs < o.sinceUs) {
+      result.status = "older";
+      continue;
+    }
+    if (o.dryRun || !db) {
+      result.events = db ? parsed.events.filter((e) => !isStored(db, name(f.sessionId, e))).length : parsed.events.length;
+      if (!result.events) result.status = "imported-before";
+      continue;
+    }
+    if (o.maxBytes !== void 0 && liveBytes(db) >= o.maxBytes) {
+      result.status = "full";
+      continue;
+    }
+    const stored2 = store(db, f.sessionId, parsed.events, o.repoKeyOf);
+    if (stored2 === null) result.status = "recorded";
+    else if (stored2 === 0) result.status = "imported-before";
+    else result.events = stored2;
+  }
+  return summary2;
+}
+async function parseSession(f, hmac) {
+  const keep = (p, hook) => stored(p, hook, hmac);
+  const streams = [new TranscriptStream(f.sessionId, null, null, keep)];
+  const files = [f.file];
+  for (const s of f.subagents) {
+    streams.push(new TranscriptStream(f.sessionId, s.agentId, s.agentType, keep));
+    files.push(s.file);
+  }
+  const stats = { entries: 0, malformed: 0, unknown: 0, skipped: 0 };
+  const events = [];
+  for (const [i, stream] of streams.entries()) {
+    try {
+      for await (const line of readLines(files[i])) stream.line(line);
+    } catch {
+      stats.malformed++;
+    }
+    stream.end();
+    for (const k of Object.keys(stats)) stats[k] += stream.stats[k];
+    events.push(...stream.events);
+  }
+  return { events, stats };
+}
+var name = (sessionId, e) => `transcript:${sessionId}:${e.key}`;
+var isStored = (db, spoolName) => Boolean(db.get("SELECT 1 FROM events WHERE spool_name = ?", spoolName));
+function recordedLive(db, sessionId) {
+  try {
+    return Boolean(db.get("SELECT 1 FROM events WHERE session_id = ? AND source IS NULL LIMIT 1", sessionId));
+  } catch {
+    return Boolean(db.get("SELECT 1 FROM events WHERE session_id = ? LIMIT 1", sessionId));
+  }
+}
+var CHUNK = 500;
+function store(db, sessionId, events, repoKeyOf) {
+  let added = 0;
+  for (let i = 0; i < events.length; i += CHUNK) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (recordedLive(db, sessionId)) {
+        db.exec("ROLLBACK");
+        return null;
+      }
+      for (const e of events.slice(i, i + CHUNK)) {
+        const row = {
+          capturedUs: e.us,
+          sessionId,
+          promptId: e.promptId,
+          agentId: e.agentId,
+          hookEvent: e.hook,
+          toolName: e.toolName,
+          toolUseId: e.toolUseId,
+          cwd: e.cwd,
+          repoKey: e.cwd ? repoKeyOf(e.cwd) : null,
+          payload: JSON.stringify(e.payload),
+          parseError: null,
+          touches: e.touches
+        };
+        if (insertRow(db, name(sessionId, e), row, "transcript")) added++;
+      }
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  return added;
+}
+function firstCwd(file, limit = 4 * 1024 * 1024) {
+  let fd;
+  try {
+    fd = openRegular(file);
+  } catch {
+    return null;
+  }
+  try {
+    const buf = Buffer.alloc(64 * 1024);
+    let text = "";
+    for (let read = 0; read < limit; ) {
+      const n = readSync(fd, buf, 0, buf.length, read);
+      if (n <= 0) break;
+      read += n;
+      text += buf.toString("utf8", 0, n);
+      let nl;
+      while ((nl = text.indexOf("\n")) >= 0) {
+        const line = text.slice(0, nl);
+        text = text.slice(nl + 1);
+        const cwd = cwdOf(line);
+        if (cwd) return cwd;
+      }
+    }
+    return cwdOf(text);
+  } finally {
+    closeSync3(fd);
+  }
+}
+function cwdOf(line) {
+  if (!line.includes('"cwd"')) return null;
+  try {
+    return str(JSON.parse(line), "cwd") ?? null;
+  } catch {
+    return null;
+  }
+}
+function agentTypeOf(meta) {
+  let fd;
+  try {
+    fd = openRegular(meta);
+  } catch {
+    return null;
+  }
+  try {
+    if (fstatSync3(fd).size > 64 * 1024) return null;
+    return str(JSON.parse(readFileSync4(fd, "utf8")), "agentType") ?? null;
+  } catch {
+    return null;
+  } finally {
+    closeSync3(fd);
+  }
+}
+function entries(dir) {
+  try {
+    return readdirSync2(dir).sort();
+  } catch {
+    return [];
+  }
+}
+function regularFile(path) {
+  try {
+    const st = lstatSync(path);
+    return st.isFile() ? st : null;
+  } catch {
+    return null;
   }
 }
 
@@ -2789,29 +3445,29 @@ function gitCommonDir(cwd) {
 }
 
 // src/paths.ts
-import { existsSync, readdirSync as readdirSync2 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync, readdirSync as readdirSync3 } from "node:fs";
+import { join as join6 } from "node:path";
 function resolveDataDir(flag, env, home, pluginData) {
   if (flag) return flag;
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
   if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
-  const base = join4(env.CLAUDE_CONFIG_DIR || join4(home, ".claude"), "plugins", "data");
-  const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
-  if (hits.length === 1) return join4(base, hits[0]);
+  const base = join6(env.CLAUDE_CONFIG_DIR || join6(home, ".claude"), "plugins", "data");
+  const hits = existsSync(base) ? readdirSync3(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
+  if (hits.length === 1) return join6(base, hits[0]);
   if (hits.length === 0) {
     throw new ContrailError(
       `No Contrail data directory in ${base} yet. Install the plugin in Claude Code (/plugin install contrail@contrail) and start a session, or set CONTRAIL_HOME to a data directory.`
     );
   }
-  const list = hits.map((h) => `  ${join4(base, h)}`).join("\n");
+  const list = hits.map((h) => `  ${join6(base, h)}`).join("\n");
   throw new ContrailError(`Found ${hits.length} Contrail data directories:
 ${list}
 Set CONTRAIL_HOME to pick one.`);
 }
 
 // src/query/blame.ts
-import { readFileSync as readFileSync3, statSync as statSync2 } from "node:fs";
+import { readFileSync as readFileSync5, statSync as statSync2 } from "node:fs";
 import { basename as basename6 } from "node:path";
 
 // src/engine/blame.ts
@@ -3011,7 +3667,7 @@ function readCurrent(path, shown) {
     throw new ContrailError(`No file ${shown}. Blame reads the file as it is now on disk.`);
   }
   if (size > MAX_FILE_BYTES) throw new ContrailError(`${shown} is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB; blame reads text files up to that size.`);
-  const text = readFileSync3(path, "utf8");
+  const text = readFileSync5(path, "utf8");
   if (text.includes("\0")) throw new ContrailError(`${shown} looks binary; blame matches lines of text.`);
   return text;
 }
@@ -3237,7 +3893,7 @@ function commitFiles(cwd, sha) {
 
 // src/query/review.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { join as join5 } from "node:path";
+import { join as join7 } from "node:path";
 
 // src/engine/review.ts
 function branchFloor(mergeBaseSec, authorSecs) {
@@ -3302,21 +3958,21 @@ function branchRange(cwd, base) {
   if (!head) throw new ContrailError("This repository has no commits yet, so there is no branch to review.");
   const branch = git(["symbolic-ref", "-q", "--short", "HEAD"])?.trim() || null;
   const resolve8 = (rev) => git(["rev-parse", "--verify", "-q", `${rev}^{commit}`])?.trim() || null;
-  let name;
+  let name2;
   let baseSha;
   if (base !== void 0) {
     if (!REVISION.test(base)) throw new ContrailError(`"${clip(base, 80)}" is not a revision contrail review accepts. Name a branch, tag or commit, for example origin/main.`);
-    name = base;
+    name2 = base;
     baseSha = resolve8(base);
     if (!baseSha) throw new ContrailError(`Unknown base "${clip(base, 80)}": git has no commit by that name here. Name a branch, tag or commit, for example origin/main.`);
   } else {
     const found = DEFAULT_BASES.map((rev) => ({ rev, sha: resolve8(rev) })).find((c) => c.sha);
     if (!found) throw new ContrailError(`No base to compare with: none of ${DEFAULT_BASES.join(", ")} exists here. Name one: contrail review <base>.`);
-    name = found.rev === "origin/HEAD" ? git(["rev-parse", "--abbrev-ref", "origin/HEAD"])?.trim() || found.rev : found.rev;
+    name2 = found.rev === "origin/HEAD" ? git(["rev-parse", "--abbrev-ref", "origin/HEAD"])?.trim() || found.rev : found.rev;
     baseSha = found.sha;
   }
   const mergeBase = git(["merge-base", baseSha, head])?.trim();
-  if (!mergeBase) throw new ContrailError(`${clip(name, 80)} and HEAD share no history, so there is no range between them to review.`);
+  if (!mergeBase) throw new ContrailError(`${clip(name2, 80)} and HEAD share no history, so there is no range between them to review.`);
   const mergeBaseSec = Number(git(["show", "-s", "--format=%ct", mergeBase])?.trim() ?? 0);
   const range = `${mergeBase}..${head}`;
   const totalCommits = Number(git(["rev-list", "--count", range])?.trim() ?? 0);
@@ -3339,14 +3995,14 @@ function branchRange(cwd, base) {
   const commitsOf = /* @__PURE__ */ new Map();
   for (const c of commits) for (const f of c.files) commitsOf.set(f, [...commitsOf.get(f) ?? [], c.sha]);
   const files = all.slice(0, LIMITS.files).map((path) => ({ path, commits: commitsOf.get(path) ?? [], uncommitted: dirty.has(path) }));
-  return { top, head, branch, base: { name, given: base !== void 0, tried: base !== void 0 ? [base] : DEFAULT_BASES, mergeBase, mergeBaseSec }, commits, totalCommits, files, totalFiles: all.length };
+  return { top, head, branch, base: { name: name2, given: base !== void 0, tried: base !== void 0 ? [base] : DEFAULT_BASES, mergeBase, mergeBaseSec }, commits, totalCommits, files, totalFiles: all.length };
 }
 function reviewBranch(db, o) {
   const range = branchRange(o.cwd, o.base);
   const floorSec = branchFloor(range.base.mergeBaseSec, range.commits.map((c) => c.authorSec));
   const joins = joinCommits(db, range.commits, o.repoKey, floorSec);
   const top = realPath(range.top);
-  const wanted = new Map(range.files.map((f) => [join5(top, f.path), f.path]));
+  const wanted = new Map(range.files.map((f) => [join7(top, f.path), f.path]));
   const writesTo2 = /* @__PURE__ */ new Map();
   const real = /* @__PURE__ */ new Map();
   for (const t of recordedWrites(db, floorSec * 1e6, o.repoKey)) {
@@ -3364,8 +4020,8 @@ function reviewBranch(db, o) {
   const seen = (id, us) => latest.set(id, Math.max(latest.get(id) ?? 0, us));
   for (const j of joined) for (const w of j.writes) seen(w.sessionId, w.us);
   for (const c of range.commits) {
-    const join8 = joins.get(c.sha);
-    if (join8?.kind === "joined") seen(join8.sessionId, c.sec * 1e6);
+    const join9 = joins.get(c.sha);
+    if (join9?.kind === "joined") seen(join9.sessionId, c.sec * 1e6);
   }
   const ids = [...latest.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
   const graphs = new Map(ids.slice(0, LIMITS.sessions).map((id) => [id, loadGraph(db, id, o.home, o.hashToken)]));
@@ -3397,9 +4053,9 @@ function reviewBranch(db, o) {
     return { ...file, grade, writers, moreWriters: calls2.length - picked.length };
   });
   const commits = range.commits.map((c) => {
-    const join8 = joins.get(c.sha) ?? { kind: "none" };
-    const found = join8.kind === "joined" ? explainOnce(join8.sessionId, join8.toolUseId) : { action: null, explanation: null };
-    return { ...c, join: join8, ...found };
+    const join9 = joins.get(c.sha) ?? { kind: "none" };
+    const found = join9.kind === "joined" ? explainOnce(join9.sessionId, join9.toolUseId) : { action: null, explanation: null };
+    return { ...c, join: join9, ...found };
   });
   const external = [];
   const calls = [
@@ -3933,8 +4589,8 @@ function nodeLines(node, prefix, last, g, s, out) {
   node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
 }
 function renderStatusline(g, findings, s = PLAIN) {
-  const name = s.dim("contrail");
-  if (!g) return `${name} ${s.dim("recording")}`;
+  const name2 = s.dim("contrail");
+  if (!g) return `${name2} ${s.dim("recording")}`;
   const external = findings.filter((f) => f.externalUpstream).length;
   const unnamed = findings.filter((f) => !f.externalUpstream && f.requested === "NOT_NAMED").length;
   const parts = [
@@ -3942,7 +4598,7 @@ function renderStatusline(g, findings, s = PLAIN) {
     unnamed ? s.bold(`\u25B3 ${unnamed} not named by you`) : "",
     s.dim(`${g.actions.length} call${g.actions.length === 1 ? "" : "s"}`)
   ].filter(Boolean);
-  return `${name} ${parts.join(s.dim(" \xB7 "))}`;
+  return `${name2} ${parts.join(s.dim(" \xB7 "))}`;
 }
 function renderFind(value, hits, scanned, s = PLAIN) {
   const found = hits.filter((h) => h.sightings.length);
@@ -4508,8 +5164,89 @@ details.full > summary { cursor: pointer; color: var(--muted); }
 footer { margin: 48px auto 40px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
 `;
 
+// src/render/import.ts
+var MAX_LISTED = 20;
+function renderImport(v, s = PLAIN) {
+  const { summary: summary2 } = v;
+  const count2 = (status) => summary2.sessions.filter((x) => x.status === status).length;
+  const plural3 = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+  const out = [`${s.bold(`${plural3(summary2.found, "Claude Code session")} found`)} ${s.dim(`for ${v.scope}, in ${v.root}`)}`];
+  if (!summary2.found) {
+    out.push(`  No transcripts here belong to ${v.scope}. ${s.dim("contrail import --all takes every project; --project <dir> takes another one.")}`);
+    return `${out.join("\n")}
+`;
+  }
+  const imported = summary2.sessions.filter((x) => x.status === "imported");
+  const events = imported.reduce((n, x) => n + x.events, 0);
+  const skipped = [
+    [count2("recorded"), "already recorded live by Contrail's hooks, left as recorded", true],
+    [count2("imported-before"), "already imported", true],
+    [count2("older"), `last active before --since ${v.since ?? ""}`.trim(), v.since !== null],
+    [count2("expired"), `last active over ${v.retentionDays} days ago, which retention would remove at once`, false],
+    [count2("unparseable"), "unparseable: no entry in them could be read", true],
+    [count2("empty"), "with no prompt or tool call to import", false],
+    [count2("duplicate"), "with a session id already taken from another project folder", false],
+    [count2("full"), `left out once the database reached its ${v.maxDbMb} MB size cap (max_db_mb), so no recorded session is pushed out`, false]
+  ];
+  const label = v.dryRun ? "would import" : "imported";
+  out.push(`  ${label.padEnd(12)} ${plural3(imported.length, "session")}, ${plural3(events, "event")}`);
+  let first = true;
+  for (const [n, what, always] of skipped) {
+    if (!n && !always) continue;
+    out.push(`  ${(first ? "skipped" : "").padEnd(12)} ${n} ${what}`);
+    first = false;
+  }
+  const { malformed, unknown } = summary2.stats;
+  if (malformed || unknown) {
+    const parts = [malformed ? `${plural3(malformed, "malformed line")}` : "", unknown ? `${plural3(unknown, "entry")} of a type this version does not know` : ""].filter(Boolean);
+    out.push(s.dim(`  Left out while reading: ${parts.join(" and ")}.`));
+  }
+  if (imported.length) {
+    out.push("");
+    for (const x of imported.slice(0, MAX_LISTED)) {
+      out.push(`  ${x.sessionId.slice(0, 8)}  ${x.lastUs ? localTime(x.lastUs) : "".padEnd(16)}  ${plural3(x.events, "event").padEnd(11)}  ${s.dim(clip(x.cwd ? v.shown(x.cwd) : "", 80))}`);
+    }
+    if (imported.length > MAX_LISTED) out.push(s.dim(`  and ${imported.length - MAX_LISTED} more`));
+  }
+  out.push("");
+  if (v.dryRun) {
+    out.push(s.bold("Dry run: nothing was written.") + s.dim(" Run again without --dry-run to import."));
+  } else if (imported.length) {
+    out.push(
+      s.dim("Every report marks these sessions as reconstructed from Claude Code's transcript, not recorded live, and lists what a transcript does not hold."),
+      `Next: ${s.bold("contrail sessions")}, or ${s.bold("contrail why last")}`
+    );
+  }
+  return `${out.join("\n")}
+`;
+}
+function importJson(v) {
+  const { summary: summary2 } = v;
+  const count2 = (status) => summary2.sessions.filter((x) => x.status === status).length;
+  const imported = summary2.sessions.filter((x) => x.status === "imported");
+  return {
+    dryRun: v.dryRun,
+    found: summary2.found,
+    imported: imported.length,
+    events: imported.reduce((n, x) => n + x.events, 0),
+    skipped: {
+      recorded: count2("recorded"),
+      importedBefore: count2("imported-before"),
+      older: count2("older"),
+      expired: count2("expired"),
+      unparseable: count2("unparseable"),
+      empty: count2("empty"),
+      duplicate: count2("duplicate"),
+      full: count2("full")
+    },
+    malformedLines: summary2.stats.malformed,
+    unknownEntries: summary2.stats.unknown,
+    sessions: summary2.sessions.map((x) => ({ id: x.sessionId, status: x.status, events: x.events, lastUs: x.lastUs, cwd: x.cwd }))
+  };
+}
+
 // src/render/otel.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 var SPAN_KIND_INTERNAL = 1;
 var STATUS_ERROR = 2;
 function attrs(o) {
@@ -4523,7 +5260,7 @@ function attrs(o) {
   return out;
 }
 var hexId = (kind, value, length) => {
-  const hex = createHash2("sha256").update(`${kind}:${value}`).digest("hex").slice(0, length);
+  const hex = createHash3("sha256").update(`${kind}:${value}`).digest("hex").slice(0, length);
   return /^0+$/.test(hex) ? `1${hex.slice(1)}` : hex;
 };
 var nanos = (us) => (BigInt(Math.round(us)) * 1000n).toString();
@@ -5042,71 +5779,6 @@ function fileMd(f, r) {
   return lines.join("\n");
 }
 
-// src/store/retention.ts
-import { readFileSync as readFileSync4 } from "node:fs";
-import { join as join6 } from "node:path";
-var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true, tripwire: true };
-function loadConfig(dataDir) {
-  let raw;
-  try {
-    raw = readFileSync4(join6(dataDir, "config.json"), "utf8");
-  } catch {
-    return { config: DEFAULTS, problem: null };
-  }
-  try {
-    const c = JSON.parse(raw);
-    const positive = (v, fallback) => typeof v === "number" && v > 0 ? v : fallback;
-    return {
-      config: {
-        retentionDays: positive(c.retention_days, DEFAULTS.retentionDays),
-        maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb),
-        storeContent: c.store_content !== false,
-        tripwire: c.tripwire !== false
-      },
-      problem: null
-    };
-  } catch (e) {
-    return { config: DEFAULTS, problem: `config.json is not valid JSON (${e.message}); using defaults` };
-  }
-}
-function prune(db, config, nowMs) {
-  const cutoffUs = (nowMs - config.retentionDays * 864e5) * 1e3;
-  let removed = 0;
-  const drop = (sessionId) => {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      if (sessionId === null) db.run("DELETE FROM events WHERE session_id IS NULL AND captured_us < ?", cutoffUs);
-      else db.run("DELETE FROM events WHERE session_id = ?", sessionId);
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
-  };
-  const old = db.all("SELECT session_id AS id FROM events WHERE session_id IS NOT NULL GROUP BY session_id HAVING MAX(captured_us) < ?", cutoffUs);
-  for (const { id } of old) {
-    drop(id);
-    removed++;
-  }
-  drop(null);
-  const limit = config.maxDbMb * 1024 * 1024;
-  while (liveBytes(db) > limit) {
-    const oldest = db.get(
-      "SELECT session_id AS id FROM events WHERE session_id IS NOT NULL GROUP BY session_id ORDER BY MAX(captured_us) LIMIT 1"
-    );
-    if (!oldest) break;
-    drop(oldest.id);
-    removed++;
-  }
-  return { sessionsRemoved: removed };
-}
-function liveBytes(db) {
-  const pages = db.get("PRAGMA page_count")?.page_count ?? 0;
-  const free = db.get("PRAGMA freelist_count")?.freelist_count ?? 0;
-  const size = db.get("PRAGMA page_size")?.page_size ?? 4096;
-  return (pages - free) * size;
-}
-
 // src/store/schema.ts
 var MIGRATIONS = [
   [
@@ -5240,6 +5912,9 @@ var OPTIONS = {
   otel: { type: "boolean" },
   markdown: { type: "boolean" },
   output: { type: "string", short: "o" },
+  since: { type: "string" },
+  project: { type: "string" },
+  "dry-run": { type: "boolean" },
   "from-hook": { type: "boolean" },
   "from-skill": { type: "boolean" },
   help: { type: "boolean", short: "h" },
@@ -5277,13 +5952,17 @@ Usage:
                                     calls behind them (base: the first of origin/HEAD, origin/main,
                                     origin/master, main, master); --markdown for a pull request,
                                     -o to save that markdown and print this view
+  contrail import [--since <date | 30d>] [--project <dir> | --all] [--dry-run]
+                                    bring in sessions from before Contrail was installed, rebuilt
+                                    from Claude Code's own transcripts (this repository's, unless
+                                    --project or --all); reports mark them as reconstructed
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          machine-readable output (why, blame, trace, risks, sessions, find, review)
+  --json          machine-readable output (why, blame, trace, risks, sessions, find, review, import)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
@@ -5328,6 +6007,7 @@ ${USAGE}`);
     find: (args) => find(args, flags, io, style),
     review: (args) => review(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
+    import: () => importCommand(flags, io, style),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io)
   };
@@ -5355,7 +6035,7 @@ ${e.stack ?? String(e)}
   }
 }
 function prepareDataDir(dataDir) {
-  mkdirSync(join7(dataDir, "spool"), { recursive: true, mode: 448 });
+  mkdirSync(join8(dataDir, "spool"), { recursive: true, mode: 448 });
   try {
     chmodSync2(dataDir, 448);
   } catch {
@@ -5366,7 +6046,7 @@ async function withStore(flags, io, use) {
   let db;
   try {
     prepareDataDir(dataDir);
-    db = await openDb(join7(dataDir, "contrail.db"));
+    db = await openDb(join8(dataDir, "contrail.db"));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
     throw new ContrailError(`Cannot use the data directory ${dataDir}: ${e.message}`);
@@ -5376,7 +6056,7 @@ async function withStore(flags, io, use) {
     const repoKeyOf = makeRepoKeyOf();
     const storeContent = loadConfig(dataDir).config.storeContent;
     const hashToken = contentHmac(dataDir, !storeContent);
-    ingest(db, join7(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
+    ingest(db, join8(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
     return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd), ...hashToken ? { hashToken } : {} });
   } finally {
     db.close();
@@ -5703,7 +6383,7 @@ Wrote the markdown for a pull request description to ${path}
   });
 }
 function writePrivate(path, text) {
-  const tmp = join7(dirname3(path), `.${basename7(path)}.${process.pid}.tmp`);
+  const tmp = join8(dirname3(path), `.${basename7(path)}.${process.pid}.tmp`);
   try {
     writeFileSync2(tmp, text, { mode: 384, flag: "wx" });
     renameSync(tmp, path);
@@ -5712,7 +6392,7 @@ function writePrivate(path, text) {
     throw new ContrailError(`Cannot write ${path}: ${e.message}`);
   }
 }
-var readStdin = (io) => io.stdin ? io.stdin() : readFileSync5(0, "utf8");
+var readStdin = (io) => io.stdin ? io.stdin() : readFileSync6(0, "utf8");
 async function statusline(flags, io) {
   const s = io.env.NO_COLOR ? PLAIN : COLOR;
   try {
@@ -5734,11 +6414,11 @@ async function statusline(flags, io) {
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   prepareDataDir(dataDir);
-  const db = await openDb(join7(dataDir, "contrail.db"));
+  const db = await openDb(join8(dataDir, "contrail.db"));
   try {
     migrate(db);
     const { config } = loadConfig(dataDir);
-    const r = ingest(db, join7(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
+    const r = ingest(db, join8(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
     const { sessionsRemoved } = prune(db, config, Date.now());
     if (!flags["from-hook"]) {
       io.out(
@@ -5749,6 +6429,57 @@ async function ingestCommand(flags, io) {
     return 0;
   } finally {
     db.close();
+  }
+}
+async function importCommand(flags, io, s) {
+  const now = Date.now();
+  const since = flags.since ?? null;
+  const sinceUs = since === null ? null : parseSince(since, now) * 1e3;
+  if (flags.all && flags.project) throw new ContrailError("Pick one of --project and --all.");
+  const dryRun = flags["dry-run"] === true;
+  const root = projectsRoot(io.env, io.home);
+  const shown = (path2) => displayPath(path2, "", io.home);
+  const repoKeyOf = makeRepoKeyOf();
+  let folder;
+  let belongs = () => true;
+  let scope = "all projects";
+  if (!flags.all) {
+    const dir = resolve7(io.cwd, flags.project ?? ".");
+    if (flags.project && (dir === root || dir.startsWith(`${root}/`))) {
+      folder = dir;
+      scope = `the project folder ${shown(dir)}`;
+    } else {
+      const key = repoKeyOf(dir);
+      belongs = (cwd) => cwd !== null && repoKeyOf(cwd) === key;
+      scope = shown(dir);
+    }
+  }
+  const run = async (db2, dataDir2, hmac) => {
+    const { config } = loadConfig(dataDir2);
+    const summary2 = await importSessions(db2, listSessions(root, folder), {
+      belongs,
+      sinceUs,
+      retentionUs: (now - config.retentionDays * 864e5) * 1e3,
+      maxBytes: config.maxDbMb * 1024 * 1024,
+      dryRun,
+      repoKeyOf,
+      ...hmac ? { hmac } : {}
+    });
+    const view = { summary: summary2, root: shown(root), scope, dryRun, since, retentionDays: config.retentionDays, maxDbMb: config.maxDbMb, shown };
+    io.out(flags.json ? `${JSON.stringify(importJson(view), null, 2)}
+` : renderImport(view, s));
+    return 0;
+  };
+  if (!dryRun) {
+    return withStore(flags, io, ({ db: db2, dataDir: dataDir2, hashToken }) => run(db2, dataDir2, loadConfig(dataDir2).config.storeContent ? void 0 : hashToken));
+  }
+  const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
+  const path = join8(dataDir, "contrail.db");
+  const db = existsSync3(path) ? await openDb(path) : null;
+  try {
+    return await run(db, dataDir);
+  } finally {
+    db?.close();
   }
 }
 async function pruneCommand(flags, io) {
@@ -5768,7 +6499,7 @@ async function doctor(flags, io) {
   io.out(`contrail ${VERSION} on ${versions.bun ? `bun ${versions.bun}` : `node ${process.versions.node}`}
 `);
   return withStore(flags, io, ({ db, dataDir }) => {
-    const backlog = readdirSync3(join7(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
+    const backlog = readdirSync4(join8(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
     const stats = db.get(
       `SELECT COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions,
               SUM(parse_error IS NOT NULL) AS parseErrors, MAX(captured_us) AS last FROM events`
@@ -5784,7 +6515,7 @@ async function doctor(flags, io) {
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1e3)).toISOString() : "never"}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ""}`,
       `content          ${config.storeContent ? "stored as redacted text" : "stored as keyed hashes only (store_content: false)"}`,
-      `launcher         ${existsSync3(join7(dataDir, "bin", "contrail")) ? join7(dataDir, "bin", "contrail") : "written at the next session start"}`,
+      `launcher         ${existsSync3(join8(dataDir, "bin", "contrail")) ? join8(dataDir, "bin", "contrail") : "written at the next session start"}`,
       ...hook ? [`capture hook     ${hook} ms per event (median of 5)`] : [],
       stats.events === 0 && backlog === 0 ? "No events yet. Run a Claude Code session with the plugin enabled, then check again." : "Recording and queries work."
     ];
@@ -5801,7 +6532,7 @@ function captureTiming() {
     return null;
   }
   if (!existsSync3(hook)) return null;
-  const dir = mkdtempSync(join7(tmpdir(), "contrail-doctor-"));
+  const dir = mkdtempSync(join8(tmpdir(), "contrail-doctor-"));
   try {
     const times = [];
     for (let i = 0; i < 5; i++) {

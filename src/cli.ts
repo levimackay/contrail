@@ -14,6 +14,7 @@ import { ContrailError } from './errors.ts';
 import { buildGraph } from './graph/build.ts';
 import { contentHmac } from './ingest/content.ts';
 import { redactString } from './ingest/redact.ts';
+import { importSessions, listSessions, parseSince, projectsRoot } from './ingest/import.ts';
 import { ingest, stored } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
@@ -26,6 +27,7 @@ import { blameJson, noLineWriter, renderBlame, renderLineNote } from './render/b
 import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, renderTripwire, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
+import { importJson, renderImport } from './render/import.ts';
 import { toOtlp } from './render/otel.ts';
 import { renderReview, renderReviewMarkdown, reviewJson } from './render/review.ts';
 import { renderWhy } from './render/why.ts';
@@ -61,6 +63,9 @@ const OPTIONS = {
   otel: { type: 'boolean' },
   markdown: { type: 'boolean' },
   output: { type: 'string', short: 'o' },
+  since: { type: 'string' },
+  project: { type: 'string' },
+  'dry-run': { type: 'boolean' },
   'from-hook': { type: 'boolean' },
   'from-skill': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
@@ -101,13 +106,17 @@ Usage:
                                     calls behind them (base: the first of origin/HEAD, origin/main,
                                     origin/master, main, master); --markdown for a pull request,
                                     -o to save that markdown and print this view
+  contrail import [--since <date | 30d>] [--project <dir> | --all] [--dry-run]
+                                    bring in sessions from before Contrail was installed, rebuilt
+                                    from Claude Code's own transcripts (this repository's, unless
+                                    --project or --all); reports mark them as reconstructed
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          machine-readable output (why, blame, trace, risks, sessions, find, review)
+  --json          machine-readable output (why, blame, trace, risks, sessions, find, review, import)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
@@ -152,6 +161,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     find: args => find(args, flags, io, style),
     review: args => review(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
+    import: () => importCommand(flags, io, style),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io),
   };
@@ -622,6 +632,67 @@ async function ingestCommand(flags: Flags, io: Io): Promise<number> {
     return 0;
   } finally {
     db.close();
+  }
+}
+
+/**
+ * contrail import: sessions from before Contrail was installed, rebuilt from Claude Code's own
+ * transcripts. A terminal command, not a skill, because it reads many files. With --dry-run it
+ * writes nothing: no database is created, migrated or ingested into.
+ */
+async function importCommand(flags: Flags, io: Io, s: Style): Promise<number> {
+  const now = Date.now();
+  const since = (flags.since as string | undefined) ?? null;
+  const sinceUs = since === null ? null : parseSince(since, now) * 1000;
+  if (flags.all && flags.project) throw new ContrailError('Pick one of --project and --all.');
+  const dryRun = flags['dry-run'] === true;
+  const root = projectsRoot(io.env, io.home);
+  const shown = (path: string) => displayPath(path, '', io.home);
+  const repoKeyOf = makeRepoKeyOf();
+
+  // By default this repository's sessions, in any of its worktrees or subdirectories: a session
+  // belongs by the working directory its transcript recorded, not by its folder's name.
+  let folder: string | undefined;
+  let belongs: (cwd: string | null) => boolean = () => true;
+  let scope = 'all projects';
+  if (!flags.all) {
+    const dir = resolve(io.cwd, (flags.project as string | undefined) ?? '.');
+    if (flags.project && (dir === root || dir.startsWith(`${root}/`))) {
+      folder = dir;
+      scope = `the project folder ${shown(dir)}`;
+    } else {
+      const key = repoKeyOf(dir);
+      belongs = cwd => cwd !== null && repoKeyOf(cwd) === key;
+      scope = shown(dir);
+    }
+  }
+
+  const run = async (db: Db | null, dataDir: string, hmac?: (span: string) => string): Promise<number> => {
+    const { config } = loadConfig(dataDir);
+    const summary = await importSessions(db, listSessions(root, folder), {
+      belongs,
+      sinceUs,
+      retentionUs: (now - config.retentionDays * 86_400_000) * 1000,
+      maxBytes: config.maxDbMb * 1024 * 1024,
+      dryRun,
+      repoKeyOf,
+      ...(hmac ? { hmac } : {}),
+    });
+    const view = { summary, root: shown(root), scope, dryRun, since, retentionDays: config.retentionDays, maxDbMb: config.maxDbMb, shown };
+    io.out(flags.json ? `${JSON.stringify(importJson(view), null, 2)}\n` : renderImport(view, s));
+    return 0;
+  };
+
+  if (!dryRun) {
+    return withStore(flags, io, ({ db, dataDir, hashToken }) => run(db, dataDir, loadConfig(dataDir).config.storeContent ? undefined : hashToken));
+  }
+  const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
+  const path = join(dataDir, 'contrail.db');
+  const db = existsSync(path) ? await openDb(path) : null;
+  try {
+    return await run(db, dataDir);
+  } finally {
+    db?.close();
   }
 }
 

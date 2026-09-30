@@ -138,6 +138,20 @@ test('the data directory resolves as the capture hook does: CONTRAIL_HOME before
   assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev'), '/env');
 });
 
+test('before anything is recorded, each query says what to do next', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
+  const why = await run(['why', 'last', '--data', data]);
+  assert.equal(why.code, 1);
+  assert.match(why.err, /^contrail: No recorded edit, command or commit in this repository yet\. .+ then try again\.\n$/);
+  const risks = await run(['risks', '--data', data]);
+  assert.equal(risks.code, 0);
+  assert.match(risks.out, /No tool calls recorded yet\. .+ then try again\.\n$/);
+  assert.doesNotMatch(risks.out, /None found/);
+  assert.match((await run(['sessions', '--data', data])).out, /^No sessions recorded yet\. .+ then try again\./);
+  assert.match((await run(['trace', '--data', data])).err, /^contrail: No sessions recorded yet\. .+ then try again\./);
+  assert.match((await run(['doctor', '--data', data])).out, /\nNo events yet\. .+ then check again\.\n$/);
+});
+
 test('a session with prompts and no tool calls is labeled with its own id, not a prompt id', async () => {
   const data = spoolFrom(session([d.prompt('hello there', 'p1'), d.prompt('and again', 'p2')], 'abcdef12-session'));
   const r = await run(['trace', '--data', data]);

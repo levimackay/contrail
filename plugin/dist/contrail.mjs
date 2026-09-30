@@ -2527,7 +2527,11 @@ function findTarget(db, target, repoKey) {
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey
     );
-    if (!rows.length) throw new ContrailError("No recorded actions in this repository yet.");
+    if (!rows.length) {
+      throw new ContrailError(
+        "No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again."
+      );
+    }
   }
   return { ...rows[0], total: rows.length };
 }
@@ -2932,6 +2936,11 @@ function renderRisks(findings, scanned, g, s = PLAIN) {
   out.push(
     `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${scanned.actions} tool calls in ${scanned.sessions} session${scanned.sessions === 1 ? "" : "s"})`)}`
   );
+  if (!scanned.actions) {
+    out.push("", "  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.");
+    return `${out.join("\n")}
+`;
+  }
   if (!findings.length) out.push("", "  None found.");
   for (const f of findings) {
     const graph = g.get(f.action.scope.sessionId);

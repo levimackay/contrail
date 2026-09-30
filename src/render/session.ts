@@ -243,6 +243,10 @@ export function renderRisks(findings: Finding[], scanned: { actions: number; ses
   out.push(
     `${s.bold('Sensitive actions')} ${s.dim(`(${findings.length} of ${scanned.actions} tool calls in ${scanned.sessions} session${scanned.sessions === 1 ? '' : 's'})`)}`,
   );
+  if (!scanned.actions) {
+    out.push('', '  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.');
+    return `${out.join('\n')}\n`;
+  }
   if (!findings.length) out.push('', '  None found.');
   for (const f of findings) {
     const graph = g.get(f.action.scope.sessionId)!;

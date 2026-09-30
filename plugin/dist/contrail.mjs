@@ -1896,6 +1896,18 @@ var RULES = [
     replace: (m, prefix, password) => PLACEHOLDER.test(password) ? m : `${prefix}${tag("url-password")}@`
   },
   {
+    id: "netrc",
+    when: /\bmachine[ \t]{1,16}\S{1,256}\s{1,16}(?:login|password|account|port)\b|\bdefault[ \t]{1,16}login\b/,
+    re: /(\bpassword[ \t]{1,16})(\S{1,1024})/g,
+    replace: (m, prefix, value) => namesSecret(value) ? m : `${prefix}${tag("netrc")}`
+  },
+  {
+    // ~/.pgpass: host:port:database:user:password, one per line.
+    id: "pgpass",
+    re: /^([^\s:/#][^\s:/]{0,255}:(?:\d{1,5}|\*):[^\s:]{1,256}:[^\s:]{1,256}:)(\S{1,1024})(?=\r?$)/gm,
+    replace: (m, prefix, value) => namesSecret(value) ? m : `${prefix}${tag("pgpass")}`
+  },
+  {
     id: "cli-password",
     re: /((?:^|\s)--(?:password|passwd|pass)(?:=|\s{1,4}))(["']?)([^\s"']{1,256})/g,
     replace: (m, flag, quote2, value) => PLACEHOLDER.test(value) ? m : `${flag}${quote2}${tag("cli-password")}`
@@ -1959,6 +1971,7 @@ var RULES = [
 function redactString(s) {
   let out = redactPrivateKeys(s);
   for (const rule of RULES) {
+    if (rule.when && !rule.when.test(out)) continue;
     const replace = rule.replace ?? (() => tag(rule.id));
     out = out.replace(rule.re, replace);
   }
@@ -1982,7 +1995,7 @@ function redactValue(value, key = "") {
 var PAIR_NAME = /* @__PURE__ */ new Set(["key", "name", "parameterkey", "parametername"]);
 var PAIR_VALUE = /* @__PURE__ */ new Set(["value", "parametervalue"]);
 var PATTERNS = [
-  ...RULES.map((r) => r.re),
+  ...RULES.flatMap((r) => r.when ? [r.re, r.when] : [r.re]),
   PLACEHOLDER,
   KEYWORD,
   TYPE_NAME,

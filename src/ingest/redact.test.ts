@@ -236,6 +236,10 @@ const B64 = Buffer.from(`user:${PW}`).toString('base64');
 /** [what, text, the part that must not survive] */
 const LEAKS: Array<[string, string, string]> = [
   // Credential files
+  ['.netrc on one line', `machine github.com login octocat password ${PW}`, PW],
+  ['.netrc over lines', `machine api.heroku.com\n  login me@example.com\n  password ${PW}\n`, PW],
+  ['.pgpass', `db.example.com:5432:prod:admin:${PW}`, PW],
+  ['.pgpass with wildcards', `*:*:*:postgres:${PW}\r\n`, PW],
   ['docker config auth', `{"auths":{"https://index.docker.io/v1/":{"auth":"${B64}"}}}`, B64],
   ['docker config identitytoken', `{"auths":{"r":{"identitytoken":"${PW}"}}}`, PW],
   ['kubeconfig client-key-data', `    client-key-data: ${B64}`, B64],
@@ -327,6 +331,12 @@ CODE.push(
   'connect(host=h, password=db_password)',
   'connect(host=h, password=password)',
 );
+// ...and text that only looks like a credential file.
+CODE.push(
+  'src/app.ts:10:5: error: unexpected',
+  'root:x:0:0:root:/root:/bin/bash',
+  'machine learning is great; the password reset link was sent',
+);
 for (const text of CODE) {
   test(`leaves alone: ${text.slice(0, 40)}`, () => assert.equal(redactString(text), text));
 }
@@ -369,7 +379,8 @@ test('name patterns redact hostile 256 KB input in linear time', () => {
     fill('a_token='), fill('password="'), fill("key: '"), fill('secret:'), fill('a.b.password.'), fill('x-key-'), fill('KEY=,'),
     fill('password=a,'), fill('password=a, b'), fill('PASSWORD=x&y'), fill('token: str ='), fill('token=bearer '), fill('password=\\"'),
     fill('"name":"PASSWORD","value":"'), fill('"value":"x","name":"'), fill('name: A\nvalue: '), fill("define('A',"),
-    fill("set('PASSWORD', 'x"),
+    fill("set('PASSWORD', 'x"), fill('password ', 'machine x login y\n'), fill('machine a password b '), fill('a:1:b:c:d\n'),
+    fill('a:1:b:c:'),
     fill('x', 'PASSWORD='), fill('(', 'PASSWORD=ab'), fill('a.', 'PASSWORD=ab'), fill('{"auth":"a","token":"b","key":1},'),
     fill('const password = getPassword(a, b);\n'),
   ];

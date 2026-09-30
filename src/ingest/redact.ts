@@ -13,6 +13,8 @@ interface Rule {
   id: string;
   re: RegExp;
   replace?: Replace;
+  /** The rule runs only on text this matches: a cheap test for the file format the rule is about. */
+  when?: RegExp;
 }
 
 const tag = (id: string) => `[REDACTED:${id}]`;
@@ -260,6 +262,18 @@ const RULES: Rule[] = [
     replace: (m, prefix, password) => (PLACEHOLDER.test(password!) ? m : `${prefix}${tag('url-password')}@`),
   },
   {
+    id: 'netrc',
+    when: /\bmachine[ \t]{1,16}\S{1,256}\s{1,16}(?:login|password|account|port)\b|\bdefault[ \t]{1,16}login\b/,
+    re: /(\bpassword[ \t]{1,16})(\S{1,1024})/g,
+    replace: (m, prefix, value) => (namesSecret(value!) ? m : `${prefix}${tag('netrc')}`),
+  },
+  {
+    // ~/.pgpass: host:port:database:user:password, one per line.
+    id: 'pgpass',
+    re: /^([^\s:/#][^\s:/]{0,255}:(?:\d{1,5}|\*):[^\s:]{1,256}:[^\s:]{1,256}:)(\S{1,1024})(?=\r?$)/gm,
+    replace: (m, prefix, value) => (namesSecret(value!) ? m : `${prefix}${tag('pgpass')}`),
+  },
+  {
     id: 'cli-password',
     re: /((?:^|\s)--(?:password|passwd|pass)(?:=|\s{1,4}))(["']?)([^\s"']{1,256})/g,
     replace: (m, flag, quote, value) => (PLACEHOLDER.test(value!) ? m : `${flag}${quote}${tag('cli-password')}`),
@@ -324,6 +338,7 @@ const RULES: Rule[] = [
 export function redactString(s: string): string {
   let out = redactPrivateKeys(s);
   for (const rule of RULES) {
+    if (rule.when && !rule.when.test(out)) continue;
     const replace: Replace = rule.replace ?? (() => tag(rule.id));
     out = out.replace(rule.re, replace);
   }
@@ -357,7 +372,7 @@ const PAIR_VALUE = new Set(['value', 'parametervalue']);
 
 /** Every pattern this module runs, for the test that checks each quantifier is bounded. */
 export const PATTERNS: RegExp[] = [
-  ...RULES.map(r => r.re),
+  ...RULES.flatMap(r => (r.when ? [r.re, r.when] : [r.re])),
   PLACEHOLDER, KEYWORD, TYPE_NAME, CALL_START, CODE_CHARS, AFTER_BRACKET, MEMBER, CHAIN, EXPRESSION, STRONG, BASE64ISH,
   PEM_BEGIN, PEM_END, PEM_BODY,
 ];

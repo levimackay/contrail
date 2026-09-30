@@ -6162,7 +6162,7 @@ async function openBun(path) {
 }
 
 // src/version.ts
-var VERSION = "0.4.0";
+var VERSION = "0.5.0";
 
 // src/cli.ts
 var FILTERS = ["writes", "shell", "network", "mcp", "subagents", "instructions"];

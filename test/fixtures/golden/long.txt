@@ -1243,7 +1243,7 @@ SESSION   LAST ACTIVE       TURNS  READS  WRITES  SHELL  WEB/MCP  SUBAGENTS  FLA
 FLAGGED = sensitive actions whose values trace to external content. See: contrail risks --session <id>
 
 @@@@@ report
-686121 characters, sha256 cd1ff37f2d0c0e7510b674ab80ed735d257a1b5872fe31e355e6bc6f11bb7922
+686121 characters, sha256 ce2c64c2e78be9efb781afb64e449c170f0d565599fb90a9e4e31f28d3e0ad61
 
 @@@@@ export --otel
-268041 characters, sha256 d0aca63e059cbb0e949741602de3db339cff47441748172f7dfbf17b15536b1d
+268041 characters, sha256 93c1645c20f589c4d48f89c20790cab5a2daae11c2a6397cd5b2eedc640759de

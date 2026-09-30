@@ -4,6 +4,8 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-30
+
 ### Fixed
 
 - Quotes show the value on long lines. A value found far into a long line, such as WebSearch's one-line list of links or a one-line JSON tool result, is now quoted from just before it. Before, the quote started at the beginning of the line and clipping hid the value.
@@ -139,6 +141,8 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 - The `/contrail:why` skill, which passes its argument on standard input so it is never run as shell.
 
 [Unreleased]: https://github.com/levimackay/contrail/compare/main...HEAD
+[0.5.0]: https://github.com/levimackay/contrail/pull/4
+[0.4.0]: https://github.com/levimackay/contrail/pull/3
 [0.3.0]: https://github.com/levimackay/contrail/pull/2
 [0.2.0]: https://github.com/levimackay/contrail/pull/1
 [0.1.0]: https://github.com/levimackay/contrail/commit/15206e6

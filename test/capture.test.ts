@@ -71,6 +71,15 @@ test('health is silent when recording works', () => {
   assert.equal(r.stdout, '');
 });
 
+test('health makes the data directory private, however Claude Code created it', () => {
+  const data = temp();
+  chmodSync(data, 0o755);
+  const r = run(HEALTH, '{}', { CLAUDE_PLUGIN_DATA: data });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '');
+  assert.equal(statSync(data).mode & 0o777, 0o700);
+});
+
 test('health warns the user, as JSON, when recording cannot work', () => {
   const r = run(HEALTH, '{}', {});
   assert.equal(r.status, 0);

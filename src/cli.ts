@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { commitContains } from './engine/effects.ts';
 import { explain } from './engine/explain.ts';
-import { assess, rankFindings, sensitivity, type Finding } from './engine/risks.ts';
+import { assess, findingsFor, rankFindings, sensitivity, type Finding } from './engine/risks.ts';
 import { findValue } from './engine/find.ts';
 import { trailForest, type TreeNode, type TreeRoot } from './engine/tree.ts';
 import type { Explanation, Graph } from './engine/types.ts';
@@ -19,6 +19,7 @@ import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
 import { blameFile, explainCalls } from './query/blame.ts';
 import { commitFiles, findCommit, isCommit } from './query/commit.ts';
+import { reviewBranch } from './query/review.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget, unquote, type Target } from './query/target.ts';
 import { blameJson, noLineWriter, renderBlame, renderLineNote } from './render/blame.ts';
@@ -26,6 +27,7 @@ import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, render
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
 import { toOtlp } from './render/otel.ts';
+import { renderReview, renderReviewMarkdown, reviewJson } from './render/review.ts';
 import { renderWhy } from './render/why.ts';
 import { loadConfig, prune } from './store/retention.ts';
 import { migrate, SCHEMA_VERSION } from './store/schema.ts';
@@ -57,6 +59,7 @@ const OPTIONS = {
   all: { type: 'boolean' },
   tree: { type: 'boolean' },
   otel: { type: 'boolean' },
+  markdown: { type: 'boolean' },
   output: { type: 'string', short: 'o' },
   'from-hook': { type: 'boolean' },
   'from-skill': { type: 'boolean' },
@@ -93,17 +96,22 @@ Usage:
   contrail report [<session> | last] [-o file.html]
                                     a session as one self-contained HTML page
   contrail find "<value>" [--all]   every recorded input that held a value, and every call that used it
+  contrail review [<base>] [--markdown] [-o review.md]
+                                    this branch's commits and uncommitted changes, joined to the agent
+                                    calls behind them (base: the first of origin/HEAD, origin/main,
+                                    origin/master, main, master); --markdown for a pull request,
+                                    -o to save that markdown and print this view
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          machine-readable output (why, blame, trace, risks, sessions, find)
+  --json          machine-readable output (why, blame, trace, risks, sessions, find, review)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
-  --stdin         read the target from standard input (used by the /contrail:why, find and blame skills)
+  --stdin         read the why, find, blame or review argument from standard input (the skills use it)
   -h, --help      show this help
   -v, --version   show the version
 `;
@@ -142,6 +150,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     statusline: () => statusline(flags, io),
     tripwire: () => tripwire(flags, io),
     find: args => find(args, flags, io, style),
+    review: args => review(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io),
@@ -382,13 +391,6 @@ function kindForExplain(tool: string): string {
   return ({ Edit: 'EDIT', MultiEdit: 'EDIT', NotebookEdit: 'EDIT', Write: 'WRITE', Bash: 'SHELL', WebFetch: 'WEB', WebSearch: 'WEB', Agent: 'AGENT', Task: 'AGENT' } as Record<string, string>)[tool] ?? '';
 }
 
-function findingsFor(graph: Graph): Finding[] {
-  return graph.actions
-    .filter(a => sensitivity(a).length)
-    .map(a => assess(explain(a.id, graph), graph))
-    .filter((f): f is Finding => f !== null);
-}
-
 async function risks(flags: Flags, io: Io, s: Style): Promise<number> {
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const ids = flags.session
@@ -466,17 +468,7 @@ async function report(args: string[], flags: Flags, io: Io): Promise<number> {
       io.out(html);
       return 0;
     }
-    // The report holds what the agent read (redacted), so it gets the same 0600 as the database:
-    // written beside the target and renamed over it, so an existing file's mode or a symlink at
-    // that path is replaced, never followed.
-    const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
-    try {
-      writeFileSync(tmp, html, { mode: 0o600, flag: 'wx' });
-      renameSync(tmp, path);
-    } catch (e) {
-      rmSync(tmp, { force: true });
-      throw new ContrailError(`Cannot write ${path}: ${(e as Error).message}`);
-    }
+    writePrivate(path, html);
     io.out(`Wrote ${path}\n`);
     return 0;
   });
@@ -552,6 +544,40 @@ async function tripwire(flags: Flags, io: Io): Promise<number> {
     // A notice that cannot be computed is simply not shown.
   }
   return 0;
+}
+
+async function review(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
+  const base = (flags.stdin ? readStdin(io) : (args[0] ?? '')).trim() || undefined;
+  if (args.length > 1) throw new ContrailError('Usage: contrail review [<base>] [--markdown | --json] [-o review.md]');
+  if (flags.json && flags.markdown) throw new ContrailError('Pick one of --json and --markdown.');
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const r = reviewBranch(db, { cwd: io.cwd, base, repoKey, home: io.home, ...(hashToken ? { hashToken } : {}) });
+    const path = flags.output as string | undefined;
+    if (path) {
+      writePrivate(path, renderReviewMarkdown(r, VERSION));
+    }
+    if (flags.json) io.out(`${JSON.stringify(reviewJson(r), null, 2)}\n`);
+    else if (flags.markdown && !path) io.out(renderReviewMarkdown(r, VERSION));
+    else io.out(renderReview(r, s));
+    if (path) io.out(`\nWrote the markdown for a pull request description to ${path}\n`);
+    return 0;
+  });
+}
+
+/**
+ * A report holds what the agent read (redacted), so it gets the database's 0600: written beside
+ * the target and renamed over it, so an existing file's mode or a symlink at that path is
+ * replaced, never followed.
+ */
+function writePrivate(path: string, text: string): void {
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  try {
+    writeFileSync(tmp, text, { mode: 0o600, flag: 'wx' });
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw new ContrailError(`Cannot write ${path}: ${(e as Error).message}`);
+  }
 }
 
 const readStdin = (io: Io) => (io.stdin ? io.stdin() : readFileSync(0, 'utf8'));

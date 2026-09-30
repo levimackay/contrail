@@ -1527,535 +1527,10 @@ var ContrailError = class extends Error {
   name = "ContrailError";
 };
 
-// src/ingest/content.ts
-import { createHmac, randomBytes } from "node:crypto";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-var STRUCTURE = /* @__PURE__ */ new Set(["filePath", "agentId", "status", "isAsync", "success", "commandName", "code", "url", "interrupted", "isImage", "noOutputExpected", "type", "bashEditDiff", "resolvedModel", "description"]);
-var COMMIT_LINE2 = /^\[[^\]\n]{1,200}\] [^\n]{0,300}$/m;
-var TASK_HEAD = /^\s*<task-notification>[\s\S]{0,4000}?<\/summary>/;
-function contentHmac(dataDir, create) {
-  const path = join(dataDir, "content.key");
-  let key;
-  try {
-    key = readFileSync(path);
-  } catch {
-    if (!create) return void 0;
-    key = randomBytes(32);
-    writeFileSync(path, key, { mode: 384, flag: "wx" });
-    chmodSync(path, 384);
-    key = readFileSync(path);
-  }
-  return (span) => createHmac("sha256", key).update(span).digest("hex").slice(0, 12);
-}
-function hashContent(p, hookEvent, hmac) {
-  const hash = (s) => s ? hashText(s, hmac) : s;
-  const extra = p._contrail;
-  if (extra && typeof extra === "object" && typeof extra.text === "string") {
-    const e = extra;
-    e.text = hash(e.text);
-    e.sha256 = null;
-  }
-  switch (hookEvent) {
-    case "UserPromptSubmit": {
-      const prompt = typeof p.prompt === "string" ? p.prompt : "";
-      const head = TASK_HEAD.exec(prompt)?.[0];
-      if (head) p.prompt = `${head}
-${hash(prompt.slice(head.length))}`;
-      break;
-    }
-    case "PostToolUse":
-      p.tool_response = hashResponse(p.tool_response, hash);
-      break;
-    case "PostToolUseFailure":
-      if (typeof p.error === "string") p.error = hash(p.error);
-      break;
-    case "PostToolBatch":
-      if (Array.isArray(p.tool_calls)) {
-        p.tool_calls = p.tool_calls.map((c) => c && typeof c === "object" ? { ...c, tool_response: hashResponse(c.tool_response, hash) } : c);
-      }
-      break;
-    case "PostCompact":
-      if (typeof p.compact_summary === "string") p.compact_summary = hash(p.compact_summary);
-      break;
-    case "Stop":
-    case "SubagentStop":
-      if (typeof p.last_assistant_message === "string") p.last_assistant_message = "";
-      break;
-  }
-}
-function hashResponse(value, hash, key = "") {
-  if (typeof value === "string") {
-    if (STRUCTURE.has(key)) return value;
-    const commit = key === "stdout" || key === "" ? COMMIT_LINE2.exec(value)?.[0] : void 0;
-    return commit ? `${commit}
-${hash(value)}` : hash(value);
-  }
-  if (key === "bashEditDiff") return value;
-  if (key === "structuredPatch") return [];
-  if (Array.isArray(value)) return value.map((v) => hashResponse(v, hash));
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, hashResponse(v, hash, k)]));
-  }
-  return value;
-}
-
-// src/ingest/ingest.ts
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync as readFileSync2, statSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
-import { join as join2 } from "node:path";
-
-// src/ingest/redact.ts
-var tag = (id) => `[REDACTED:${id}]`;
-var PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w*\}?|<[^>]*>|x{3,}|\*{3,}|\.{3}|changeme|your[-_a-z]*)$/i;
-var CODE_REF = /^(?:[A-Za-z_][\w.]*(?:\(.*\)|\[.*\]|\[)|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|\d{1,6})$/;
-var namesSecret = (v) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.startsWith("[REDACTED");
-var SECRET_NAME = /secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie/i;
-var RULES = [
-  {
-    id: "private-key",
-    // Unterminated keys (truncated output) take only whole base64 lines, so the text after them survives.
-    re: /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,65536}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----|(?:\r?\n[A-Za-z0-9+/=]{1,128}(?=\r?\n|$)){0,1024})/g
-  },
-  { id: "aws-access-key", re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
-  { id: "github-token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g },
-  { id: "gitlab-token", re: /\bglpat-[A-Za-z0-9_-]{20,64}/g },
-  { id: "npm-token", re: /\bnpm_[A-Za-z0-9]{36}\b/g },
-  { id: "huggingface-token", re: /\bhf_[A-Za-z0-9]{30,64}\b/g },
-  { id: "anthropic-key", re: /\bsk-ant-[A-Za-z0-9_-]{20,256}/g },
-  {
-    id: "openai-key",
-    re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,256}/g,
-    // Real keys mix digits and capitals; a kebab-case CSS class does not.
-    replace: (m) => /\d/.test(m) && /[A-Z]/.test(m) ? tag("openai-key") : m
-  },
-  { id: "slack-token", re: /\bxox[abposr]-[A-Za-z0-9-]{10,256}/g },
-  {
-    id: "webhook-url",
-    re: /https:\/\/(?:hooks\.slack\.com\/services|(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks)\/[A-Za-z0-9/_-]{8,256}/g
-  },
-  { id: "stripe-key", re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,256}/g },
-  { id: "stripe-webhook-secret", re: /\bwhsec_[A-Za-z0-9]{24,256}/g },
-  { id: "sendgrid-key", re: /\bSG\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{16,128}/g },
-  { id: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{35}/g },
-  { id: "jwt", re: /\beyJ[A-Za-z0-9_-]{8,8192}\.eyJ[A-Za-z0-9_-]{8,8192}\.[A-Za-z0-9_-]{8,8192}/g },
-  { id: "azure-sas", re: /([?&]sig=)[A-Za-z0-9%+/=]{16,512}/g, replace: (_m, prefix) => `${prefix}${tag("azure-sas")}` },
-  {
-    id: "auth-header",
-    re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s{0,4}[:=]\s{0,4}["']?)((?:bearer|basic|token)\s{1,4})?([^\s"',;]{1,4096})/gi,
-    replace: (m, name, sep, scheme, value) => PLACEHOLDER.test(value) || value.startsWith("[REDACTED") ? m : `${name}${sep}${scheme ?? ""}${tag("auth-header")}`
-  },
-  {
-    id: "cookie",
-    re: /\b((?:set-)?cookie)(\s{0,4}:\s{0,4})[^\r\n]{1,4096}/gi,
-    replace: (_m, name, sep) => `${name}${sep}${tag("cookie")}`
-  },
-  {
-    id: "url-password",
-    // Greedy up to the last @ so a password containing @ is fully removed; container digests are not credentials.
-    re: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/]{0,256}:)([^\s/]{1,256})@(?!sha256:)/gi,
-    replace: (m, prefix, password) => PLACEHOLDER.test(password) ? m : `${prefix}${tag("url-password")}@`
-  },
-  {
-    id: "cli-password",
-    re: /((?:^|\s)--(?:password|passwd|pass)(?:=|\s{1,4}))(["']?)([^\s"']{1,256})/g,
-    replace: (m, flag, quote2, value) => PLACEHOLDER.test(value) ? m : `${flag}${quote2}${tag("cli-password")}`
-  },
-  {
-    id: "cli-password",
-    re: /((?:^|\s)(?:-u|--user)(?:=|\s{1,4})["']?[^\s:"']{1,128}:)([^\s"']{1,256})/g,
-    replace: (_m, prefix) => `${prefix}${tag("cli-password")}`
-  },
-  {
-    id: "cli-password",
-    re: /(\bmysql(?:dump|admin)?\b[^\n]{0,200}?\s-p)([^\s-][^\s]{2,255})/g,
-    replace: (_m, prefix) => `${prefix}${tag("cli-password")}`
-  },
-  {
-    id: "env-secret",
-    re: /\b([A-Za-z0-9_.-]{0,64}(?:secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_]{0,64})(["']?\s{0,4}[:=]\s{0,4})(?:(["'])([^"'\n]{6,512})\3|([^\s"',;]{6,512}))/gi,
-    replace: (m, key, sep, quote2, quoted, bare) => {
-      const value = quoted ?? bare ?? "";
-      if (namesSecret(value)) return m;
-      return quote2 ? `${key}${sep}${quote2}${tag("env-secret")}${quote2}` : `${key}${sep}${tag("env-secret")}`;
-    }
-  }
-];
-function redactString(s) {
-  let out = s;
-  for (const rule of RULES) {
-    const replace = rule.replace ?? (() => tag(rule.id));
-    out = out.replace(rule.re, replace);
-  }
-  return out;
-}
-function redactValue(value, key = "") {
-  if (typeof value === "string") {
-    if (key && SECRET_NAME.test(key) && value.length >= 6 && !namesSecret(value)) return tag("secret-field");
-    return redactString(value);
-  }
-  if (Array.isArray(value)) return value.map((v) => redactValue(v));
-  if (value && typeof value === "object") {
-    const o = value;
-    const pairName = typeof o.key === "string" ? o.key : typeof o.name === "string" ? o.name : "";
-    const secretPair = pairName !== "" && SECRET_NAME.test(pairName);
-    return Object.fromEntries(
-      Object.entries(o).map(([k, v]) => [k, redactValue(v, secretPair && k === "value" ? "secret" : k)])
-    );
-  }
-  return value;
-}
-
-// src/ingest/ingest.ts
-var STRING_CAP = 256 * 1024;
-var STALE_TMP_MS = 60 * 60 * 1e3;
-var WRITE_TOOLS = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
-var READ_TOOLS = /* @__PURE__ */ new Set(["Read", "NotebookRead"]);
-function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
-  const report2 = { ingested: 0, duplicates: 0, parseErrors: 0, staleTmpRemoved: 0 };
-  let names;
-  try {
-    names = readdirSync(spoolDir).sort();
-  } catch {
-    return report2;
-  }
-  for (const name of names) {
-    const file = join2(spoolDir, name);
-    if (name.startsWith(".tmp.")) {
-      if (removeIfStale(file, now)) report2.staleTmpRemoved++;
-      continue;
-    }
-    if (!name.endsWith(".json")) continue;
-    let raw;
-    let mtimeNs;
-    try {
-      mtimeNs = statSync(file, { bigint: true }).mtimeNs;
-      raw = readFileSync2(file, "utf8");
-    } catch {
-      continue;
-    }
-    const capturedUs = Number(mtimeNs / 1000n);
-    let row;
-    try {
-      row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
-    } catch (e) {
-      row = failedRow(capturedUs, `${name}: ${e.message}`);
-    }
-    if (row.parseError) report2.parseErrors++;
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      const inserted = db.run(
-        `INSERT OR IGNORE INTO events
-           (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        name,
-        row.capturedUs,
-        row.sessionId,
-        row.promptId,
-        row.agentId,
-        row.hookEvent,
-        row.toolName,
-        row.toolUseId,
-        row.cwd,
-        row.repoKey,
-        row.payload,
-        row.parseError
-      );
-      if (inserted) {
-        const id = db.get("SELECT id FROM events WHERE spool_name = ?", name).id;
-        for (const t of row.touches) db.run("INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)", id, t.path, t.kind);
-        report2.ingested++;
-      } else {
-        report2.duplicates++;
-      }
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
-    try {
-      unlinkSync(file);
-    } catch {
-    }
-  }
-  return report2;
-}
-function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    return { ...failedRow(capturedUs, `${name}: ${e.message}`), payload: JSON.stringify({ raw: redactString(capString(raw)) }) };
-  }
-  const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
-  const hookEvent = str(p, "hook_event_name") ?? "unknown";
-  if (hookEvent === "InstructionsLoaded") attachInstructionText(p, capturedUs);
-  if (hookEvent === "PostToolUse" && str(p, "tool_name") === "Skill") attachSkillText(p, capturedUs);
-  const cwd = str(p, "cwd") ?? null;
-  return {
-    capturedUs,
-    sessionId: str(p, "session_id") ?? null,
-    promptId: str(p, "prompt_id") ?? null,
-    agentId: str(p, "agent_id") ?? null,
-    hookEvent,
-    toolName: str(p, "tool_name") ?? null,
-    toolUseId: str(p, "tool_use_id") ?? null,
-    cwd,
-    repoKey: cwd ? repoKeyOf(cwd) : null,
-    payload: JSON.stringify(stored(p, hookEvent, hmac)),
-    parseError: null,
-    touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
-  };
-}
-function stored(p, hookEvent, hmac) {
-  const clean = redactValue(capValue(dropBulky(p)));
-  if (!hmac) return clean;
-  hashContent(clean, hookEvent, hmac);
-  return capValue(clean);
-}
-function failedRow(capturedUs, parseError) {
-  return {
-    capturedUs,
-    sessionId: null,
-    promptId: null,
-    agentId: null,
-    hookEvent: "unparsed",
-    toolName: null,
-    toolUseId: null,
-    cwd: null,
-    repoKey: null,
-    touches: [],
-    payload: "{}",
-    parseError
-  };
-}
-var INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$/i;
-function attachInstructionText(p, capturedUs) {
-  const path = str(p, "file_path");
-  if (!path || !INSTRUCTION_FILE.test(path)) return;
-  attachFileText(p, path, capturedUs);
-}
-var SKILL_NAME = /^[A-Za-z0-9][\w.-]{0,63}$/;
-function attachSkillText(p, capturedUs) {
-  const name = str(obj(p, "tool_input"), "skill");
-  const cwd = str(p, "cwd");
-  if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
-  const candidates = [join2(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join2(cwd, ".claude", "skills", name, "SKILL.md")] : []];
-  const found = [...new Set(candidates)].filter((path) => {
-    try {
-      return statSync(path).isFile();
-    } catch {
-      return false;
-    }
-  });
-  if (found.length !== 1) return;
-  attachFileText(p, found[0], capturedUs);
-  p._contrail.path = found[0];
-}
-function attachFileText(p, path, capturedUs) {
-  try {
-    const st = statSync(path, { bigint: true });
-    if (!st.isFile() || Number(st.size) > STRING_CAP) {
-      p._contrail = { skipped: st.isFile() ? "larger than the storage cap" : "not a regular file" };
-      return;
-    }
-    const changedSinceLoad = Number(st.mtimeNs / 1000n) > capturedUs;
-    const text = changedSinceLoad ? "" : readFileSync2(path, "utf8");
-    p._contrail = { text, sha256: text ? sha256(text) : null, changedSinceLoad };
-  } catch {
-    p._contrail ??= { missing: true };
-  }
-}
-function touchesOf(p, cwd) {
-  const tool = str(p, "tool_name") ?? "";
-  const input = obj(p, "tool_input");
-  const response = p.tool_response;
-  if (WRITE_TOOLS.has(tool)) {
-    const path = str(response, "filePath") ?? str(input, "file_path") ?? str(input, "notebook_path");
-    return path ? [{ path, kind: "write" }] : [];
-  }
-  if (READ_TOOLS.has(tool)) {
-    const path = str(input, "file_path") ?? str(input, "notebook_path");
-    return path ? [{ path, kind: "read" }] : [];
-  }
-  if (tool === "Bash") {
-    if (obj(response, "bashEditDiff")) return changedFiles(response, cwd).map((path) => ({ path, kind: "write" }));
-    return expectedShellEffects(str(input, "command") ?? "", cwd).filter((e) => e.kind === "file").map((e) => ({ path: e.target, kind: "expected" }));
-  }
-  return [];
-}
-function dropBulky(value, key = "") {
-  if (typeof value === "string") {
-    if (key === "originalFile" || key === "base64") {
-      return `[contrail: dropped ${key}, ${value.length} bytes, sha256 ${sha256(value).slice(0, 16)}]`;
-    }
-    return value;
-  }
-  if (Array.isArray(value)) return value.map((v) => dropBulky(v));
-  if (value && typeof value === "object") {
-    const isBase64Block = value.type === "base64";
-    return Object.fromEntries(
-      Object.entries(value).map(([k, v]) => [k, dropBulky(v, isBase64Block && k === "data" ? "base64" : k)])
-    );
-  }
-  return value;
-}
-function capValue(value) {
-  if (typeof value === "string") return capString(value);
-  if (Array.isArray(value)) return value.map(capValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, capValue(v)]));
-  }
-  return value;
-}
-function capString(s) {
-  return s.length <= STRING_CAP ? s : `${s.slice(0, STRING_CAP)}
-\u2026[contrail: truncated ${s.length - STRING_CAP} bytes]`;
-}
-function removeIfStale(file, now) {
-  try {
-    if (now - statSync(file).mtimeMs < STALE_TMP_MS) return false;
-    unlinkSync(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function sha256(s) {
-  return createHash("sha256").update(s).digest("hex");
-}
-
-// src/ingest/repo.ts
-import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-function makeRepoKeyOf() {
-  const cache = /* @__PURE__ */ new Map();
-  return (cwd) => {
-    let key = cache.get(cwd);
-    if (key === void 0) {
-      key = gitCommonDir(cwd) ?? cwd;
-      cache.set(cwd, key);
-    }
-    return key;
-  };
-}
-function gitCommonDir(cwd) {
-  try {
-    const out = execFileSync("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
-      encoding: "utf8",
-      timeout: 2e3,
-      stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
-    return out ? realpathSync(out) : null;
-  } catch {
-    return null;
-  }
-}
-
-// src/paths.ts
-import { existsSync, readdirSync as readdirSync2 } from "node:fs";
-import { join as join3 } from "node:path";
-function resolveDataDir(flag, env, home, pluginData) {
-  if (flag) return flag;
-  if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
-  if (pluginData) return pluginData;
-  if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
-  const base = join3(home, ".claude", "plugins", "data");
-  const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
-  if (hits.length === 1) return join3(base, hits[0]);
-  if (hits.length === 0) {
-    throw new ContrailError("No recorded data found. Is the Contrail plugin installed? Set CONTRAIL_HOME to point at a data directory.");
-  }
-  const list = hits.map((h) => `  ${join3(base, h)}`).join("\n");
-  throw new ContrailError(`Found ${hits.length} Contrail data directories:
-${list}
-Set CONTRAIL_HOME to pick one.`);
-}
-
-// src/query/commit.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
-import { resolve as resolve4 } from "node:path";
-function findCommit(db, sha, cwd, repoKey) {
-  const wanted = sha.toLowerCase();
-  if (!/^[0-9a-f]{7,40}$/.test(wanted)) throw new ContrailError(`"${sha}" is not a commit sha (7 to 40 hex characters).`);
-  const rows = db.all(
-    `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, payload FROM events
-      WHERE hook_event = 'PostToolUse' AND tool_name = 'Bash' AND instr(payload, ?) > 0
-      ORDER BY captured_us DESC`,
-    wanted.slice(0, 7)
-  );
-  for (const row of rows) {
-    const p = JSON.parse(row.payload);
-    const commit = parseCommitSha(str(p.tool_input, "command") ?? "", str(p.tool_response, "stdout") ?? toText(p.tool_response));
-    if (commit && (wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) {
-      return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: "stdout" };
-    }
-  }
-  const info = cwd ? commitInfo(cwd, wanted) : null;
-  if (info) {
-    const window = 3600 * 1e6;
-    const calls = db.all(
-      `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
-                json_extract(payload, '$.tool_input.command') AS command
-           FROM events
-          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')
-            AND captured_us BETWEEN ? AND ? ${repoKey ? "AND repo_key = ?" : ""}`,
-      info.sec * 1e6 - window,
-      info.sec * 1e6 + window,
-      ...repoKey ? [repoKey] : []
-    ).reduce((byId, e) => {
-      const c = byId.get(e.toolUseId) ?? { sessionId: e.sessionId, toolUseId: e.toolUseId, cwd: e.cwd, command: "", preUs: 0, postUs: 0 };
-      if (e.hook === "PreToolUse") c.preUs = e.us;
-      else c.postUs = e.us;
-      c.command ||= e.command ?? "";
-      return byId.set(e.toolUseId, c);
-    }, /* @__PURE__ */ new Map());
-    const { match, candidates } = commitByTime(info.sec, [...calls.values()].filter((c) => c.preUs && c.postUs));
-    if (match) return { sessionId: match.sessionId, toolUseId: match.toolUseId, cwd: match.cwd, commit: info.commit, via: "time", commitSec: info.sec };
-    if (candidates > 1) {
-      throw new ContrailError(`${candidates} recorded git commits were running when git dated commit ${sha}, and git printed no commit line, so Contrail cannot tell which one made it.`);
-    }
-  }
-  throw new ContrailError(`No recorded agent action made commit ${sha}. Contrail sees commits made by Claude Code through its shell tool.`);
-}
-function commitInfo(cwd, sha) {
-  try {
-    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const [full, sec, ...subject] = run(["show", "-s", "--format=%H%n%ct%n%s", `${sha}^{commit}`]).split("\n");
-    if (!full || !sec) return null;
-    const branch = run(["for-each-ref", "--contains", full, "--format=%(refname:short)", "refs/heads"]).split("\n")[0] || "(no branch)";
-    return { commit: { branch, sha: full.slice(0, 7), subject: subject.join(" ") }, sec: Number(sec) };
-  } catch {
-    return null;
-  }
-}
-function isCommit(cwd, text) {
-  if (!/^[0-9a-f]{7,40}$/i.test(text)) return false;
-  try {
-    execFileSync2("git", ["-C", cwd, "rev-parse", "--verify", "--quiet", `${text}^{commit}`], { timeout: 5e3, stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function commitFiles(cwd, sha) {
-  try {
-    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const top = run(["rev-parse", "--show-toplevel"]);
-    return run(["show", "--name-only", "--format=", "--no-renames", sha]).split("\n").filter(Boolean).map((f) => resolve4(top, f));
-  } catch {
-    return null;
-  }
-}
-
-// src/query/sessions.ts
-import { basename as basename3 } from "node:path";
-
 // src/graph/build.ts
 var DEPENDENCY_DIR = /(^|\/)(node_modules|vendor|\.venv|venv|site-packages)(\/|$)/;
-var WRITE_TOOLS2 = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
-var NO_OUTPUT_TOOLS = /* @__PURE__ */ new Set([...WRITE_TOOLS2, "TodoWrite", "ExitPlanMode"]);
+var WRITE_TOOLS = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+var NO_OUTPUT_TOOLS = /* @__PURE__ */ new Set([...WRITE_TOOLS, "TodoWrite", "ExitPlanMode"]);
 function buildGraph(rows, who, hashToken) {
   const cwd = rows.find((r) => r.cwd)?.cwd ?? "";
   const env = { cwd, home: who.home, user: who.user };
@@ -2301,14 +1776,14 @@ function newAction(id, scope, row, p, seq) {
   };
 }
 var TASK_NOTIFICATION = /^\s*<task-notification>/;
-var tag2 = (text, name) => new RegExp(`<${name}>([^<]{1,200})</${name}>`).exec(text)?.[1]?.trim() ?? null;
+var tag = (text, name) => new RegExp(`<${name}>([^<]{1,200})</${name}>`).exec(text)?.[1]?.trim() ?? null;
 function taskNotification(text) {
   if (!TASK_NOTIFICATION.test(text)) return null;
   const head = text.slice(0, 4e3);
   return {
-    summary: tag2(head, "summary") ?? "a background task finished",
-    toolUseId: tag2(head, "tool-use-id"),
-    taskId: tag2(head, "task-id")
+    summary: tag(head, "summary") ?? "a background task finished",
+    toolUseId: tag(head, "tool-use-id"),
+    taskId: tag(head, "task-id")
   };
 }
 function notificationInput(n, actionList, mainScope, env) {
@@ -2394,7 +1869,7 @@ function classify(a, env) {
 function effectsOf(a, env) {
   if (a.status !== "ok") return [];
   const fx = (i, e) => ({ id: `fx:${a.id}:${i}`, actionId: a.id, ...e });
-  if (WRITE_TOOLS2.has(a.tool)) {
+  if (WRITE_TOOLS.has(a.tool)) {
     const path = str(a.response, "filePath") ?? str(a.input, "file_path") ?? str(a.input, "notebook_path");
     if (!path) return [];
     const hunk = arr(field(a.response, "structuredPatch"))[0];
@@ -2431,7 +1906,528 @@ function effectsOf(a, env) {
   return [];
 }
 
+// src/ingest/content.ts
+import { createHmac, randomBytes } from "node:crypto";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+var STRUCTURE = /* @__PURE__ */ new Set(["filePath", "agentId", "status", "isAsync", "success", "commandName", "code", "url", "interrupted", "isImage", "noOutputExpected", "type", "bashEditDiff", "resolvedModel", "description"]);
+var COMMIT_LINE2 = /^\[[^\]\n]{1,200}\] [^\n]{0,300}$/m;
+var TASK_HEAD = /^\s*<task-notification>[\s\S]{0,4000}?<\/summary>/;
+function contentHmac(dataDir, create) {
+  const path = join(dataDir, "content.key");
+  let key;
+  try {
+    key = readFileSync(path);
+  } catch {
+    if (!create) return void 0;
+    key = randomBytes(32);
+    writeFileSync(path, key, { mode: 384, flag: "wx" });
+    chmodSync(path, 384);
+    key = readFileSync(path);
+  }
+  return (span) => createHmac("sha256", key).update(span).digest("hex").slice(0, 12);
+}
+function hashContent(p, hookEvent, hmac) {
+  const hash = (s) => s ? hashText(s, hmac) : s;
+  const extra = p._contrail;
+  if (extra && typeof extra === "object" && typeof extra.text === "string") {
+    const e = extra;
+    e.text = hash(e.text);
+    e.sha256 = null;
+  }
+  switch (hookEvent) {
+    case "UserPromptSubmit": {
+      const prompt = typeof p.prompt === "string" ? p.prompt : "";
+      const head = TASK_HEAD.exec(prompt)?.[0];
+      if (head) p.prompt = `${head}
+${hash(prompt.slice(head.length))}`;
+      break;
+    }
+    case "PostToolUse":
+      p.tool_response = hashResponse(p.tool_response, hash);
+      break;
+    case "PostToolUseFailure":
+      if (typeof p.error === "string") p.error = hash(p.error);
+      break;
+    case "PostToolBatch":
+      if (Array.isArray(p.tool_calls)) {
+        p.tool_calls = p.tool_calls.map((c) => c && typeof c === "object" ? { ...c, tool_response: hashResponse(c.tool_response, hash) } : c);
+      }
+      break;
+    case "PostCompact":
+      if (typeof p.compact_summary === "string") p.compact_summary = hash(p.compact_summary);
+      break;
+    case "Stop":
+    case "SubagentStop":
+      if (typeof p.last_assistant_message === "string") p.last_assistant_message = "";
+      break;
+  }
+}
+function hashResponse(value, hash, key = "") {
+  if (typeof value === "string") {
+    if (STRUCTURE.has(key)) return value;
+    const commit = key === "stdout" || key === "" ? COMMIT_LINE2.exec(value)?.[0] : void 0;
+    return commit ? `${commit}
+${hash(value)}` : hash(value);
+  }
+  if (key === "bashEditDiff") return value;
+  if (key === "structuredPatch") return [];
+  if (Array.isArray(value)) return value.map((v) => hashResponse(v, hash));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, hashResponse(v, hash, k)]));
+  }
+  return value;
+}
+
+// src/ingest/redact.ts
+var tag2 = (id) => `[REDACTED:${id}]`;
+var PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w*\}?|<[^>]*>|x{3,}|\*{3,}|\.{3}|changeme|your[-_a-z]*)$/i;
+var CODE_REF = /^(?:[A-Za-z_][\w.]*(?:\(.*\)|\[.*\]|\[)|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|\d{1,6})$/;
+var namesSecret = (v) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.startsWith("[REDACTED");
+var SECRET_NAME = /secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie/i;
+var RULES = [
+  {
+    id: "private-key",
+    // Unterminated keys (truncated output) take only whole base64 lines, so the text after them survives.
+    re: /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,65536}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----|(?:\r?\n[A-Za-z0-9+/=]{1,128}(?=\r?\n|$)){0,1024})/g
+  },
+  { id: "aws-access-key", re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
+  { id: "github-token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g },
+  { id: "gitlab-token", re: /\bglpat-[A-Za-z0-9_-]{20,64}/g },
+  { id: "npm-token", re: /\bnpm_[A-Za-z0-9]{36}\b/g },
+  { id: "huggingface-token", re: /\bhf_[A-Za-z0-9]{30,64}\b/g },
+  { id: "anthropic-key", re: /\bsk-ant-[A-Za-z0-9_-]{20,256}/g },
+  {
+    id: "openai-key",
+    re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,256}/g,
+    // Real keys mix digits and capitals; a kebab-case CSS class does not.
+    replace: (m) => /\d/.test(m) && /[A-Z]/.test(m) ? tag2("openai-key") : m
+  },
+  { id: "slack-token", re: /\bxox[abposr]-[A-Za-z0-9-]{10,256}/g },
+  {
+    id: "webhook-url",
+    re: /https:\/\/(?:hooks\.slack\.com\/services|(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks)\/[A-Za-z0-9/_-]{8,256}/g
+  },
+  { id: "stripe-key", re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,256}/g },
+  { id: "stripe-webhook-secret", re: /\bwhsec_[A-Za-z0-9]{24,256}/g },
+  { id: "sendgrid-key", re: /\bSG\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{16,128}/g },
+  { id: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{35}/g },
+  { id: "jwt", re: /\beyJ[A-Za-z0-9_-]{8,8192}\.eyJ[A-Za-z0-9_-]{8,8192}\.[A-Za-z0-9_-]{8,8192}/g },
+  { id: "azure-sas", re: /([?&]sig=)[A-Za-z0-9%+/=]{16,512}/g, replace: (_m, prefix) => `${prefix}${tag2("azure-sas")}` },
+  {
+    id: "auth-header",
+    re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s{0,4}[:=]\s{0,4}["']?)((?:bearer|basic|token)\s{1,4})?([^\s"',;]{1,4096})/gi,
+    replace: (m, name, sep, scheme, value) => PLACEHOLDER.test(value) || value.startsWith("[REDACTED") ? m : `${name}${sep}${scheme ?? ""}${tag2("auth-header")}`
+  },
+  {
+    id: "cookie",
+    re: /\b((?:set-)?cookie)(\s{0,4}:\s{0,4})[^\r\n]{1,4096}/gi,
+    replace: (_m, name, sep) => `${name}${sep}${tag2("cookie")}`
+  },
+  {
+    id: "url-password",
+    // Greedy up to the last @ so a password containing @ is fully removed; container digests are not credentials.
+    re: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/]{0,256}:)([^\s/]{1,256})@(?!sha256:)/gi,
+    replace: (m, prefix, password) => PLACEHOLDER.test(password) ? m : `${prefix}${tag2("url-password")}@`
+  },
+  {
+    id: "cli-password",
+    re: /((?:^|\s)--(?:password|passwd|pass)(?:=|\s{1,4}))(["']?)([^\s"']{1,256})/g,
+    replace: (m, flag, quote2, value) => PLACEHOLDER.test(value) ? m : `${flag}${quote2}${tag2("cli-password")}`
+  },
+  {
+    id: "cli-password",
+    re: /((?:^|\s)(?:-u|--user)(?:=|\s{1,4})["']?[^\s:"']{1,128}:)([^\s"']{1,256})/g,
+    replace: (_m, prefix) => `${prefix}${tag2("cli-password")}`
+  },
+  {
+    id: "cli-password",
+    re: /(\bmysql(?:dump|admin)?\b[^\n]{0,200}?\s-p)([^\s-][^\s]{2,255})/g,
+    replace: (_m, prefix) => `${prefix}${tag2("cli-password")}`
+  },
+  {
+    id: "env-secret",
+    re: /\b([A-Za-z0-9_.-]{0,64}(?:secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_]{0,64})(["']?\s{0,4}[:=]\s{0,4})(?:(["'])([^"'\n]{6,512})\3|([^\s"',;]{6,512}))/gi,
+    replace: (m, key, sep, quote2, quoted, bare) => {
+      const value = quoted ?? bare ?? "";
+      if (namesSecret(value)) return m;
+      return quote2 ? `${key}${sep}${quote2}${tag2("env-secret")}${quote2}` : `${key}${sep}${tag2("env-secret")}`;
+    }
+  }
+];
+function redactString(s) {
+  let out = s;
+  for (const rule of RULES) {
+    const replace = rule.replace ?? (() => tag2(rule.id));
+    out = out.replace(rule.re, replace);
+  }
+  return out;
+}
+function redactValue(value, key = "") {
+  if (typeof value === "string") {
+    if (key && SECRET_NAME.test(key) && value.length >= 6 && !namesSecret(value)) return tag2("secret-field");
+    return redactString(value);
+  }
+  if (Array.isArray(value)) return value.map((v) => redactValue(v));
+  if (value && typeof value === "object") {
+    const o = value;
+    const pairName = typeof o.key === "string" ? o.key : typeof o.name === "string" ? o.name : "";
+    const secretPair = pairName !== "" && SECRET_NAME.test(pairName);
+    return Object.fromEntries(
+      Object.entries(o).map(([k, v]) => [k, redactValue(v, secretPair && k === "value" ? "secret" : k)])
+    );
+  }
+  return value;
+}
+
+// src/ingest/ingest.ts
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync as readFileSync2, statSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
+import { join as join2 } from "node:path";
+var STRING_CAP = 256 * 1024;
+var STALE_TMP_MS = 60 * 60 * 1e3;
+var WRITE_TOOLS2 = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+var READ_TOOLS = /* @__PURE__ */ new Set(["Read", "NotebookRead"]);
+function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
+  const report2 = { ingested: 0, duplicates: 0, parseErrors: 0, staleTmpRemoved: 0 };
+  let names;
+  try {
+    names = readdirSync(spoolDir).sort();
+  } catch {
+    return report2;
+  }
+  for (const name of names) {
+    const file = join2(spoolDir, name);
+    if (name.startsWith(".tmp.")) {
+      if (removeIfStale(file, now)) report2.staleTmpRemoved++;
+      continue;
+    }
+    if (!name.endsWith(".json")) continue;
+    let raw;
+    let mtimeNs;
+    try {
+      mtimeNs = statSync(file, { bigint: true }).mtimeNs;
+      raw = readFileSync2(file, "utf8");
+    } catch {
+      continue;
+    }
+    const capturedUs = Number(mtimeNs / 1000n);
+    let row;
+    try {
+      row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
+    } catch (e) {
+      row = failedRow(capturedUs, `${name}: ${e.message}`);
+    }
+    if (row.parseError) report2.parseErrors++;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = db.run(
+        `INSERT OR IGNORE INTO events
+           (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        name,
+        row.capturedUs,
+        row.sessionId,
+        row.promptId,
+        row.agentId,
+        row.hookEvent,
+        row.toolName,
+        row.toolUseId,
+        row.cwd,
+        row.repoKey,
+        row.payload,
+        row.parseError
+      );
+      if (inserted) {
+        const id = db.get("SELECT id FROM events WHERE spool_name = ?", name).id;
+        for (const t of row.touches) db.run("INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)", id, t.path, t.kind);
+        report2.ingested++;
+      } else {
+        report2.duplicates++;
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+    try {
+      unlinkSync(file);
+    } catch {
+    }
+  }
+  return report2;
+}
+function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return { ...failedRow(capturedUs, `${name}: ${e.message}`), payload: JSON.stringify({ raw: redactString(capString(raw)) }) };
+  }
+  const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
+  const hookEvent = str(p, "hook_event_name") ?? "unknown";
+  if (hookEvent === "InstructionsLoaded") attachInstructionText(p, capturedUs);
+  if (hookEvent === "PostToolUse" && str(p, "tool_name") === "Skill") attachSkillText(p, capturedUs);
+  const cwd = str(p, "cwd") ?? null;
+  return {
+    capturedUs,
+    sessionId: str(p, "session_id") ?? null,
+    promptId: str(p, "prompt_id") ?? null,
+    agentId: str(p, "agent_id") ?? null,
+    hookEvent,
+    toolName: str(p, "tool_name") ?? null,
+    toolUseId: str(p, "tool_use_id") ?? null,
+    cwd,
+    repoKey: cwd ? repoKeyOf(cwd) : null,
+    payload: JSON.stringify(stored(p, hookEvent, hmac)),
+    parseError: null,
+    touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
+  };
+}
+function stored(p, hookEvent, hmac) {
+  const clean = redactValue(capValue(dropBulky(p)));
+  if (!hmac) return clean;
+  hashContent(clean, hookEvent, hmac);
+  return capValue(clean);
+}
+function failedRow(capturedUs, parseError) {
+  return {
+    capturedUs,
+    sessionId: null,
+    promptId: null,
+    agentId: null,
+    hookEvent: "unparsed",
+    toolName: null,
+    toolUseId: null,
+    cwd: null,
+    repoKey: null,
+    touches: [],
+    payload: "{}",
+    parseError
+  };
+}
+var INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$/i;
+function attachInstructionText(p, capturedUs) {
+  const path = str(p, "file_path");
+  if (!path || !INSTRUCTION_FILE.test(path)) return;
+  attachFileText(p, path, capturedUs);
+}
+var SKILL_NAME = /^[A-Za-z0-9][\w.-]{0,63}$/;
+function attachSkillText(p, capturedUs) {
+  const name = str(obj(p, "tool_input"), "skill");
+  const cwd = str(p, "cwd");
+  if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
+  const candidates = [join2(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join2(cwd, ".claude", "skills", name, "SKILL.md")] : []];
+  const found = [...new Set(candidates)].filter((path) => {
+    try {
+      return statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  });
+  if (found.length !== 1) return;
+  attachFileText(p, found[0], capturedUs);
+  p._contrail.path = found[0];
+}
+function attachFileText(p, path, capturedUs) {
+  try {
+    const st = statSync(path, { bigint: true });
+    if (!st.isFile() || Number(st.size) > STRING_CAP) {
+      p._contrail = { skipped: st.isFile() ? "larger than the storage cap" : "not a regular file" };
+      return;
+    }
+    const changedSinceLoad = Number(st.mtimeNs / 1000n) > capturedUs;
+    const text = changedSinceLoad ? "" : readFileSync2(path, "utf8");
+    p._contrail = { text, sha256: text ? sha256(text) : null, changedSinceLoad };
+  } catch {
+    p._contrail ??= { missing: true };
+  }
+}
+function touchesOf(p, cwd) {
+  const tool = str(p, "tool_name") ?? "";
+  const input = obj(p, "tool_input");
+  const response = p.tool_response;
+  if (WRITE_TOOLS2.has(tool)) {
+    const path = str(response, "filePath") ?? str(input, "file_path") ?? str(input, "notebook_path");
+    return path ? [{ path, kind: "write" }] : [];
+  }
+  if (READ_TOOLS.has(tool)) {
+    const path = str(input, "file_path") ?? str(input, "notebook_path");
+    return path ? [{ path, kind: "read" }] : [];
+  }
+  if (tool === "Bash") {
+    if (obj(response, "bashEditDiff")) return changedFiles(response, cwd).map((path) => ({ path, kind: "write" }));
+    return expectedShellEffects(str(input, "command") ?? "", cwd).filter((e) => e.kind === "file").map((e) => ({ path: e.target, kind: "expected" }));
+  }
+  return [];
+}
+function dropBulky(value, key = "") {
+  if (typeof value === "string") {
+    if (key === "originalFile" || key === "base64") {
+      return `[contrail: dropped ${key}, ${value.length} bytes, sha256 ${sha256(value).slice(0, 16)}]`;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((v) => dropBulky(v));
+  if (value && typeof value === "object") {
+    const isBase64Block = value.type === "base64";
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, dropBulky(v, isBase64Block && k === "data" ? "base64" : k)])
+    );
+  }
+  return value;
+}
+function capValue(value) {
+  if (typeof value === "string") return capString(value);
+  if (Array.isArray(value)) return value.map(capValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, capValue(v)]));
+  }
+  return value;
+}
+function capString(s) {
+  return s.length <= STRING_CAP ? s : `${s.slice(0, STRING_CAP)}
+\u2026[contrail: truncated ${s.length - STRING_CAP} bytes]`;
+}
+function removeIfStale(file, now) {
+  try {
+    if (now - statSync(file).mtimeMs < STALE_TMP_MS) return false;
+    unlinkSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function sha256(s) {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+// src/ingest/repo.ts
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+function makeRepoKeyOf() {
+  const cache = /* @__PURE__ */ new Map();
+  return (cwd) => {
+    let key = cache.get(cwd);
+    if (key === void 0) {
+      key = gitCommonDir(cwd) ?? cwd;
+      cache.set(cwd, key);
+    }
+    return key;
+  };
+}
+function gitCommonDir(cwd) {
+  try {
+    const out = execFileSync("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+      encoding: "utf8",
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    return out ? realpathSync(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+// src/paths.ts
+import { existsSync, readdirSync as readdirSync2 } from "node:fs";
+import { join as join3 } from "node:path";
+function resolveDataDir(flag, env, home, pluginData) {
+  if (flag) return flag;
+  if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
+  if (pluginData) return pluginData;
+  if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
+  const base = join3(home, ".claude", "plugins", "data");
+  const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
+  if (hits.length === 1) return join3(base, hits[0]);
+  if (hits.length === 0) {
+    throw new ContrailError("No recorded data found. Is the Contrail plugin installed? Set CONTRAIL_HOME to point at a data directory.");
+  }
+  const list = hits.map((h) => `  ${join3(base, h)}`).join("\n");
+  throw new ContrailError(`Found ${hits.length} Contrail data directories:
+${list}
+Set CONTRAIL_HOME to pick one.`);
+}
+
+// src/query/commit.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { resolve as resolve4 } from "node:path";
+function findCommit(db, sha, cwd, repoKey) {
+  const wanted = sha.toLowerCase();
+  if (!/^[0-9a-f]{7,40}$/.test(wanted)) throw new ContrailError(`"${sha}" is not a commit sha (7 to 40 hex characters).`);
+  const rows = db.all(
+    `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, payload FROM events
+      WHERE hook_event = 'PostToolUse' AND tool_name = 'Bash' AND instr(payload, ?) > 0
+      ORDER BY captured_us DESC`,
+    wanted.slice(0, 7)
+  );
+  for (const row of rows) {
+    const p = JSON.parse(row.payload);
+    const commit = parseCommitSha(str(p.tool_input, "command") ?? "", str(p.tool_response, "stdout") ?? toText(p.tool_response));
+    if (commit && (wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) {
+      return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: "stdout" };
+    }
+  }
+  const info = cwd ? commitInfo(cwd, wanted) : null;
+  if (info) {
+    const window = 3600 * 1e6;
+    const calls = db.all(
+      `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
+                json_extract(payload, '$.tool_input.command') AS command
+           FROM events
+          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')
+            AND captured_us BETWEEN ? AND ? ${repoKey ? "AND repo_key = ?" : ""}`,
+      info.sec * 1e6 - window,
+      info.sec * 1e6 + window,
+      ...repoKey ? [repoKey] : []
+    ).reduce((byId, e) => {
+      const c = byId.get(e.toolUseId) ?? { sessionId: e.sessionId, toolUseId: e.toolUseId, cwd: e.cwd, command: "", preUs: 0, postUs: 0 };
+      if (e.hook === "PreToolUse") c.preUs = e.us;
+      else c.postUs = e.us;
+      c.command ||= e.command ?? "";
+      return byId.set(e.toolUseId, c);
+    }, /* @__PURE__ */ new Map());
+    const { match, candidates } = commitByTime(info.sec, [...calls.values()].filter((c) => c.preUs && c.postUs));
+    if (match) return { sessionId: match.sessionId, toolUseId: match.toolUseId, cwd: match.cwd, commit: info.commit, via: "time", commitSec: info.sec };
+    if (candidates > 1) {
+      throw new ContrailError(`${candidates} recorded git commits were running when git dated commit ${sha}, and git printed no commit line, so Contrail cannot tell which one made it.`);
+    }
+  }
+  throw new ContrailError(`No recorded agent action made commit ${sha}. Contrail sees commits made by Claude Code through its shell tool.`);
+}
+function commitInfo(cwd, sha) {
+  try {
+    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const [full, sec, ...subject] = run(["show", "-s", "--format=%H%n%ct%n%s", `${sha}^{commit}`]).split("\n");
+    if (!full || !sec) return null;
+    const branch = run(["for-each-ref", "--contains", full, "--format=%(refname:short)", "refs/heads"]).split("\n")[0] || "(no branch)";
+    return { commit: { branch, sha: full.slice(0, 7), subject: subject.join(" ") }, sec: Number(sec) };
+  } catch {
+    return null;
+  }
+}
+function isCommit(cwd, text) {
+  if (!/^[0-9a-f]{7,40}$/i.test(text)) return false;
+  try {
+    execFileSync2("git", ["-C", cwd, "rev-parse", "--verify", "--quiet", `${text}^{commit}`], { timeout: 5e3, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function commitFiles(cwd, sha) {
+  try {
+    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const top = run(["rev-parse", "--show-toplevel"]);
+    return run(["show", "--name-only", "--format=", "--no-renames", sha]).split("\n").filter(Boolean).map((f) => resolve4(top, f));
+  } catch {
+    return null;
+  }
+}
+
 // src/query/sessions.ts
+import { basename as basename3 } from "node:path";
 function recentSessions(db, repoKey, limit, all = false) {
   const query = (where, ...params) => db.all(
     `SELECT session_id AS id, MAX(captured_us) AS lastUs, MAX(cwd) AS cwd FROM events
@@ -3074,6 +3070,20 @@ function localTime(us) {
   const two = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
+var TRIPWIRE_ASKED = {
+  NAMED: "named in your words",
+  NAMED_NEGATED: "named, but your latest mention is negated",
+  PARTLY_NAMED: "partly named in your words",
+  NOT_NAMED: "not named in your words",
+  NOTHING_TO_MATCH: "nothing in it to match against your words"
+};
+function renderTripwire(f, e) {
+  const external = f.sources.find((x) => x.input.trust === "external");
+  const values = [...new Set(f.sources.filter((x) => x.input.id === external.input.id).map((x) => x.link.token).filter((v) => !!v))];
+  const where = external.link.quote?.line != null ? `${clip(external.input.label, 80)}:${external.link.quote.line}` : clip(external.input.label, 80);
+  const shown = values.length ? clip(values.map((v) => clip(v, 60)).join(", "), 120) : "a value in it";
+  return `Contrail \u25B2 ${f.kinds.join(" \xB7 ")} \xB7 ${TRIPWIRE_ASKED[f.requested]}: ${shown} first appeared in ${where} (external, ${external.link.grade}). Trail: /contrail:why ${callId(e.action.id)}`;
+}
 
 // src/render/ansi.ts
 var MAX_COLS = 120;
@@ -3440,7 +3450,7 @@ function provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan)
 // src/store/retention.ts
 import { readFileSync as readFileSync3 } from "node:fs";
 import { join as join4 } from "node:path";
-var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true };
+var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true, tripwire: true };
 function loadConfig(dataDir) {
   let raw;
   try {
@@ -3455,7 +3465,8 @@ function loadConfig(dataDir) {
       config: {
         retentionDays: positive(c.retention_days, DEFAULTS.retentionDays),
         maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb),
-        storeContent: c.store_content !== false
+        storeContent: c.store_content !== false,
+        tripwire: c.tripwire !== false
       },
       problem: null
     };
@@ -3688,6 +3699,7 @@ ${USAGE}`);
     export: (args) => exportSession(args, flags, io),
     report: (args) => report(args, flags, io),
     statusline: () => statusline(flags, io),
+    tripwire: () => tripwire(flags, io),
     find: (args) => find(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
@@ -3971,6 +3983,45 @@ async function find(args, flags, io, s) {
     }
     return 0;
   });
+}
+async function tripwire(flags, io) {
+  try {
+    const raw = readStdin(io);
+    const payload = JSON.parse(raw);
+    const sessionId = typeof payload.session_id === "string" ? payload.session_id : "";
+    const toolUseId = typeof payload.tool_use_id === "string" ? payload.tool_use_id : "";
+    if (payload.hook_event_name !== "PreToolUse" || !sessionId || !toolUseId) return 0;
+    const notice = await withStore(flags, io, ({ db, dataDir, hashToken }) => {
+      if (!loadConfig(dataDir).config.tripwire) return null;
+      const rows = loadRows(db, sessionId);
+      if (!rows.some((r) => r.hook_event === "PreToolUse" && r.tool_use_id === toolUseId)) {
+        rows.push({
+          id: 0,
+          spool_name: "tripwire",
+          captured_us: Date.now() * 1e3,
+          session_id: sessionId,
+          prompt_id: typeof payload.prompt_id === "string" ? payload.prompt_id : null,
+          agent_id: typeof payload.agent_id === "string" ? payload.agent_id : null,
+          hook_event: "PreToolUse",
+          tool_name: typeof payload.tool_name === "string" ? payload.tool_name : null,
+          tool_use_id: toolUseId,
+          cwd: typeof payload.cwd === "string" ? payload.cwd : null,
+          payload: raw,
+          parse_error: null
+        });
+      }
+      const graph = buildGraph(rows, { home: io.home, user: basename4(io.home) }, hashToken);
+      const action = graph.actions.find((a) => a.id === toolUseId);
+      if (!action || !sensitivity(action).length) return null;
+      const explanation = explain(action.id, graph);
+      const finding = assess(explanation, graph);
+      return finding?.externalUpstream ? renderTripwire(finding, explanation) : null;
+    });
+    if (notice) io.out(`${JSON.stringify({ systemMessage: redactString(notice) })}
+`);
+  } catch {
+  }
+  return 0;
 }
 var readStdin = (io) => io.stdin ? io.stdin() : readFileSync4(0, "utf8");
 async function statusline(flags, io) {

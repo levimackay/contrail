@@ -338,3 +338,27 @@ function localTime(us: number): string {
   const two = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
+
+const TRIPWIRE_ASKED: Record<Finding['requested'], string> = {
+  NAMED: 'named in your words',
+  NAMED_NEGATED: 'named, but your latest mention is negated',
+  PARTLY_NAMED: 'partly named in your words',
+  NOT_NAMED: 'not named in your words',
+  NOTHING_TO_MATCH: 'nothing in it to match against your words',
+};
+
+/**
+ * The tripwire notice, shown to the person before a sensitive call runs: what is sensitive,
+ * whether your words named it, and the nearest external source its values first appeared in.
+ * Plain text on one line; it describes where values came from and never judges the call.
+ */
+export function renderTripwire(f: Finding, e: Explanation): string {
+  const external = f.sources.find(x => x.input.trust === 'external')!;
+  const values = [...new Set(f.sources.filter(x => x.input.id === external.input.id).map(x => x.link.token).filter((v): v is string => !!v))];
+  const where = external.link.quote?.line != null ? `${clip(external.input.label, 80)}:${external.link.quote.line}` : clip(external.input.label, 80);
+  const shown = values.length ? clip(values.map(v => clip(v, 60)).join(', '), 120) : 'a value in it';
+  return (
+    `Contrail ▲ ${f.kinds.join(' · ')} · ${TRIPWIRE_ASKED[f.requested]}: ${shown} first appeared in ${where} ` +
+    `(external, ${external.link.grade}). Trail: /contrail:why ${callId(e.action.id)}`
+  );
+}

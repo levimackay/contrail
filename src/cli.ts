@@ -11,14 +11,16 @@ import { findValue } from './engine/find.ts';
 import { trailForest, type TreeNode, type TreeRoot } from './engine/tree.ts';
 import type { Explanation, Graph } from './engine/types.ts';
 import { ContrailError } from './errors.ts';
+import { buildGraph } from './graph/build.ts';
 import { contentHmac } from './ingest/content.ts';
+import { redactString } from './ingest/redact.ts';
 import { ingest } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
 import { commitFiles, findCommit, isCommit } from './query/commit.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget } from './query/target.ts';
-import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
+import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, renderTripwire, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
 import { toOtlp } from './render/otel.ts';
@@ -129,6 +131,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     export: args => exportSession(args, flags, io),
     report: args => report(args, flags, io),
     statusline: () => statusline(flags, io),
+    tripwire: () => tripwire(flags, io),
     find: args => find(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
@@ -448,6 +451,46 @@ async function find(args: string[], flags: Flags, io: Io, s: Style): Promise<num
     }
     return 0;
   });
+}
+
+/**
+ * The PreToolUse tripwire. Before a sensitive call runs (and before Claude Code asks for
+ * permission), tell the person when values in it first appeared in external content. The
+ * notice is a systemMessage: Claude Code shows it to the person and does not give it to the
+ * model. It never blocks, never makes a permission decision, and on any failure prints nothing.
+ */
+async function tripwire(flags: Flags, io: Io): Promise<number> {
+  try {
+    const raw = readStdin(io);
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    const sessionId = typeof payload.session_id === 'string' ? payload.session_id : '';
+    const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : '';
+    if (payload.hook_event_name !== 'PreToolUse' || !sessionId || !toolUseId) return 0;
+    const notice = await withStore(flags, io, ({ db, dataDir, hashToken }) => {
+      if (!loadConfig(dataDir).config.tripwire) return null;
+      const rows = loadRows(db, sessionId);
+      // The capture hook stores this same event in parallel; it may not be ingested yet.
+      if (!rows.some(r => r.hook_event === 'PreToolUse' && r.tool_use_id === toolUseId)) {
+        rows.push({
+          id: 0, spool_name: 'tripwire', captured_us: Date.now() * 1000, session_id: sessionId,
+          prompt_id: typeof payload.prompt_id === 'string' ? payload.prompt_id : null,
+          agent_id: typeof payload.agent_id === 'string' ? payload.agent_id : null,
+          hook_event: 'PreToolUse', tool_name: typeof payload.tool_name === 'string' ? payload.tool_name : null,
+          tool_use_id: toolUseId, cwd: typeof payload.cwd === 'string' ? payload.cwd : null, payload: raw, parse_error: null,
+        });
+      }
+      const graph = buildGraph(rows, { home: io.home, user: basename(io.home) }, hashToken);
+      const action = graph.actions.find(a => a.id === toolUseId);
+      if (!action || !sensitivity(action).length) return null;
+      const explanation = explain(action.id, graph);
+      const finding = assess(explanation, graph);
+      return finding?.externalUpstream ? renderTripwire(finding, explanation) : null;
+    });
+    if (notice) io.out(`${JSON.stringify({ systemMessage: redactString(notice) })}\n`);
+  } catch {
+    // A notice that cannot be computed is simply not shown.
+  }
+  return 0;
 }
 
 const readStdin = (io: Io) => (io.stdin ? io.stdin() : readFileSync(0, 'utf8'));

@@ -3,11 +3,11 @@ name: find
 description: Show every recorded input that held a value (a package, URL, path or name) and every Claude Code action that used it, across recent sessions in this repository. Runs only when you invoke it.
 disable-model-invocation: true
 argument-hint: <value>
-allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/bin/contrail *)
+allowed-tools: Bash(sh "${CLAUDE_PLUGIN_ROOT}/bin/contrail" *)
 ---
 
 ```!
-sh ${CLAUDE_PLUGIN_ROOT}/bin/contrail find --plugin-data "${CLAUDE_PLUGIN_DATA}" --stdin 2>&1 <<'CONTRAIL_TARGET'
+sh "${CLAUDE_PLUGIN_ROOT}/bin/contrail" find --plugin-data "${CLAUDE_PLUGIN_DATA}" --stdin 2>&1 <<'CONTRAIL_TARGET'
 $ARGUMENTS
 CONTRAIL_TARGET
 ```

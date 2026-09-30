@@ -2,7 +2,7 @@ import { str } from '../util.ts';
 import { bestPerGroup, explain } from './explain.ts';
 import type { Action, Explanation, Graph, Input, Link, TokenTrace, Verdict } from './types.ts';
 
-export type Sensitivity = 'credentials' | 'runs remote code' | 'network' | 'install' | 'destructive' | "touches Contrail's records";
+export type Sensitivity = 'credentials' | 'runs remote code' | 'network' | 'install' | 'destructive' | 'persistence' | "touches Contrail's records";
 
 const CREDENTIAL_PATH =
   /(\.aws\/(credentials|config)|\.ssh\/|\bid_(rsa|ed25519|ecdsa)\b|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config|\.gnupg\/|(^|[\s/"'])\.env(\.[\w-]+)?(?=$|[\s"'])|keychain|credentials\.json|secrets?\.(json|ya?ml|env|toml)|\.git-credentials|\.config\/gh\/hosts\.ya?ml|\.pgpass|\.my\.cnf|\.config\/gcloud\/|\.azure\/|\.vault-token|\.terraform\.d\/credentials|\.boto\b)/i;
@@ -13,6 +13,18 @@ const NETWORK = /(^|[\s;&|(])(curl|wget|nc|ncat|scp|rsync|ssh|sftp|ftp)\s|\bgit\
 const INSTALL = /(^|[\s;&|(])((npm|pnpm|bun)\s+(install|i|add)\s+[^-\s]|yarn\s+add\s|pip3?\s+install\s|uv\s+(add|pip\s+install)\s|cargo\s+add\s|gem\s+install\s|brew\s+install\s|go\s+get\s|npx\s+[^-\s])/;
 const DESTRUCTIVE =
   /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])|\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|push\s+(.*\s)?(-f|--force)\b)|\bchmod\s+(-R\s+)?777\b|\b(drop|truncate)\s+(table|database)\b|\bmkfs\b|\bdd\s+if=/i;
+
+/**
+ * Files that make something run again later: shell startup files, git hooks, scheduled and
+ * login jobs, SSH keys that grant access, and Claude Code's own settings, hooks, MCP servers and
+ * instructions. A write there outlives the session.
+ */
+const PERSISTENT_PATH =
+  /(^|[\s/"'=])(\.(bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zshenv|zlogin)|config\.fish|\.git\/hooks\/[\w.-]{1,64}|\.husky\/[\w.-]{1,64}|\.claude\/(settings(\.local)?\.json|hooks\/|agents\/|commands\/|skills\/)|\.claude\.json|\.mcp\.json|CLAUDE\.md|AGENTS\.md|\.ssh\/authorized_keys|\.config\/systemd\/user\/|Library\/LaunchAgents\/|\.config\/autostart\/)(?=$|[\s"';|&)])/;
+/** A shell command that writes, as opposed to one that only reads a file. */
+const WRITES = /(^|[^<>])>{1,2}\s{0,4}\S|\btee\b|\b(cp|mv|ln|install)\s|\bsed\s{1,4}(-[a-zA-Z]{0,4}\s{1,4}){0,3}-i/;
+/** Scheduling or hook setup that needs no file path: a crontab edit, a hooks path, a service enabled. */
+const SCHEDULES = /\bcrontab\s{1,4}(-(\s|$)|-e\b|[^-\s])|\bgit\s{1,4}config\b[^;&|\n]{0,200}\bcore\.hooksPath\b|\bsystemctl\s{1,4}--user\s{1,4}enable\b|\blaunchctl\s{1,4}(load|bootstrap)\b/;
 
 /**
  * Contrail's own data directory. The agent runs as you and could edit or remove what Contrail
@@ -32,10 +44,12 @@ export function sensitivity(action: Action): Sensitivity[] {
     if (NETWORK.test(cmd)) kinds.add('network');
     if (INSTALL.test(cmd)) kinds.add('install');
     if (DESTRUCTIVE.test(cmd)) kinds.add('destructive');
+    if ((PERSISTENT_PATH.test(cmd) && WRITES.test(cmd)) || SCHEDULES.test(cmd)) kinds.add('persistence');
     if (CONTRAIL_DATA.test(cmd.replace(CONTRAIL_OWN_USE, ' '))) kinds.add("touches Contrail's records");
   } else if (['Read', 'Edit', 'MultiEdit', 'Write'].includes(action.tool)) {
     const path = str(action.input, 'file_path') ?? '';
     if (CREDENTIAL_PATH.test(path)) kinds.add('credentials');
+    if (action.tool !== 'Read' && PERSISTENT_PATH.test(path)) kinds.add('persistence');
     if (action.tool !== 'Read' && CONTRAIL_DATA.test(path)) kinds.add("touches Contrail's records");
   }
   return [...kinds];

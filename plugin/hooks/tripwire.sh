@@ -16,6 +16,10 @@ case ${1:-} in
       *.aws/* | *.ssh/* | *id_rsa* | *id_ed25519* | *id_ecdsa* | *.netrc | *.npmrc | *.pypirc | *.docker/* | *.kube/*) ;;
       *.gnupg/* | *.env | *.env.* | *credentials* | *secret* | *keychain* | *.pgpass | *.my.cnf | *gcloud/* | *.azure/*) ;;
       *.vault-token | *.boto | *.config/gh/* | *plugins/data/contrail*) ;;
+      *.bashrc | *.bash_profile | *.bash_login | *.profile | *.zshrc | *.zprofile | *.zshenv | *.zlogin | */config.fish) ;;
+      */.git/hooks/* | */.husky/* | */.claude/settings.json | */.claude/settings.local.json | */.claude.json | */.mcp.json) ;;
+      */.claude/hooks/* | */.claude/agents/* | */.claude/commands/* | */.claude/skills/* | */CLAUDE.md | */AGENTS.md) ;;
+      */.config/systemd/user/* | */Library/LaunchAgents/* | */.config/autostart/*) ;;
       *) exit 0 ;;
     esac
     ;;
@@ -27,6 +31,9 @@ case ${1:-} in
       *.env* | *printenv* | *" env"* | *keychain* | *credentials* | *secret* | *gcloud* | *.azure* | *.pgpass* | *.my.cnf*) ;;
       *.vault-token* | *.boto* | *install* | *" add "* | *npx* | *"go get"* | *"rm -"* | *"git reset"* | *"git clean"*) ;;
       *chmod* | *eval* | *" dd "* | *mkfs* | *drop* | *contrail.db* | *CONTRAIL_HOME*) ;;
+      *bashrc* | *bash_profile* | *.profile* | *zshrc* | *zprofile* | *zshenv* | *config.fish* | *crontab* | *hooksPath*) ;;
+      *.git/hooks* | *.husky* | *.claude/* | *.claude.json* | *.mcp.json* | *CLAUDE.md* | *AGENTS.md* | *authorized_keys*) ;;
+      *LaunchAgents* | *systemd* | *launchctl* | *autostart*) ;;
       *) exit 0 ;;
     esac
     ;;

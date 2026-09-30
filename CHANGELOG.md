@@ -6,6 +6,7 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ### Added
 
+- A new sensitive kind, `persistence`: a write to something that runs again later, such as shell startup files, git hooks, a crontab, `~/.ssh/authorized_keys`, and Claude Code's own settings, hooks, MCP config and `CLAUDE.md`. `risks` lists it and the tripwire watches for it, so an injected instruction that plants itself for later is flagged. Reading these files does not count.
 - Calls that auto mode denies are recorded. Auto mode skips PreToolUse for a call it refuses, so until now the attempt left no trace. `why` shows it as denied with Claude Code's reason and traces its values like any other call, and `risks`, `trace`, `review` and the HTML report list it. On a Claude Code version without the `PermissionDenied` event, that one hook entry is ignored and nothing else changes.
 - `contrail forget <session>` and `contrail forget --all --yes`: delete recorded sessions on demand, with freed pages zeroed, the database rewritten and its write-ahead log truncated, so the deleted text is not left in either file.
 

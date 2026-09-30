@@ -156,7 +156,7 @@ Use the launcher path `contrail doctor` prints if yours differs. The command rea
 
 ### Tripwire
 
-Before a tool call runs, and before Claude Code asks for permission, the tripwire checks it. When the call touches credentials, the network or the shell, installs something, or touches Contrail's own records, and a value in it first appeared in external content (a web page or web search, an MCP result, or a file inside a dependency such as `node_modules/`), it shows you one line:
+Before a tool call runs, and before Claude Code asks for permission, the tripwire checks it. When the call touches credentials, the network or the shell, installs something, writes something that runs again later (a shell startup file, a git hook, a cron job, Claude Code's settings, hooks or MCP config), or touches Contrail's own records, and a value in it first appeared in external content (a web page or web search, an MCP result, or a file inside a dependency such as `node_modules/`), it shows you one line:
 
 ```text
 Contrail ▲ credentials · network · not named in your words: ~/.aws/credentials, collect.telemetry.example/v1
@@ -242,6 +242,8 @@ contrail risks [--session <id> | --all] [--json]
 | network | `curl`, `wget`, `scp`, `rsync`, `ssh`, `git push`, `gh api` |
 | install | `npm install`, `pnpm add`, `pip install`, `cargo add`, `brew install`, `npx` |
 | destructive | `rm -rf`, `git reset --hard`, `git push --force`, `DROP TABLE`, `chmod 777` |
+| persistence | a write to something that runs again later: `~/.bashrc` and other shell startup files, `.git/hooks/`, a crontab, `git config core.hooksPath`, `~/.ssh/authorized_keys`, `.claude/settings.json` and Claude Code hooks, agents, commands and skills, `.mcp.json`, `CLAUDE.md`, login and systemd user services. Reading these files is not. |
+| touches Contrail's records | a command or write that names Contrail's data directory or database (its own queries excepted) |
 
 Findings are ordered by what their trail shows, newest first within each group:
 

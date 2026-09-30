@@ -1449,6 +1449,9 @@ var RUNS_REMOTE_CODE = /\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|da)?sh\b|\b(b
 var NETWORK = /(^|[\s;&|(])(curl|wget|nc|ncat|scp|rsync|ssh|sftp|ftp)\s|\bgit\s+push\b|\bgh\s+api\b/;
 var INSTALL = /(^|[\s;&|(])((npm|pnpm|bun)\s+(install|i|add)\s+[^-\s]|yarn\s+add\s|pip3?\s+install\s|uv\s+(add|pip\s+install)\s|cargo\s+add\s|gem\s+install\s|brew\s+install\s|go\s+get\s|npx\s+[^-\s])/;
 var DESTRUCTIVE = /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])|\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|push\s+(.*\s)?(-f|--force)\b)|\bchmod\s+(-R\s+)?777\b|\b(drop|truncate)\s+(table|database)\b|\bmkfs\b|\bdd\s+if=/i;
+var PERSISTENT_PATH = /(^|[\s/"'=])(\.(bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zshenv|zlogin)|config\.fish|\.git\/hooks\/[\w.-]{1,64}|\.husky\/[\w.-]{1,64}|\.claude\/(settings(\.local)?\.json|hooks\/|agents\/|commands\/|skills\/)|\.claude\.json|\.mcp\.json|CLAUDE\.md|AGENTS\.md|\.ssh\/authorized_keys|\.config\/systemd\/user\/|Library\/LaunchAgents\/|\.config\/autostart\/)(?=$|[\s"';|&)])/;
+var WRITES = /(^|[^<>])>{1,2}\s{0,4}\S|\btee\b|\b(cp|mv|ln|install)\s|\bsed\s{1,4}(-[a-zA-Z]{0,4}\s{1,4}){0,3}-i/;
+var SCHEDULES = /\bcrontab\s{1,4}(-(\s|$)|-e\b|[^-\s])|\bgit\s{1,4}config\b[^;&|\n]{0,200}\bcore\.hooksPath\b|\bsystemctl\s{1,4}--user\s{1,4}enable\b|\blaunchctl\s{1,4}(load|bootstrap)\b/;
 var CONTRAIL_DATA = /plugins\/data\/contrail[\w-]{0,64}|\bcontrail\.db\b|\bCONTRAIL_HOME\b/;
 var CONTRAIL_OWN_USE = /\S{0,512}plugins\/data\/contrail[\w-]{0,64}\/bin\/contrail\b|--(plugin-)?data[= ]\s{0,4}("[^"]{0,1024}"|'[^']{0,1024}'|\S{1,1024})/g;
 function sensitivity(action) {
@@ -1460,10 +1463,12 @@ function sensitivity(action) {
     if (NETWORK.test(cmd)) kinds.add("network");
     if (INSTALL.test(cmd)) kinds.add("install");
     if (DESTRUCTIVE.test(cmd)) kinds.add("destructive");
+    if (PERSISTENT_PATH.test(cmd) && WRITES.test(cmd) || SCHEDULES.test(cmd)) kinds.add("persistence");
     if (CONTRAIL_DATA.test(cmd.replace(CONTRAIL_OWN_USE, " "))) kinds.add("touches Contrail's records");
   } else if (["Read", "Edit", "MultiEdit", "Write"].includes(action.tool)) {
     const path = str(action.input, "file_path") ?? "";
     if (CREDENTIAL_PATH.test(path)) kinds.add("credentials");
+    if (action.tool !== "Read" && PERSISTENT_PATH.test(path)) kinds.add("persistence");
     if (action.tool !== "Read" && CONTRAIL_DATA.test(path)) kinds.add("touches Contrail's records");
   }
   return [...kinds];

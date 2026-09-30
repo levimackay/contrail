@@ -15,7 +15,7 @@ case ${1:-} in
     case $path in
       *.aws/* | *.ssh/* | *id_rsa* | *id_ed25519* | *id_ecdsa* | *.netrc | *.npmrc | *.pypirc | *.docker/* | *.kube/*) ;;
       *.gnupg/* | *.env | *.env.* | *credentials* | *secret* | *keychain* | *.pgpass | *.my.cnf | *gcloud/* | *.azure/*) ;;
-      *.vault-token | *.boto | *.config/gh/*) ;;
+      *.vault-token | *.boto | *.config/gh/* | *plugins/data/contrail*) ;;
       *) exit 0 ;;
     esac
     ;;
@@ -26,7 +26,7 @@ case ${1:-} in
       *.aws* | *.netrc* | *.npmrc* | *.pypirc* | *.docker* | *.kube* | *.gnupg* | *id_rsa* | *id_ed25519* | *id_ecdsa*) ;;
       *.env* | *printenv* | *" env"* | *keychain* | *credentials* | *secret* | *gcloud* | *.azure* | *.pgpass* | *.my.cnf*) ;;
       *.vault-token* | *.boto* | *install* | *" add "* | *npx* | *"go get"* | *"rm -"* | *"git reset"* | *"git clean"*) ;;
-      *chmod* | *eval* | *" dd "* | *mkfs* | *drop*) ;;
+      *chmod* | *eval* | *" dd "* | *mkfs* | *drop* | *contrail.db* | *CONTRAIL_HOME*) ;;
       *) exit 0 ;;
     esac
     ;;

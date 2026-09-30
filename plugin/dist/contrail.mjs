@@ -1430,6 +1430,8 @@ var RUNS_REMOTE_CODE = /\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|da)?sh\b|\b(b
 var NETWORK = /(^|[\s;&|(])(curl|wget|nc|ncat|scp|rsync|ssh|sftp|ftp)\s|\bgit\s+push\b|\bgh\s+api\b/;
 var INSTALL = /(^|[\s;&|(])((npm|pnpm|bun)\s+(install|i|add)\s+[^-\s]|yarn\s+add\s|pip3?\s+install\s|uv\s+(add|pip\s+install)\s|cargo\s+add\s|gem\s+install\s|brew\s+install\s|go\s+get\s|npx\s+[^-\s])/;
 var DESTRUCTIVE = /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])|\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|push\s+(.*\s)?(-f|--force)\b)|\bchmod\s+(-R\s+)?777\b|\b(drop|truncate)\s+(table|database)\b|\bmkfs\b|\bdd\s+if=/i;
+var CONTRAIL_DATA = /plugins\/data\/contrail[\w-]{0,64}|\bcontrail\.db\b|\bCONTRAIL_HOME\b/;
+var CONTRAIL_OWN_USE = /\S{0,512}plugins\/data\/contrail[\w-]{0,64}\/bin\/contrail\b|--(plugin-)?data[= ]\s{0,4}("[^"]{0,1024}"|'[^']{0,1024}'|\S{1,1024})/g;
 function sensitivity(action) {
   const kinds = /* @__PURE__ */ new Set();
   if (action.tool === "Bash") {
@@ -1439,8 +1441,11 @@ function sensitivity(action) {
     if (NETWORK.test(cmd)) kinds.add("network");
     if (INSTALL.test(cmd)) kinds.add("install");
     if (DESTRUCTIVE.test(cmd)) kinds.add("destructive");
+    if (CONTRAIL_DATA.test(cmd.replace(CONTRAIL_OWN_USE, " "))) kinds.add("touches Contrail's records");
   } else if (["Read", "Edit", "MultiEdit", "Write"].includes(action.tool)) {
-    if (CREDENTIAL_PATH.test(str(action.input, "file_path") ?? "")) kinds.add("credentials");
+    const path = str(action.input, "file_path") ?? "";
+    if (CREDENTIAL_PATH.test(path)) kinds.add("credentials");
+    if (action.tool !== "Read" && CONTRAIL_DATA.test(path)) kinds.add("touches Contrail's records");
   }
   return [...kinds];
 }
@@ -2784,7 +2789,7 @@ function requestedLines(e, s) {
       return [`Requested?  ${s.bold("PARTLY NAMED")}  ${quoted} names ${clip(r.matched ?? "", 80)}, not everything this action targets  ${tag3(`R8 ${r.grade}`)}`];
     case "NOT_NAMED": {
       const yours = r.searched === 1 ? "Your 1 sentence this session does not" : `None of your ${r.searched} sentences this session`;
-      return [`Requested?  ${s.flag("NOT NAMED")} (the agent chose this). ${yours} name it.  ${tag3("R8")}`];
+      return [`Requested?  ${s.flag("NOT NAMED")}. ${yours} name it.  ${tag3("R8")}`];
     }
     case "NOTHING_TO_MATCH":
       return [`Requested?  nothing specific in this action to match against your words  ${tag3("R8")}`];

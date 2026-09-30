@@ -17,6 +17,23 @@ export const FOOTER = [
   "Not observable: the agent's reasons for this action.",
 ];
 
+/**
+ * How a session was recorded, when not by Contrail's hooks. Every report that shows a session
+ * says so up front, so a reconstruction is never read as a live record.
+ */
+export function sourceNote(g: Pick<Graph, 'source'>): string | null {
+  if (g.source === 'transcript') return "reconstructed from Claude Code's transcript by contrail import, not recorded live";
+  if (g.source === 'both') return "partly reconstructed from Claude Code's transcript by contrail import, partly recorded live";
+  return null;
+}
+
+/** The short form of sourceNote, for a session named in a list; empty for a live one. */
+export function sourceTag(g: Pick<Graph, 'source'>): string {
+  if (g.source === 'transcript') return '(from transcript)';
+  if (g.source === 'both') return '(partly from transcript)';
+  return '';
+}
+
 export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PLAIN): string {
   const out: string[] = [];
   const a = e.action;
@@ -28,9 +45,17 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
     s.dim(
       `  session ${a.scope.sessionId.slice(0, 8)} · ${prompt ? `turn ${prompt.label}` : 'turn not recorded'} · ${callId(a.id)} · seq ${a.preSeq}` +
         ` · ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : 'main agent'}` +
-        (a.status === 'ok' ? '' : a.status === 'pending' ? ' · no result recorded (denied, stopped, or still running)' : ` · ${a.status.toUpperCase()}`),
+        (a.status === 'ok'
+          ? ''
+          : a.status === 'pending'
+            ? ' · no result recorded (denied, stopped, or still running)'
+            : a.status === 'denied'
+              ? ` · DENIED ${deniedBy(a.deniedBy)}, never ran${a.denial ? `: ${clip(a.denial, 100)}` : ''}`
+              : ` · ${a.status.toUpperCase()}`),
     ),
   );
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(`  ${source}`));
   if (note) out.push(s.dim(`  ${note}`));
   out.push('');
 
@@ -237,6 +262,14 @@ function requestedLines(e: Explanation, s: Style): string[] {
     case 'NOTHING_TO_MATCH':
       return [`Requested?  nothing specific in this action to match against your words  ${tag('R8')}`];
   }
+}
+
+/** Who denied a call, from the kind Claude Code records. */
+export function deniedBy(kind: string | undefined): string {
+  if (kind === 'user-rejected') return 'by you';
+  if (kind === 'permission-rule') return 'by a permission rule';
+  if (kind?.startsWith('automode')) return 'by auto mode';
+  return kind ? `(${clip(kind, 40)})` : 'by auto mode';
 }
 
 export function describe(a: Action, g: Graph): string {

@@ -76,3 +76,25 @@ test('the word-set prefilter never changes whether a token is found', async () =
     }
   });
 });
+
+test('the word filter gives the same index as a plain scan, on random texts and needles', async () => {
+  const { findInInput } = await import('./context.ts');
+  const { findNormalized, normalize } = await import('./text.ts');
+  const { mkInput } = await import('./fixtures.ts');
+  let seed = 12345;
+  const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 32;
+  const alphabet = ['a', 'b', 'ab', 'foo', 'Foo', '-', '_', '.', '/', ' ', '\n', '1', 'é', 'Ｆ', '​', ':', '~'];
+  const piece = (n: number) => Array.from({ length: n }, () => alphabet[Math.floor(next() * alphabet.length)]).join('');
+  for (let n = 0; n < 300; n++) {
+    const text = piece(Math.floor(next() * 80));
+    const input = mkInput({ id: `r${n}`, text });
+    const hay = normalize(text);
+    for (let k = 0; k < 20; k++) {
+      // Half the needles are cut from the text itself, so matches and near misses are common.
+      const start = Math.floor(next() * hay.length);
+      const raw = next() < 0.5 ? hay.slice(start, start + 1 + Math.floor(next() * 8)) : piece(1 + Math.floor(next() * 4));
+      const needle = normalize(raw);
+      assert.equal(findInInput(input, needle), findNormalized(hay, needle), `${JSON.stringify(needle)} in ${JSON.stringify(text)}`);
+    }
+  }
+});

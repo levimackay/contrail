@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ContrailError } from '../errors.ts';
+import { IMPORT_HINT } from '../render/session.ts';
 import type { Db } from '../store/sqlite.ts';
 
 export type Target =
@@ -79,12 +80,12 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
       target.path, real,
     );
     if (!rows.length) {
-      throw new ContrailError(`No recorded agent change to ${target.shown}. Contrail only sees sessions recorded since it was installed.`);
+      throw new ContrailError(`No recorded agent change to ${target.shown}. Contrail only sees sessions recorded since it was installed, and earlier ones brought in with contrail import.`);
     }
   } else if (target.kind === 'command') {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND tool_name = 'Bash'
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND tool_name = 'Bash'
           AND instr(${COMMAND}, ?) > 0 AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC`,
       target.text,
@@ -94,7 +95,7 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
     // Any tool, any repository: a call id names one call wherever it ran.
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
           AND (? = '' OR substr(tool_use_id, -?) = ?)
         ORDER BY captured_us DESC, spool_name DESC`,
       target.prefix.length, target.prefix, target.prefix.length + target.suffix.length,
@@ -104,13 +105,13 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey,
     );
     if (!rows.length) {
       throw new ContrailError(
-        'No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again.',
+        `No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again.\n${IMPORT_HINT}`,
       );
     }
   }

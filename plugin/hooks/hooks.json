@@ -32,6 +32,9 @@
     "PostToolUse": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 }] }
     ],
+    "PermissionDenied": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 }] }
+    ],
     "PostToolUseFailure": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 }] }
     ],

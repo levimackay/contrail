@@ -4,6 +4,30 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+### Fixed
+
+- Quotes show the value on long lines. A value found far into a long line, such as WebSearch's one-line list of links or a one-line JSON tool result, is now quoted from just before it. Before, the quote started at the beginning of the line and clipping hid the value.
+
+### Changed
+
+- Queries are much faster in long sessions, and their output is unchanged, which golden-output tests now pin. On a 250-call session with 35 MB recorded:
+  - the status line takes about 250 ms instead of 680 ms
+  - the tripwire takes about 220 ms instead of 390 ms
+  - `why`, `risks` and `find` take 180 to 260 ms instead of 340 to 700 ms
+
+  Large Read, search and web results are now read only when a report prints them, and text search no longer builds a set of every word it has seen.
+- MCP and WebSearch tracing is verified in real sessions. It is also tested against the payload shapes Claude Code 2.1.285 records: bare content-block lists, `structuredContent` results as text, error results as `PostToolUseFailure`, embedded resources, and WebSearch's results-and-summary shape.
+
+### Added
+
+- `contrail import`: brings in sessions from before Contrail was installed, rebuilt from Claude Code's own transcripts through the same redaction path. Every report marks them as reconstructed, not recorded live, and lists what a transcript lacks. Sessions recorded live are never touched, running it again stores nothing new, and first-run messages point to it.
+- `contrail watch`: a live feed for a second terminal. Each tool call appears as it starts, with where its values came from and `▲` when they came from external content, followed by a line if it fails or is denied.
+- A new sensitive kind, `persistence`: a write to something that runs again later, such as shell startup files, git hooks, a crontab, `~/.ssh/authorized_keys`, and Claude Code's own settings, hooks, MCP config and `CLAUDE.md`. `risks` lists it and the tripwire watches for it, so an injected instruction that plants itself for later is flagged. Reading these files does not count.
+- A call you denied at a permission prompt shows as denied in `why`. No hook reports these, so `why` reads that one fact from the session's own transcript, and only from a transcript inside Claude Code's projects directory.
+- In imported sessions, a denied call says who denied it (you, a permission rule, or auto mode) and Claude Code's reason, from the denial the transcript records.
+- Calls that auto mode denies are recorded. Auto mode skips PreToolUse for a call it refuses, so until now the attempt left no trace. `why` shows it as denied with Claude Code's reason and traces its values like any other call, and `risks`, `trace`, `review` and the HTML report list it. On a Claude Code version without the `PermissionDenied` event, that one hook entry is ignored and nothing else changes.
+- `contrail forget <session>` and `contrail forget --all --yes`: delete recorded sessions on demand, with freed pages zeroed, the database rewritten and its write-ahead log truncated, so the deleted text is not left in either file.
+
 ## [0.4.0] - 2026-09-30
 
 ### Added

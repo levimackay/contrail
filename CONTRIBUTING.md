@@ -40,6 +40,8 @@ Include tests with every change. For anything that could produce a false LIKELY 
 
 For behavior that depends on Claude Code's hook payloads, a scripted session in `test/fixtures/synthetic.ts` style is the usual test. If you exercised it in a live session too, say so in the pull request.
 
+`test/golden.test.ts` pins every report byte for byte on the demo sessions and a long generated session, so a change meant only to make things faster must leave it passing. When a change to the output is intended, rerun it with `CONTRAIL_GOLDEN_WRITE=1` and review the diff of `test/fixtures/golden/`. To time the query commands before and after a change, run `node scripts/bench-queries.ts [runs] [bundle]`.
+
 ## Commits and pull requests
 
 - Keep commits small, and write messages that say why, not just what.

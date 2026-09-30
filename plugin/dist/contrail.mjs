@@ -438,9 +438,9 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync5, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync4, readFileSync as readFileSync7, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename7, dirname as dirname3, join as join7, resolve as resolve7 } from "node:path";
+import { basename as basename7, dirname as dirname3, join as join8, resolve as resolve7 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -523,7 +523,6 @@ import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, 
 
 // src/engine/text.ts
 var INVISIBLE = /[​-‏‪-‮⁠-⁤﻿]/g;
-var WORD_CHAR = /[a-z0-9_-]/;
 var READ_PREFIX = /^\s*(\d+)(?:→|\t)(.*)$/;
 function normalize(s) {
   return s.normalize("NFKC").replace(INVISIBLE, "").toLowerCase();
@@ -537,19 +536,41 @@ function findMention(text, token) {
 function findNormalized(hay, needle) {
   if (!needle) return -1;
   for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
-    const before = hay[i - 1];
-    const after = hay[i + needle.length];
-    if ((before === void 0 || !WORD_CHAR.test(before)) && (after === void 0 || !WORD_CHAR.test(after))) return i;
+    if (!isWordCode(hay.charCodeAt(i - 1)) && !isWordCode(hay.charCodeAt(i + needle.length))) return i;
   }
   return -1;
 }
-function lineOf(text, index) {
-  const lineIndex = normalize(text).slice(0, Math.max(0, index)).split("\n").length - 1;
-  const lines = text.split("\n");
-  const raw = lines[lineIndex] ?? "";
+function isWordCode(c) {
+  return c >= 97 && c <= 122 || c >= 48 && c <= 57 || c === 95 || c === 45;
+}
+var QUOTE_FROM_START = 60;
+var QUOTE_LEAD = 30;
+function lineOf(text, index, normalized = normalize(text)) {
+  const end = Math.min(Math.max(0, index), normalized.length);
+  let lineIndex = 0;
+  let lineStart = 0;
+  for (let k = normalized.indexOf("\n"); k !== -1 && k < end; k = normalized.indexOf("\n", k + 1)) {
+    lineIndex++;
+    lineStart = k + 1;
+  }
+  const column = end - lineStart;
+  let start = 0;
+  for (let n = 0; n < lineIndex && start !== -1; n++) {
+    const next = text.indexOf("\n", start);
+    start = next === -1 ? -1 : next + 1;
+  }
+  const stop = start === -1 ? -1 : text.indexOf("\n", start);
+  const raw = start === -1 ? "" : text.slice(start, stop === -1 ? text.length : stop);
   const prefixed = READ_PREFIX.exec(raw);
-  if (prefixed) return { line: Number(prefixed[1]), text: prefixed[2].trim() };
-  return { line: lines.length > 1 ? lineIndex + 1 : null, text: raw.trim() };
+  const body = prefixed ? prefixed[2] : raw;
+  const line = prefixed ? Number(prefixed[1]) : text.includes("\n") ? lineIndex + 1 : null;
+  return { line, text: around(body, column - (raw.length - body.length)) };
+}
+function around(body, column) {
+  const text = body.trim();
+  const at = column - (body.length - body.trimStart().length);
+  if (at <= QUOTE_FROM_START) return text;
+  return `\u2026${text.slice(at - QUOTE_LEAD).trimStart()}`;
 }
 
 // src/engine/tokens.ts
@@ -741,8 +762,8 @@ function extractTokens(action, env) {
       else b.hints(leaf.value, leaf.path);
     }
   } else if (tool === "Skill") {
-    const name = str(input, "skill");
-    if (name) b.target(name, 0, "$.skill", true);
+    const name2 = str(input, "skill");
+    if (name2) b.target(name2, 0, "$.skill", true);
   } else if (tool === "Agent" || tool === "Task") {
     b.hints(str(input, "prompt") ?? "", "$.prompt");
   } else {
@@ -861,15 +882,15 @@ function shellSegments(command) {
 function segments(command) {
   const out = [];
   for (const line of withoutHeredocs(logicalLines(command)).map(withoutFdNumbers)) {
-    let entries;
+    let entries2;
     try {
-      entries = (0, import_shell_quote.parse)(line, (key) => `$${key}`);
+      entries2 = (0, import_shell_quote.parse)(line, (key) => `$${key}`);
     } catch {
-      entries = line.split(/\s+/).filter(Boolean);
+      entries2 = line.split(/\s+/).filter(Boolean);
     }
     let cur = { words: [], redirects: [] };
     let redirectNext = false;
-    for (const e of entries) {
+    for (const e of entries2) {
       if (typeof e === "string") {
         if ((redirectNext === ">&" || redirectNext === "<&") && /^(\d{1,4}|-)$/.test(e)) {
           redirectNext = false;
@@ -1086,98 +1107,6 @@ function commitContains(commitSeq, files, writes, earlierCommits) {
   });
 }
 
-// src/engine/grade.ts
-var ORDER = ["DIRECT", "LIKELY", "POSSIBLE", "UNKNOWN"];
-function minGrade(grades) {
-  if (grades.length === 0) return "UNKNOWN";
-  return grades.reduce((weakest, g) => ORDER.indexOf(g) > ORDER.indexOf(weakest) ? g : weakest);
-}
-function maxGrade(grades) {
-  return grades.reduce((best, g) => ORDER.indexOf(g) < ORDER.indexOf(best) ? g : best, "UNKNOWN");
-}
-function gradeSources(token, candidates, actionId, indexIn) {
-  const base = { type: "value_from", from: actionId, recorded: false, token: token.text };
-  if (candidates.length === 0) {
-    return [{ ...base, to: null, grade: "UNKNOWN", rule: "R4", note: "no observed input contains it" }];
-  }
-  const bySource = /* @__PURE__ */ new Map();
-  for (const c of [...candidates].sort((a, b) => a.availableAt - b.availableAt)) {
-    if (!bySource.has(c.ref)) bySource.set(c.ref, c);
-  }
-  const sources = [...bySource.values()];
-  const link = (input, grade, extra = {}) => ({
-    ...base,
-    to: input.id,
-    grade,
-    rule: "R3",
-    quote: quote(input, indexIn ? indexIn(input) : findMention(input.text, token.text)),
-    ...extra
-  });
-  const yours = sources.find((s) => s.trust === "principal");
-  if (yours) {
-    return sources.map(
-      (s) => s === yours ? link(s, token.shaped ? "LIKELY" : "POSSIBLE", { note: "you supplied it" }) : link(s, "POSSIBLE", { note: "also in" })
-    );
-  }
-  if (sources.length === 1) {
-    const only = sources[0];
-    return [token.shaped ? link(only, "LIKELY") : link(only, "POSSIBLE", { note: "plain word; the model may know it" })];
-  }
-  if (sources.length <= 3) {
-    return sources.map((s, i) => link(s, "POSSIBLE", i === 0 ? { firstSeen: true } : {}));
-  }
-  return [{ ...base, to: null, grade: "UNKNOWN", rule: "R3", note: `in ${sources.length} observed inputs; too common to attribute` }];
-}
-function quote(input, index) {
-  const { line, text } = lineOf(input.text, index);
-  return { ref: input.ref, line, text: input.hashed ? "" : text };
-}
-
-// src/engine/requested.ts
-var NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
-var CLAUSE_BREAK = /[,;:()]|\s(?:but|then|just|so|and then)\s/gi;
-function negates(text, index) {
-  const before = text.slice(0, index);
-  let start = 0;
-  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
-  return NEGATOR.test(before.slice(start));
-}
-function splitSentences(text) {
-  return text.replace(/```[\s\S]*?(?:```|$)/g, "\n").split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
-}
-function requested(action, tokens, sentences) {
-  const before = sentences.filter((s) => s.seq < action.preSeq);
-  const searched = before.length;
-  const groups = /* @__PURE__ */ new Map();
-  for (const t of tokens) {
-    if (t.role === "target" && t.group !== null) groups.set(t.group, [...groups.get(t.group) ?? [], t]);
-  }
-  if (groups.size === 0) return { verdict: "NOTHING_TO_MATCH", grade: "UNKNOWN", searched };
-  const kept = [];
-  for (const alternatives of groups.values()) {
-    let latest2 = null;
-    for (const s of before) {
-      const hit = alternatives.find((t) => !t.derived && findMention(s.text, t.text) >= 0) ?? alternatives.find((t) => findMention(s.text, t.text) >= 0);
-      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived, negated: negates(s.text, findMention(s.text, hit.text)) };
-    }
-    if (latest2) kept.push(latest2);
-  }
-  if (kept.length === 0) return { verdict: "NOT_NAMED", grade: "UNKNOWN", searched };
-  const negated = kept.find((k) => k.negated);
-  if (negated) {
-    return { verdict: "NAMED_NEGATED", grade: "POSSIBLE", searched, sentence: negated.sentence, matched: negated.token.text };
-  }
-  const latest = kept.reduce((a, b) => b.sentence.seq > a.sentence.seq ? b : a);
-  const verdict = kept.length === groups.size && kept.every((k) => k.strong) ? "NAMED" : "PARTLY_NAMED";
-  return {
-    verdict,
-    grade: verdict === "NAMED" ? "LIKELY" : "POSSIBLE",
-    searched,
-    sentence: latest.sentence,
-    matched: latest.token.text
-  };
-}
-
 // src/engine/scope.ts
 var scopeKey = (s) => `${s.sessionId}/${s.agentId ?? "main"}`;
 var sameScope = (a, b) => a.sessionId === b.sessionId && a.agentId === b.agentId;
@@ -1263,23 +1192,200 @@ function normalizedText(i) {
   }
   return n;
 }
-var wordCache = /* @__PURE__ */ new WeakMap();
-var WORD_RUN2 = /[a-z0-9_-]{1,256}/g;
 function findInInput(i, needle, hashToken) {
   if (i.hashed) {
     const hashedNeedle = hashToken ? hashNeedle(needle, hashToken) : null;
     if (hashedNeedle === null) return -1;
     needle = hashedNeedle;
   }
-  let words2 = wordCache.get(i);
-  if (!words2) {
-    words2 = new Set(normalizedText(i).match(WORD_RUN2) ?? []);
-    wordCache.set(i, words2);
+  let found = foundCache.get(i);
+  if (!found) {
+    found = /* @__PURE__ */ new Map();
+    foundCache.set(i, found);
   }
-  for (const w of needle.match(WORD_RUN2) ?? []) {
-    if (w.length < 256 && !words2.has(w)) return -1;
+  let index = found.get(needle);
+  if (index === void 0) {
+    index = search(i, needle);
+    found.set(needle, index);
   }
+  return index;
+}
+var foundCache = /* @__PURE__ */ new WeakMap();
+function search(i, needle) {
+  let bits = wordFilterCache.get(i);
+  if (!bits) {
+    const searches = (searchCount.get(i) ?? 0) + 1;
+    if (searches <= SCANS_BEFORE_FILTER) {
+      searchCount.set(i, searches);
+      return findNormalized(normalizedText(i), needle);
+    }
+    bits = wordFilter(normalizedText(i));
+    wordFilterCache.set(i, bits);
+  }
+  if (!mayHoldWords(bits, needleWords(needle))) return -1;
   return findNormalized(normalizedText(i), needle);
+}
+var SCANS_BEFORE_FILTER = 8;
+var searchCount = /* @__PURE__ */ new WeakMap();
+var wordFilterCache = /* @__PURE__ */ new WeakMap();
+var needleWordCache = /* @__PURE__ */ new Map();
+var MAX_NEEDLES_CACHED = 1e4;
+var FNV_OFFSET = 2166136261;
+var FNV_PRIME = 16777619;
+function rehash(h) {
+  h = Math.imul(h ^ h >>> 16, 2246822507);
+  return h ^ h >>> 13;
+}
+function wordHashes(text) {
+  const out = [];
+  let h = FNV_OFFSET;
+  let inWord = false;
+  for (let k = 0; k < text.length; k++) {
+    const c = text.charCodeAt(k);
+    if (isWordCode(c)) {
+      h = Math.imul(h ^ c, FNV_PRIME);
+      inWord = true;
+    } else if (inWord) {
+      out.push(h);
+      h = FNV_OFFSET;
+      inWord = false;
+    }
+  }
+  if (inWord) out.push(h);
+  return out;
+}
+function wordFilter(text) {
+  let size = 1024;
+  while (size < text.length && size < 1 << 26) size *= 2;
+  const bits = new Uint32Array(size / 32);
+  const mask = size - 1;
+  let h = FNV_OFFSET;
+  let inWord = false;
+  for (let k = 0; k <= text.length; k++) {
+    const c = k < text.length ? text.charCodeAt(k) : -1;
+    if (isWordCode(c)) {
+      h = Math.imul(h ^ c, FNV_PRIME);
+      inWord = true;
+    } else if (inWord) {
+      const a = h & mask;
+      const b = rehash(h) & mask;
+      bits[a >>> 5] |= 1 << (a & 31);
+      bits[b >>> 5] |= 1 << (b & 31);
+      h = FNV_OFFSET;
+      inWord = false;
+    }
+  }
+  return bits;
+}
+function needleWords(needle) {
+  let hashes = needleWordCache.get(needle);
+  if (!hashes) {
+    if (needleWordCache.size >= MAX_NEEDLES_CACHED) needleWordCache.clear();
+    hashes = wordHashes(needle);
+    needleWordCache.set(needle, hashes);
+  }
+  return hashes;
+}
+function mayHoldWords(bits, hashes) {
+  const mask = bits.length * 32 - 1;
+  for (const h of hashes) {
+    const a = h & mask;
+    const b = rehash(h) & mask;
+    if (!(bits[a >>> 5] & 1 << (a & 31)) || !(bits[b >>> 5] & 1 << (b & 31))) return false;
+  }
+  return true;
+}
+
+// src/engine/grade.ts
+var ORDER = ["DIRECT", "LIKELY", "POSSIBLE", "UNKNOWN"];
+function minGrade(grades) {
+  if (grades.length === 0) return "UNKNOWN";
+  return grades.reduce((weakest, g) => ORDER.indexOf(g) > ORDER.indexOf(weakest) ? g : weakest);
+}
+function maxGrade(grades) {
+  return grades.reduce((best, g) => ORDER.indexOf(g) < ORDER.indexOf(best) ? g : best, "UNKNOWN");
+}
+function gradeSources(token, candidates, actionId, indexIn) {
+  const base = { type: "value_from", from: actionId, recorded: false, token: token.text };
+  if (candidates.length === 0) {
+    return [{ ...base, to: null, grade: "UNKNOWN", rule: "R4", note: "no observed input contains it" }];
+  }
+  const bySource = /* @__PURE__ */ new Map();
+  for (const c of [...candidates].sort((a, b) => a.availableAt - b.availableAt)) {
+    if (!bySource.has(c.ref)) bySource.set(c.ref, c);
+  }
+  const sources = [...bySource.values()];
+  const link = (input, grade, extra = {}) => ({
+    ...base,
+    to: input.id,
+    grade,
+    rule: "R3",
+    quote: quote(input, indexIn ? indexIn(input) : findMention(input.text, token.text)),
+    ...extra
+  });
+  const yours = sources.find((s) => s.trust === "principal");
+  if (yours) {
+    return sources.map(
+      (s) => s === yours ? link(s, token.shaped ? "LIKELY" : "POSSIBLE", { note: "you supplied it" }) : link(s, "POSSIBLE", { note: "also in" })
+    );
+  }
+  if (sources.length === 1) {
+    const only = sources[0];
+    return [token.shaped ? link(only, "LIKELY") : link(only, "POSSIBLE", { note: "plain word; the model may know it" })];
+  }
+  if (sources.length <= 3) {
+    return sources.map((s, i) => link(s, "POSSIBLE", i === 0 ? { firstSeen: true } : {}));
+  }
+  return [{ ...base, to: null, grade: "UNKNOWN", rule: "R3", note: `in ${sources.length} observed inputs; too common to attribute` }];
+}
+function quote(input, index) {
+  const { line, text } = lineOf(input.text, index, normalizedText(input));
+  return { ref: input.ref, line, text: input.hashed ? "" : text };
+}
+
+// src/engine/requested.ts
+var NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
+var CLAUSE_BREAK = /[,;:()]|\s(?:but|then|just|so|and then)\s/gi;
+function negates(text, index) {
+  const before = text.slice(0, index);
+  let start = 0;
+  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
+  return NEGATOR.test(before.slice(start));
+}
+function splitSentences(text) {
+  return text.replace(/```[\s\S]*?(?:```|$)/g, "\n").split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+}
+function requested(action, tokens, sentences) {
+  const before = sentences.filter((s) => s.seq < action.preSeq);
+  const searched = before.length;
+  const groups = /* @__PURE__ */ new Map();
+  for (const t of tokens) {
+    if (t.role === "target" && t.group !== null) groups.set(t.group, [...groups.get(t.group) ?? [], t]);
+  }
+  if (groups.size === 0) return { verdict: "NOTHING_TO_MATCH", grade: "UNKNOWN", searched };
+  const kept = [];
+  for (const alternatives of groups.values()) {
+    let latest2 = null;
+    for (const s of before) {
+      const hit = alternatives.find((t) => !t.derived && findMention(s.text, t.text) >= 0) ?? alternatives.find((t) => findMention(s.text, t.text) >= 0);
+      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived, negated: negates(s.text, findMention(s.text, hit.text)) };
+    }
+    if (latest2) kept.push(latest2);
+  }
+  if (kept.length === 0) return { verdict: "NOT_NAMED", grade: "UNKNOWN", searched };
+  const negated = kept.find((k) => k.negated);
+  if (negated) {
+    return { verdict: "NAMED_NEGATED", grade: "POSSIBLE", searched, sentence: negated.sentence, matched: negated.token.text };
+  }
+  const latest = kept.reduce((a, b) => b.sentence.seq > a.sentence.seq ? b : a);
+  const verdict = kept.length === groups.size && kept.every((k) => k.strong) ? "NAMED" : "PARTLY_NAMED";
+  return {
+    verdict,
+    grade: verdict === "NAMED" ? "LIKELY" : "POSSIBLE",
+    searched,
+    sentence: latest.sentence,
+    matched: latest.token.text
+  };
 }
 
 // src/engine/trace.ts
@@ -1419,8 +1525,16 @@ function blindSpots(action, g) {
   }
   const knownStarts = ["SessionStart", "UserPromptSubmit", "UserPromptExpansion", "InstructionsLoaded"];
   if (g.firstEvent && !knownStarts.includes(g.firstEvent)) spots.push("the start of this session was not recorded");
+  if (g.source !== "hooks") {
+    spots.push(TRANSCRIPT_BLIND_SPOT);
+    if (!action.promptId) spots.push("the turn of this call (the transcript holds no result for it to carry one)");
+    if (action.tool === "Bash" && action.status === "ok" && field(action.response, "bashEditDiff") === void 0) {
+      spots.push("which files this command changed (the transcript kept no bashEditDiff for it)");
+    }
+  }
   return spots;
 }
+var TRANSCRIPT_BLIND_SPOT = "what only hooks record, as this session was rebuilt from Claude Code's transcript: instruction files loaded after it started, and the order the calls of one batch ran in";
 function bestPerGroup(traces) {
   const found = (t) => t.links.some((l) => l.grade !== "UNKNOWN");
   const byGroup = /* @__PURE__ */ new Map();
@@ -1449,6 +1563,9 @@ var RUNS_REMOTE_CODE = /\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|da)?sh\b|\b(b
 var NETWORK = /(^|[\s;&|(])(curl|wget|nc|ncat|scp|rsync|ssh|sftp|ftp)\s|\bgit\s+push\b|\bgh\s+api\b/;
 var INSTALL = /(^|[\s;&|(])((npm|pnpm|bun)\s+(install|i|add)\s+[^-\s]|yarn\s+add\s|pip3?\s+install\s|uv\s+(add|pip\s+install)\s|cargo\s+add\s|gem\s+install\s|brew\s+install\s|go\s+get\s|npx\s+[^-\s])/;
 var DESTRUCTIVE = /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])|\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|push\s+(.*\s)?(-f|--force)\b)|\bchmod\s+(-R\s+)?777\b|\b(drop|truncate)\s+(table|database)\b|\bmkfs\b|\bdd\s+if=/i;
+var PERSISTENT_PATH = /(^|[\s/"'=])(\.(bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zshenv|zlogin)|config\.fish|\.git\/hooks\/[\w.-]{1,64}|\.husky\/[\w.-]{1,64}|\.claude\/(settings(\.local)?\.json|hooks\/|agents\/|commands\/|skills\/)|\.claude\.json|\.mcp\.json|CLAUDE\.md|AGENTS\.md|\.ssh\/authorized_keys|\.config\/systemd\/user\/|Library\/LaunchAgents\/|\.config\/autostart\/)(?=$|[\s"';|&)])/;
+var WRITES = /(^|[^<>])>{1,2}\s{0,4}\S|\btee\b|\b(cp|mv|ln|install)\s|\bsed\s{1,4}(-[a-zA-Z]{0,4}\s{1,4}){0,3}-i/;
+var SCHEDULES = /\bcrontab\s{1,4}(-(\s|$)|-e\b|[^-\s])|\bgit\s{1,4}config\b[^;&|\n]{0,200}\bcore\.hooksPath\b|\bsystemctl\s{1,4}--user\s{1,4}enable\b|\blaunchctl\s{1,4}(load|bootstrap)\b/;
 var CONTRAIL_DATA = /plugins\/data\/contrail[\w-]{0,64}|\bcontrail\.db\b|\bCONTRAIL_HOME\b/;
 var CONTRAIL_OWN_USE = /\S{0,512}plugins\/data\/contrail[\w-]{0,64}\/bin\/contrail\b|--(plugin-)?data[= ]\s{0,4}("[^"]{0,1024}"|'[^']{0,1024}'|\S{1,1024})/g;
 function sensitivity(action) {
@@ -1460,10 +1577,12 @@ function sensitivity(action) {
     if (NETWORK.test(cmd)) kinds.add("network");
     if (INSTALL.test(cmd)) kinds.add("install");
     if (DESTRUCTIVE.test(cmd)) kinds.add("destructive");
+    if (PERSISTENT_PATH.test(cmd) && WRITES.test(cmd) || SCHEDULES.test(cmd)) kinds.add("persistence");
     if (CONTRAIL_DATA.test(cmd.replace(CONTRAIL_OWN_USE, " "))) kinds.add("touches Contrail's records");
   } else if (["Read", "Edit", "MultiEdit", "Write"].includes(action.tool)) {
     const path = str(action.input, "file_path") ?? "";
     if (CREDENTIAL_PATH.test(path)) kinds.add("credentials");
+    if (action.tool !== "Read" && PERSISTENT_PATH.test(path)) kinds.add("persistence");
     if (action.tool !== "Read" && CONTRAIL_DATA.test(path)) kinds.add("touches Contrail's records");
   }
   return [...kinds];
@@ -1516,7 +1635,7 @@ function findValue(g, value) {
     if (input.producedBy && own.has(input.producedBy) || input.origin === "prompt" && /^\s*\/contrail:/.test(input.text)) continue;
     const index = findInInput(input, needle, g.hashToken);
     if (index < 0) continue;
-    const { line, text } = lineOf(input.text, index);
+    const { line, text } = lineOf(input.text, index, normalizedText(input));
     out.push({ seq: input.availableAt, source: { input, line, text: input.hashed ? "" : text } });
   }
   for (const action of g.actions) {
@@ -1584,10 +1703,26 @@ function buildGraph(rows, who, hashToken) {
   const skillBodies = /* @__PURE__ */ new Map();
   const notifications = [];
   rows.forEach((row, index) => {
+    if (row.hook_event !== "PostToolBatch") return;
+    for (const call of arr(parsePayload(row.payload).tool_calls)) {
+      const useId = str(call, "tool_use_id");
+      if (useId) modelSaw.set(useId, { seq: index + 1, text: toText(field(call, "tool_response")) });
+    }
+  });
+  rows.forEach((row, index) => {
     const seq = index + 1;
+    const id = row.tool_use_id;
+    const known = id ? actions.get(id) : void 0;
+    const large = row.hook_event === "PostToolUse" && (row.payloadLater || row.payload.length > DEFER_OVER);
+    if (large && known && onlyTextUsed(known.tool) && modelSaw.get(known.id)?.text) {
+      known.postSeq = seq;
+      known.status = "ok";
+      deferResponse(known, row);
+      return;
+    }
+    if (row.hook_event === "PostToolBatch") return;
     const p = parsePayload(row.payload);
     const scope = { sessionId: row.session_id ?? "", agentId: row.agent_id };
-    const id = row.tool_use_id;
     switch (row.hook_event) {
       case "UserPromptSubmit": {
         const promptId = row.prompt_id ?? `seq-${seq}`;
@@ -1613,6 +1748,16 @@ function buildGraph(rows, who, hashToken) {
       case "PreToolUse":
         if (id && !actions.has(id)) actions.set(id, newAction(id, scope, row, p, seq));
         break;
+      case "PermissionDenied": {
+        if (!id) break;
+        const a = actions.get(id) ?? newAction(id, scope, row, p, seq);
+        actions.set(id, a);
+        a.postSeq = seq;
+        a.status = "denied";
+        a.denial = str(p, "reason") ?? "";
+        a.deniedBy = str(p, "denial_kind") ?? "automode-blocked";
+        break;
+      }
       case "PostToolUse":
       case "PostToolUseFailure": {
         if (!id) break;
@@ -1631,12 +1776,6 @@ function buildGraph(rows, who, hashToken) {
         }
         break;
       }
-      case "PostToolBatch":
-        for (const call of arr(p.tool_calls)) {
-          const useId = str(call, "tool_use_id");
-          if (useId) modelSaw.set(useId, { seq, text: toText(field(call, "tool_response")) });
-        }
-        break;
       case "PostCompact":
         (compactSeqs[scopeKey(scope)] ??= []).push(seq);
         inputs.push({
@@ -1714,7 +1853,7 @@ function buildGraph(rows, who, hashToken) {
     effects.push(...effectsOf(a, env));
     const body = skillBodies.get(a.id);
     if (body) {
-      const name = str(a.input, "skill") ?? "";
+      const name2 = str(a.input, "skill") ?? "";
       const yours = Boolean(env.home) && body.path.startsWith(`${env.home}/.claude/`);
       inputs.push({
         // ref is the file, so a Read of the same SKILL.md is the same source, not a second one.
@@ -1723,7 +1862,7 @@ function buildGraph(rows, who, hashToken) {
         origin: "skill",
         trust: yours ? "config" : "local",
         ref: displayPath(body.path, env.cwd, env.home),
-        label: `skill ${name} (${displayPath(body.path, env.cwd, env.home)})`,
+        label: `skill ${name2} (${displayPath(body.path, env.cwd, env.home)})`,
         text: body.text,
         truncated: body.text.includes("[contrail: truncated"),
         fidelity: "read-at-ingest",
@@ -1776,6 +1915,7 @@ function buildGraph(rows, who, hashToken) {
   }
   for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
+  const fromTranscript = rows.filter((r) => r.source === "transcript").length;
   return {
     sessionId: mainScope.sessionId,
     actions: actionList,
@@ -1786,9 +1926,25 @@ function buildGraph(rows, who, hashToken) {
     agentSaid,
     env,
     firstEvent: rows[0]?.hook_event ?? null,
+    source: fromTranscript === 0 ? "hooks" : fromTranscript === rows.length ? "transcript" : "both",
     timeUs: rows.map((r) => r.captured_us),
     ...hashToken ? { hashToken } : {}
   };
+}
+var TEXT_RESULT_TOOLS = ["Read", "NotebookRead", "Grep", "Glob", "LS", "WebFetch", "WebSearch"];
+var onlyTextUsed = (tool) => TEXT_RESULT_TOOLS.includes(tool) || tool.startsWith("mcp__");
+var DEFER_OVER = 16 * 1024;
+function deferResponse(a, row) {
+  const settle = (value) => {
+    Object.defineProperty(a, "response", { value, writable: true, enumerable: true, configurable: true });
+    return value;
+  };
+  Object.defineProperty(a, "response", {
+    enumerable: true,
+    configurable: true,
+    get: () => settle(parsePayload(row.payload).tool_response ?? null),
+    set: settle
+  });
 }
 function parsePayload(payload) {
   try {
@@ -1815,7 +1971,7 @@ function newAction(id, scope, row, p, seq) {
   };
 }
 var TASK_NOTIFICATION = /^\s*<task-notification>/;
-var tag = (text, name) => new RegExp(`<${name}>([^<]{1,200})</${name}>`).exec(text)?.[1]?.trim() ?? null;
+var tag = (text, name2) => new RegExp(`<${name2}>([^<]{1,200})</${name2}>`).exec(text)?.[1]?.trim() ?? null;
 function taskNotification(text) {
   if (!TASK_NOTIFICATION.test(text)) return null;
   const head = text.slice(0, 4e3);
@@ -1897,8 +2053,8 @@ function classify(a, env) {
     return { origin: "mcp", trust: "external", ref: `mcp:${a.id}`, label: `MCP ${tool.slice(5).replace("__", "/")} result` };
   }
   if (tool === "Skill") {
-    const name = str(a.input, "skill") ?? "";
-    return { origin: "skill", trust: name.includes(":") ? "external" : "local", ref: `skill:${name}`, label: `skill ${name}` };
+    const name2 = str(a.input, "skill") ?? "";
+    return { origin: "skill", trust: name2.includes(":") ? "external" : "local", ref: `skill:${name2}`, label: `skill ${name2}` };
   }
   if (tool === "Agent" || tool === "Task") {
     return { origin: "subagent_result", trust: "agent", ref: `agent:${a.id}`, label: `subagent report from ${callId(a.id)}` };
@@ -2035,22 +2191,22 @@ var MEMBER = new RegExp(
 );
 var CHAIN = new RegExp(String.raw`^${ID}(?:\.${ID}){0,12}$`);
 var EXPRESSION = /^\{[\w$.?()[\] ,]{1,256}\}$/;
-function namesSecret(value, name = "", literal = false) {
+function namesSecret(value, name2 = "", literal = false) {
   if (value === "" || isTag(value) || PLACEHOLDER.test(value) || KEYWORD.test(value)) return true;
   if (literal) return false;
   if (CALL_START.test(value) && CODE_CHARS.test(value) && !AFTER_BRACKET.test(value)) return true;
   if (MEMBER.test(value) || EXPRESSION.test(value)) return true;
   if (CHAIN.test(value)) {
     const parts = value.split(".");
-    const tail = name.slice(name.lastIndexOf(".") + 1);
+    const tail = name2.slice(name2.lastIndexOf(".") + 1);
     if (flat(parts[parts.length - 1]) === flat(tail)) return true;
     if (/[_.]|[a-z][A-Z]/.test(value) && parts.some(isSecretName)) return true;
   }
   return false;
 }
 var flat = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-function segments2(name) {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z0-9]{1,64}/).filter(Boolean);
+function segments2(name2) {
+  return name2.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z0-9]{1,64}/).filter(Boolean);
 }
 var STRONG = /secret|passw(?:or)?d|passphrase|credential|authori[sz]ation|cookie|^pass$|^pw$|pwd$|^creds?$|(?:api|access|private|signing|master|encryption|auth|app)key|token(?!s$|iz)/;
 var WEAK = /* @__PURE__ */ new Set(["key", "auth", "private", "master", "signing", "encryption", "crypt"]);
@@ -2178,12 +2334,12 @@ var ABOUT = /* @__PURE__ */ new Set([
   "cmd"
 ]);
 var WHOLE = /* @__PURE__ */ new Set(["auth", "identitytoken", "clientcertificatedata"]);
-function isSecretName(name) {
-  if (/^(?:old)?pwd$/i.test(name)) return false;
-  const segs = segments2(name);
+function isSecretName(name2) {
+  if (/^(?:old)?pwd$/i.test(name2)) return false;
+  const segs = segments2(name2);
   if (segs.length === 0 || ABOUT.has(segs[segs.length - 1])) return false;
   if (WHOLE.has(segs.join(""))) return true;
-  const envStyle = !/[a-z]/.test(name);
+  const envStyle = !/[a-z]/.test(name2);
   return segs.some((s, i) => {
     if (STRONG.test(s)) return true;
     if (s === "key") return envStyle || i > 0 && KEY_QUALIFIER.has(segs[i - 1]);
@@ -2192,9 +2348,9 @@ function isSecretName(name) {
 }
 var BASE64ISH = /^[A-Za-z0-9+/=_-]{8,8192}$/;
 var credentialBlob = (v) => BASE64ISH.test(v) && (/[0-9+/=]/.test(v) || /[a-z]/.test(v) && /[A-Z]/.test(v));
-function secretValue(name, value, literal = false) {
-  if (!isSecretName(name) || namesSecret(value, name, literal)) return false;
-  return flat(name) === "auth" ? credentialBlob(value) : true;
+function secretValue(name2, value, literal = false) {
+  if (!isSecretName(name2) || namesSecret(value, name2, literal)) return false;
+  return flat(name2) === "auth" ? credentialBlob(value) : true;
 }
 function splitTrailing(value) {
   let end = value.length;
@@ -2294,12 +2450,12 @@ var RULES = [
   {
     id: "auth-header",
     re: /\b((?:proxy-)?authorization|x-api-key)(["']?\s{0,4}[:=]\s{0,4}["']?)((?:bearer|basic|token)\s{1,4})?([^\s"',;]{1,4096})/gi,
-    replace: (m, name, sep, scheme, value) => PLACEHOLDER.test(value) || isTag(value) ? m : `${name}${sep}${scheme ?? ""}${tag2("auth-header")}`
+    replace: (m, name2, sep2, scheme, value) => PLACEHOLDER.test(value) || isTag(value) ? m : `${name2}${sep2}${scheme ?? ""}${tag2("auth-header")}`
   },
   {
     id: "cookie",
     re: /\b((?:set-)?cookie)(\s{0,4}:\s{0,4})[^\r\n]{1,4096}/gi,
-    replace: (_m, name, sep) => `${name}${sep}${tag2("cookie")}`
+    replace: (_m, name2, sep2) => `${name2}${sep2}${tag2("cookie")}`
   },
   {
     id: "url-password",
@@ -2341,7 +2497,7 @@ var RULES = [
     // aws configure set aws_secret_access_key X, npm config set //registry/:_authToken X.
     id: "cli-password",
     re: /(\bconfig(?:ure)?[ \t]{1,4}set[ \t]{1,4}(?:--?[\w-]{1,32}[ \t]{1,4}){0,3}([^\s="']{1,256})(?:=|[ \t]{1,4}))(["']?)([^\s"']{1,4096})/g,
-    replace: (m, prefix, name, quote2, value) => secretValue(name, value, quote2 !== "") ? `${prefix}${quote2}${tag2("cli-password")}` : m
+    replace: (m, prefix, name2, quote2, value) => secretValue(name2, value, quote2 !== "") ? `${prefix}${quote2}${tag2("cli-password")}` : m
   },
   {
     // --password X, --token=X, --api-key X, -storepass X. A value starting with - is the next flag, unless it came after =.
@@ -2357,22 +2513,22 @@ var RULES = [
     // {"Name": "DB_PASSWORD", "Value": "…"} as text: ECS task definitions, CloudFormation parameters.
     id: "secret-pair",
     re: /("(?:name|key|parametername|parameterkey)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}"([A-Za-z0-9_./:-]{1,128})"[ \t\r\n]{0,64},[ \t\r\n]{0,64}"(?:value|parametervalue)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}")((?:[^"\\\n]|\\.){1,16384})"/gi,
-    replace: (m, prefix, name, value) => secretValue(name, value, true) ? `${prefix}${tag2("secret-pair")}"` : m
+    replace: (m, prefix, name2, value) => secretValue(name2, value, true) ? `${prefix}${tag2("secret-pair")}"` : m
   },
   {
     id: "secret-pair",
     re: /("(?:value|parametervalue)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}")((?:[^"\\\n]|\\.){1,16384})("[ \t\r\n]{0,64},[ \t\r\n]{0,64}"(?:name|key|parametername|parameterkey)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}"([A-Za-z0-9_./:-]{1,128})")/gi,
-    replace: (m, prefix, value, suffix, name) => secretValue(name, value, true) ? `${prefix}${tag2("secret-pair")}${suffix}` : m
+    replace: (m, prefix, value, suffix, name2) => secretValue(name2, value, true) ? `${prefix}${tag2("secret-pair")}${suffix}` : m
   },
   {
     // - name: DB_PASSWORD
     //   value: hunter2        (Kubernetes env, GitHub Actions inputs)
     id: "secret-pair",
     re: /(\bname:[ \t]{1,4}["']?([A-Za-z0-9_.-]{1,128})["']?[ \t]{0,4}\r?\n[ \t]{0,64}value:[ \t]{1,4})(?:"((?:[^"\\\n]|\\.){1,16384})"|'([^'\n]{1,16384})'|([^\s#'"][^\r\n]{0,16383}))/g,
-    replace: (m, prefix, name, dq, sq, bare) => {
+    replace: (m, prefix, name2, dq, sq, bare) => {
       const value = dq ?? sq ?? bare?.trimEnd() ?? "";
       const quote2 = dq !== void 0 ? '"' : sq !== void 0 ? "'" : "";
-      if (!secretValue(name, value, quote2 !== "")) return m;
+      if (!secretValue(name2, value, quote2 !== "")) return m;
       return `${prefix}${quote2}${tag2("secret-pair")}${quote2}`;
     }
   },
@@ -2380,22 +2536,22 @@ var RULES = [
     // define('DB_PASSWORD', 'x'), os.environ.setdefault("SECRET_KEY", "x"), headers.set("Authorization", "x").
     id: "secret-pair",
     re: /(\b(?:define|setdefault|setenv|putenv|set|env|getenv|get|fetch|header|setHeader|append|add|put)\([ \t]{0,4}(["'])([A-Za-z0-9_.-]{1,128})\2[ \t]{0,4},[ \t]{0,4})(["'])((?:(?!\4)[^\n\\]|\\.){1,4096})\4/g,
-    replace: (m, prefix, _q, name, vq, value) => secretValue(name, value, true) ? `${prefix}${vq}${tag2("secret-pair")}${vq}` : m
+    replace: (m, prefix, _q, name2, vq, value) => secretValue(name2, value, true) ? `${prefix}${vq}${tag2("secret-pair")}${vq}` : m
   },
   {
     id: "env-secret",
     re: new RegExp(`${NAME}${SEP}((?:bearer|basic|token)[ \\t]{1,4})?(?:${QUOTED}|${BARE})`, "gi"),
-    replace: (m, name, sep, scheme, dq, sq, bare) => {
+    replace: (m, name2, sep2, scheme, dq, sq, bare) => {
       if (dq !== void 0 || sq !== void 0) {
         const value2 = dq ?? sq ?? "";
-        if (!secretValue(name, value2, true)) return m;
+        if (!secretValue(name2, value2, true)) return m;
         const quote2 = dq !== void 0 ? '"' : "'";
-        return `${name}${sep}${scheme ?? ""}${quote2}${tag2("env-secret")}${quote2}`;
+        return `${name2}${sep2}${scheme ?? ""}${quote2}${tag2("env-secret")}${quote2}`;
       }
       const [value, trailing] = splitTrailing(bare ?? "");
-      if (value.length < 4 || !secretValue(name, value)) return m;
-      if (/^["']?[ \t]*:[ \t]*$/.test(sep) && TYPE_NAME.test(value)) return m;
-      return `${name}${sep}${scheme ?? ""}${tag2("env-secret")}${trailing}`;
+      if (value.length < 4 || !secretValue(name2, value)) return m;
+      if (/^["']?[ \t]*:[ \t]*$/.test(sep2) && TYPE_NAME.test(value)) return m;
+      return `${name2}${sep2}${scheme ?? ""}${tag2("env-secret")}${trailing}`;
     }
   }
 ];
@@ -2449,10 +2605,10 @@ function jsonText(root) {
       }
       stack.push({ raw: "[" });
     } else if (v && typeof v === "object") {
-      const entries = Object.entries(v).filter(([, x]) => x !== void 0);
+      const entries2 = Object.entries(v).filter(([, x]) => x !== void 0);
       stack.push({ raw: "}" });
-      for (let i = entries.length - 1; i >= 0; i--) {
-        const [k, x] = entries[i];
+      for (let i = entries2.length - 1; i >= 0; i--) {
+        const [k, x] = entries2[i];
         stack.push({ value: x });
         stack.push({ raw: `${i > 0 ? "," : ""}${JSON.stringify(k)}:` });
       }
@@ -2472,11 +2628,11 @@ function redactValue(value, options = {}) {
     if (!v || typeof v !== "object") return v;
     if (depth >= MAX_DEPTH2) return text(jsonText(v));
     if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1, ""));
-    const entries = Object.entries(v);
-    const pair = entries.find(([k, x]) => PAIR_NAME.has(k.toLowerCase()) && typeof x === "string");
+    const entries2 = Object.entries(v);
+    const pair = entries2.find(([k, x]) => PAIR_NAME.has(k.toLowerCase()) && typeof x === "string");
     const pairName = pair && isSecretName(pair[1]) ? pair[1] : "";
     const keyOf = (k) => PAIR_NAME.has(k.toLowerCase()) ? "" : pairName && PAIR_VALUE.has(k.toLowerCase()) ? pairName : k;
-    return Object.fromEntries(entries.map(([k, x]) => [k, walk(x, depth + 1, keyOf(k))]));
+    return Object.fromEntries(entries2.map(([k, x]) => [k, walk(x, depth + 1, keyOf(k))]));
   };
   return walk(value, 0, "");
 }
@@ -2500,11 +2656,80 @@ var PATTERNS = [
   TOKEN_CHAR
 ];
 
+// src/ingest/import.ts
+import { closeSync as closeSync3, fstatSync as fstatSync3, lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync4, readSync } from "node:fs";
+import { join as join5 } from "node:path";
+
+// src/store/retention.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
+var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true, tripwire: true };
+function loadConfig(dataDir) {
+  let raw;
+  try {
+    raw = readFileSync2(join3(dataDir, "config.json"), "utf8");
+  } catch {
+    return { config: DEFAULTS, problem: null };
+  }
+  try {
+    const c = JSON.parse(raw);
+    const positive = (v, fallback) => typeof v === "number" && v > 0 ? v : fallback;
+    return {
+      config: {
+        retentionDays: positive(c.retention_days, DEFAULTS.retentionDays),
+        maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb),
+        storeContent: c.store_content !== false,
+        tripwire: c.tripwire !== false
+      },
+      problem: null
+    };
+  } catch (e) {
+    return { config: DEFAULTS, problem: `config.json is not valid JSON (${e.message}); using defaults` };
+  }
+}
+function prune(db, config, nowMs) {
+  const cutoffUs = (nowMs - config.retentionDays * 864e5) * 1e3;
+  let removed = 0;
+  const drop = (sessionId) => {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (sessionId === null) db.run("DELETE FROM events WHERE session_id IS NULL AND captured_us < ?", cutoffUs);
+      else db.run("DELETE FROM events WHERE session_id = ?", sessionId);
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+  };
+  const old = db.all("SELECT session_id AS id FROM events WHERE session_id IS NOT NULL GROUP BY session_id HAVING MAX(captured_us) < ?", cutoffUs);
+  for (const { id } of old) {
+    drop(id);
+    removed++;
+  }
+  drop(null);
+  const limit = config.maxDbMb * 1024 * 1024;
+  while (liveBytes(db) > limit) {
+    const oldest = db.get(
+      "SELECT session_id AS id FROM events WHERE session_id IS NOT NULL GROUP BY session_id ORDER BY MAX(captured_us) LIMIT 1"
+    );
+    if (!oldest) break;
+    drop(oldest.id);
+    removed++;
+  }
+  return { sessionsRemoved: removed };
+}
+function liveBytes(db) {
+  const pages = db.get("PRAGMA page_count")?.page_count ?? 0;
+  const free = db.get("PRAGMA freelist_count")?.freelist_count ?? 0;
+  const size = db.get("PRAGMA page_size")?.page_size ?? 4096;
+  return (pages - free) * size;
+}
+
 // src/ingest/ingest.ts
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync as readFileSync2, rmSync, statSync, unlinkSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync as readFileSync3, rmSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 var STRING_CAP = 256 * 1024;
 var STALE_TMP_MS = 60 * 60 * 1e3;
 var WRITE_TOOLS2 = /* @__PURE__ */ new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
@@ -2517,13 +2742,13 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
   } catch {
     return report2;
   }
-  for (const name of names) {
-    const file = join3(spoolDir, name);
-    if (name.startsWith(".tmp.")) {
+  for (const name2 of names) {
+    const file = join4(spoolDir, name2);
+    if (name2.startsWith(".tmp.")) {
       if (removeIfStale(file, now)) report2.staleTmpRemoved++;
       continue;
     }
-    if (!name.endsWith(".json")) continue;
+    if (!name2.endsWith(".json")) continue;
     let raw;
     let mtimeNs;
     try {
@@ -2540,37 +2765,15 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     const capturedUs = Number(mtimeNs / 1000n);
     let row;
     try {
-      row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
+      row = toRow(name2, raw, capturedUs, repoKeyOf, hmac);
     } catch (e) {
-      row = failedRow(capturedUs, errorText(name, e));
+      row = failedRow(capturedUs, errorText(name2, e));
     }
     if (row.parseError) report2.parseErrors++;
     db.exec("BEGIN IMMEDIATE");
     try {
-      const inserted = db.run(
-        `INSERT OR IGNORE INTO events
-           (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        name,
-        row.capturedUs,
-        row.sessionId,
-        row.promptId,
-        row.agentId,
-        row.hookEvent,
-        row.toolName,
-        row.toolUseId,
-        row.cwd,
-        row.repoKey,
-        row.payload,
-        row.parseError
-      );
-      if (inserted) {
-        const id = db.get("SELECT id FROM events WHERE spool_name = ?", name).id;
-        for (const t of row.touches) db.run("INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)", id, t.path, t.kind);
-        report2.ingested++;
-      } else {
-        report2.duplicates++;
-      }
+      if (insertRow(db, name2, row)) report2.ingested++;
+      else report2.duplicates++;
       db.exec("COMMIT");
     } catch (e) {
       db.exec("ROLLBACK");
@@ -2583,12 +2786,36 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
   }
   return report2;
 }
-function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
+function insertRow(db, name2, row, source = null) {
+  const inserted = db.run(
+    `INSERT OR IGNORE INTO events
+       (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    name2,
+    row.capturedUs,
+    row.sessionId,
+    row.promptId,
+    row.agentId,
+    row.hookEvent,
+    row.toolName,
+    row.toolUseId,
+    row.cwd,
+    row.repoKey,
+    row.payload,
+    row.parseError,
+    source
+  );
+  if (!inserted) return false;
+  const id = db.get("SELECT id FROM events WHERE spool_name = ?", name2).id;
+  for (const t of row.touches) db.run("INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)", id, t.path, t.kind);
+  return true;
+}
+function toRow(name2, raw, capturedUs, repoKeyOf, hmac) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return { ...failedRow(capturedUs, errorText(name, e)), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
+    return { ...failedRow(capturedUs, errorText(name2, e)), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
   }
   const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
   const hookEvent = str(p, "hook_event_name") ?? "unknown";
@@ -2614,7 +2841,7 @@ function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
       touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
     };
   } catch (e) {
-    return { ...meta, payload: "{}", parseError: errorText(name, e), touches: [] };
+    return { ...meta, payload: "{}", parseError: errorText(name2, e), touches: [] };
   }
 }
 function stored(p, hookEvent, hmac) {
@@ -2640,9 +2867,9 @@ function failedRow(capturedUs, parseError) {
   };
 }
 var QUOTED_INPUT = /(?:\.{3})?"[\s\S]{0,1024}"(?:\.{3})?(?= is not valid JSON$)/;
-function errorText(name, e) {
+function errorText(name2, e) {
   const message = e instanceof Error ? e.message : String(e);
-  return redactString(`${name}: ${message.replace(QUOTED_INPUT, '"\u2026"')}`);
+  return redactString(`${name2}: ${message.replace(QUOTED_INPUT, '"\u2026"')}`);
 }
 var INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$/i;
 function attachInstructionText(p, capturedUs) {
@@ -2652,10 +2879,10 @@ function attachInstructionText(p, capturedUs) {
 }
 var SKILL_NAME = /^[A-Za-z0-9][\w.-]{0,63}$/;
 function attachSkillText(p, capturedUs) {
-  const name = str(obj(p, "tool_input"), "skill");
+  const name2 = str(obj(p, "tool_input"), "skill");
   const cwd = str(p, "cwd");
-  if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
-  const candidates = [join3(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join3(cwd, ".claude", "skills", name, "SKILL.md")] : []];
+  if (!name2 || !SKILL_NAME.test(name2) || name2.includes("..")) return;
+  const candidates = [join4(homedir(), ".claude", "skills", name2, "SKILL.md"), ...cwd ? [join4(cwd, ".claude", "skills", name2, "SKILL.md")] : []];
   const found = [...new Set(candidates)].filter((path) => {
     try {
       return statSync(path).isFile();
@@ -2675,7 +2902,7 @@ function attachFileText(p, path, capturedUs) {
       return;
     }
     const changedSinceLoad = Number(st.mtimeNs / 1000n) > capturedUs;
-    const text = changedSinceLoad ? "" : readFileSync2(path, "utf8");
+    const text = changedSinceLoad ? "" : readFileSync3(path, "utf8");
     p._contrail = { text, sha256: text ? sha256(text) : null, changedSinceLoad };
   } catch {
     p._contrail ??= { missing: true };
@@ -2743,9 +2970,601 @@ function readSpoolFile(file) {
   try {
     const st = fstatSync(fd, { bigint: true });
     if (!st.isFile()) return null;
-    return { raw: readFileSync2(fd, "utf8"), mtimeNs: st.mtimeNs };
+    return { raw: readFileSync3(fd, "utf8"), mtimeNs: st.mtimeNs };
   } finally {
     closeSync(fd);
+  }
+}
+
+// src/ingest/transcript.ts
+import { createHash as createHash2 } from "node:crypto";
+import { closeSync as closeSync2, constants as constants2, createReadStream, fstatSync as fstatSync2, openSync as openSync2 } from "node:fs";
+var MAX_LINE = 32 * 1024 * 1024;
+var IGNORED = /* @__PURE__ */ new Set(["queue-operation", "atis-latch", "last-prompt", "cost-state", "mode", "summary", "custom-title", "ai-title", "tag", "agent-name", "file-history-snapshot", "pr-link", "progress"]);
+var YOURS = /* @__PURE__ */ new Set(["human", "sdk"]);
+var TASK = /^\s{0,64}<task-notification>/;
+var LOCAL = /^\s{0,64}<(?:bash-input|bash-stdout|bash-stderr|local-command-stdout|local-command-stderr|local-command-caveat)>/;
+var CAVEAT = /^\s{0,64}<local-command-caveat>/;
+var INTERRUPTED = /^\[Request interrupted by user/;
+var COMMAND_NAME = /<command-name>\s{0,8}\/?([^<\s]{1,200})\s{0,8}<\/command-name>/;
+var COMMAND_ARGS = /<command-args>([\s\S]{0,20000}?)<\/command-args>/;
+var SKILL_DIR = /^Base directory for this skill: ([^\n]{1,4096})\n/;
+var TranscriptStream = class {
+  events = [];
+  stats = { entries: 0, malformed: 0, unknown: 0, skipped: 0 };
+  lastUs = 0;
+  cwd = null;
+  turn = null;
+  lastPromptId = null;
+  said = null;
+  calls = /* @__PURE__ */ new Map();
+  seenCalls = /* @__PURE__ */ new Set();
+  batch = { message: null, key: null, results: [] };
+  compactTrigger = null;
+  instructionsSeen = /* @__PURE__ */ new Set();
+  localCommands = /* @__PURE__ */ new Set();
+  skillPosts = /* @__PURE__ */ new Map();
+  started = false;
+  sessionId;
+  agentId;
+  agentType;
+  store;
+  /** agentId: null for the main thread. store: how payloads are kept (as they are, unless given). */
+  constructor(sessionId, agentId = null, agentType = null, store2 = (p) => p) {
+    this.sessionId = sessionId;
+    this.agentId = agentId;
+    this.agentType = agentType;
+    this.store = store2;
+  }
+  /** One line of the file; null for a line that was too long to read. */
+  line(text) {
+    if (text === null) {
+      this.stats.malformed++;
+      return;
+    }
+    if (!text.trim()) return;
+    let e;
+    try {
+      e = JSON.parse(text);
+    } catch {
+      this.stats.malformed++;
+      return;
+    }
+    if (!e || typeof e !== "object" || Array.isArray(e)) {
+      this.stats.malformed++;
+      return;
+    }
+    this.entry(e);
+  }
+  /** One parsed entry. An entry of an odd shape is counted and skipped, never thrown. */
+  entry(e) {
+    this.stats.entries++;
+    try {
+      this.handle(e);
+    } catch {
+      this.stats.malformed++;
+    }
+  }
+  end() {
+    this.flush();
+    if (!this.agentId) {
+      this.stop();
+      return;
+    }
+    if (!this.started) return;
+    this.emit("SubagentStop", this.tick(), "subagent-stop", {
+      agent_id: this.agentId,
+      ...this.agentType ? { agent_type: this.agentType } : {},
+      last_assistant_message: this.said?.text ?? ""
+    }, { promptId: this.lastPromptId });
+  }
+  handle(e) {
+    const type = str(e, "type");
+    const sessionId = str(e, "sessionId");
+    if (sessionId && sessionId !== this.sessionId) {
+      this.stats.skipped++;
+      return;
+    }
+    if (!this.agentId && e.isSidechain === true) {
+      this.stats.skipped++;
+      return;
+    }
+    const cwd = str(e, "cwd");
+    if (cwd) this.cwd = cwd;
+    const promptId = str(e, "promptId");
+    if (promptId) this.lastPromptId = promptId;
+    if (this.agentId && !this.started && (type === "user" || type === "assistant" || type === "attachment")) {
+      this.started = true;
+      this.emit("SubagentStart", this.at(e), "subagent-start", { agent_id: this.agentId, ...this.agentType ? { agent_type: this.agentType } : {} }, { promptId: promptId ?? null });
+    }
+    switch (type) {
+      case "user":
+        return this.user(e);
+      case "assistant":
+        return this.assistant(e);
+      case "attachment":
+        return this.attachment(e);
+      case "system":
+        if (str(e, "subtype") === "compact_boundary") this.compactTrigger = str(obj(e, "compactMetadata"), "trigger") ?? null;
+        return;
+      default:
+        if (!type || !IGNORED.has(type)) this.stats.unknown++;
+    }
+  }
+  user(e) {
+    const content = field(obj(e, "message"), "content");
+    const promptId = str(e, "promptId") ?? null;
+    if (e.isCompactSummary === true) {
+      this.flush();
+      this.emit("PostCompact", this.at(e), this.key(e, "compact"), {
+        compact_summary: textOf(content),
+        ...this.compactTrigger ? { trigger: this.compactTrigger } : {}
+      }, { promptId });
+      this.compactTrigger = null;
+      this.instructionsSeen.clear();
+      return;
+    }
+    const results = arr(content).filter((b) => str(b, "type") === "tool_result");
+    if (results.length) {
+      results.forEach((block, i) => this.result(e, block, i, results.length));
+      return;
+    }
+    const text = textOf(content);
+    if (e.isMeta === true) {
+      this.meta(e, text, promptId);
+      return;
+    }
+    if (this.agentId) return;
+    this.prompt(e, text, promptId);
+  }
+  /** Text Claude Code added itself: never your words. A skill's body is kept on its Skill call. */
+  meta(e, text, promptId) {
+    if (promptId && CAVEAT.test(text)) this.localCommands.add(promptId);
+    const source = str(e, "sourceToolUseID");
+    const post = source ? this.skillPosts.get(source) : void 0;
+    if (!post) return;
+    const name2 = str(obj(post.payload, "tool_input"), "skill") ?? "";
+    const dir = SKILL_DIR.exec(text);
+    if (!dir || !name2 || name2.includes(":")) return;
+    const body = text.slice(dir[0].length).replace(/^\n/, "");
+    const path = `${dir[1].trim()}/SKILL.md`;
+    const extra = this.store({ _contrail: { text: body, sha256: sha2562(body), path } }, "InstructionsLoaded");
+    post.payload._contrail = extra._contrail;
+    this.skillPosts.delete(source);
+  }
+  prompt(e, text, promptId) {
+    if (!text.trim() || LOCAL.test(text)) return;
+    const task = TASK.test(text);
+    const origin = str(obj(e, "origin"), "kind") ?? str(e, "turnOrigin");
+    if (!task && origin && !YOURS.has(origin)) {
+      this.stats.skipped++;
+      return;
+    }
+    const command = task ? null : COMMAND_NAME.exec(text);
+    if (command && promptId && this.localCommands.has(promptId)) return;
+    this.flush();
+    this.stop();
+    const id = promptId ?? `transcript-${str(e, "uuid") ?? this.stats.entries}`;
+    this.turn = id;
+    this.said = null;
+    if (command) {
+      const name2 = command[1].replace(/^\//, "");
+      const args = (COMMAND_ARGS.exec(text)?.[1] ?? "").trim();
+      this.emit("UserPromptSubmit", this.at(e), this.key(e, "prompt"), { prompt: `/${name2}${args ? ` ${args}` : ""}` }, { promptId: id });
+      this.emit("UserPromptExpansion", this.at(e), this.key(e, "expansion"), { command_name: name2, command_args: args }, { promptId: id });
+      return;
+    }
+    this.emit("UserPromptSubmit", this.at(e), this.key(e, "prompt"), { prompt: text }, { promptId: id });
+  }
+  result(e, block, index, count2) {
+    const id = str(block, "tool_use_id");
+    const call = id ? this.calls.get(id) : void 0;
+    if (!id || !call) {
+      this.stats.skipped++;
+      return;
+    }
+    this.calls.delete(id);
+    const promptId = str(e, "promptId") ?? null;
+    if (promptId) {
+      call.pre.promptId = promptId;
+      call.pre.payload.prompt_id = promptId;
+    }
+    const denial = str(e, "toolDenialKind");
+    if (denial) {
+      const reason = textOf(field(block, "content"));
+      this.emit("PermissionDenied", this.at(e), this.key(e, `denied-${index}`), { tool_name: call.name, tool_input: call.input, tool_use_id: id, reason, denial_kind: denial }, { promptId, toolName: call.name, toolUseId: id });
+      return;
+    }
+    const content = field(block, "content");
+    const text = textOf(content);
+    const interrupted = INTERRUPTED.test(text);
+    const base = { tool_name: call.name, tool_input: call.input, tool_use_id: id };
+    const ids = { promptId, toolName: call.name, toolUseId: id };
+    const key = this.key(e, `result-${index}`);
+    if (field(block, "is_error") === true || interrupted) {
+      this.emit("PostToolUseFailure", this.at(e), key, { ...base, error: text, is_interrupt: interrupted }, ids);
+    } else {
+      const structured = count2 === 1 ? e.toolUseResult : void 0;
+      const post = this.emit("PostToolUse", this.at(e), key, { ...base, tool_response: structured ?? content }, ids);
+      if (call.name === "Skill") this.skillPosts.set(id, post);
+    }
+    this.batch.key ??= key;
+    this.batch.results.push({ tool_use_id: id, tool_name: call.name, tool_input: call.input, tool_response: content ?? "" });
+  }
+  assistant(e) {
+    const message = obj(e, "message");
+    const messageId = str(message, "id") ?? str(e, "requestId") ?? str(e, "uuid") ?? null;
+    if (this.batch.results.length && messageId !== this.batch.message) this.flush();
+    this.batch.message = messageId;
+    const content = field(message, "content");
+    const blocks = typeof content === "string" ? [{ type: "text", text: content }] : arr(content);
+    blocks.forEach((b, i) => {
+      const type = str(b, "type");
+      if (type === "text") {
+        const text = str(b, "text");
+        if (text?.trim()) this.said = { text, key: this.key(e, `text-${i}`) };
+        return;
+      }
+      if (type !== "tool_use") return;
+      const id = str(b, "id");
+      const name2 = str(b, "name");
+      if (!id || !name2) {
+        this.stats.skipped++;
+        return;
+      }
+      if (this.seenCalls.has(id)) return;
+      this.seenCalls.add(id);
+      const input = obj(b, "input") ?? {};
+      const pre = this.emit("PreToolUse", this.at(e), this.key(e, `call-${i}`), { tool_name: name2, tool_input: input, tool_use_id: id }, { toolName: name2, toolUseId: id });
+      this.calls.set(id, { name: name2, input, pre });
+    });
+  }
+  attachment(e) {
+    const a = obj(e, "attachment");
+    const type = str(a, "type");
+    if (type === "instructions") {
+      arr(field(a, "files")).forEach((f, i) => {
+        const path = str(f, "path");
+        const text = str(f, "content");
+        if (!path || text === void 0) return;
+        const seen = `${path}\0${sha2562(text)}`;
+        if (this.instructionsSeen.has(seen)) return;
+        this.instructionsSeen.add(seen);
+        this.emit("InstructionsLoaded", this.at(e), this.key(e, `instructions-${i}`), {
+          file_path: path,
+          memory_type: str(f, "type") ?? "",
+          // The text as the transcript holds it: what the agent was given, not the file as it is now.
+          _contrail: { text, sha256: sha2562(text), fromTranscript: true }
+        }, {});
+      });
+      return;
+    }
+    if (type === "queued_command" && !this.agentId && a?.isMeta !== true) {
+      const text = textOf(field(a, "prompt"));
+      if (!text.trim()) return;
+      const origin = str(obj(a, "origin"), "kind");
+      if (!TASK.test(text) && (str(a, "commandMode") !== "prompt" || origin && !YOURS.has(origin))) {
+        this.stats.skipped++;
+        return;
+      }
+      this.emit("UserPromptSubmit", this.at(e), this.key(e, "queued"), { prompt: text }, { promptId: `queued-${str(e, "uuid") ?? this.stats.entries}` });
+    }
+  }
+  /** Closes the current batch: the results the model received together, in one PostToolBatch. */
+  flush() {
+    if (!this.batch.results.length) return;
+    this.emit("PostToolBatch", this.tick(), `${this.batch.key}/batch`, { tool_calls: this.batch.results }, { promptId: this.lastPromptId });
+    this.batch = { message: this.batch.message, key: null, results: [] };
+  }
+  /** The end of a turn: the agent's last words in it, for display only. */
+  stop() {
+    if (this.agentId || !this.turn || !this.said) return;
+    this.emit("Stop", this.tick(), `${this.said.key}/stop`, { last_assistant_message: this.said.text }, { promptId: this.turn });
+    this.said = null;
+  }
+  emit(hook, us, key, body, ids) {
+    const raw = {
+      hook_event_name: hook,
+      session_id: this.sessionId,
+      ...this.cwd ? { cwd: this.cwd } : {},
+      ...ids.promptId ? { prompt_id: ids.promptId } : {},
+      ...this.agentId ? { agent_id: this.agentId } : {},
+      ...body
+    };
+    const event = {
+      key: `${this.agentId ?? "main"}/${key}`,
+      hook,
+      us,
+      promptId: ids.promptId ?? null,
+      agentId: this.agentId,
+      toolName: ids.toolName ?? null,
+      toolUseId: ids.toolUseId ?? null,
+      cwd: this.cwd,
+      touches: hook === "PostToolUse" ? touchesOf(raw, this.cwd ?? "") : [],
+      // Stored form at once, so a long transcript is never held in memory unredacted.
+      payload: this.store(raw, hook)
+    };
+    this.events.push(event);
+    return event;
+  }
+  /** The entry's time in microseconds, kept strictly increasing so file order is event order. */
+  at(e) {
+    const ms = Date.parse(str(e, "timestamp") ?? "");
+    this.lastUs = Math.max(Number.isFinite(ms) ? ms * 1e3 : 0, this.lastUs + 1);
+    return this.lastUs;
+  }
+  tick() {
+    return ++this.lastUs;
+  }
+  key(e, what) {
+    return `${str(e, "uuid") ?? `line-${this.stats.entries}`}/${what}`;
+  }
+};
+function textOf(content) {
+  if (typeof content === "string") return content;
+  return arr(content).map((b) => str(b, "type") === "text" ? str(b, "text") ?? "" : "").filter(Boolean).join("\n");
+}
+async function* readLines(file, max = MAX_LINE) {
+  const fd = openRegular(file);
+  let buf = "";
+  let skipping = false;
+  for await (const chunk of createReadStream("", { fd, encoding: "utf8", highWaterMark: 1 << 16 })) {
+    let start = 0;
+    for (; ; ) {
+      const nl = chunk.indexOf("\n", start);
+      if (nl < 0) {
+        if (!skipping) {
+          buf += chunk.slice(start);
+          if (buf.length > max) {
+            buf = "";
+            skipping = true;
+          }
+        }
+        break;
+      }
+      if (skipping) {
+        skipping = false;
+        yield null;
+      } else {
+        yield buf + chunk.slice(start, nl);
+      }
+      buf = "";
+      start = nl + 1;
+    }
+  }
+  if (skipping) yield null;
+  else if (buf) yield buf;
+}
+function openRegular(file) {
+  const fd = openSync2(file, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0) | (constants2.O_NONBLOCK ?? 0));
+  if (!fstatSync2(fd).isFile()) {
+    closeSync2(fd);
+    throw new Error(`${file} is not a regular file`);
+  }
+  return fd;
+}
+function sha2562(s) {
+  return createHash2("sha256").update(s).digest("hex");
+}
+
+// src/ingest/import.ts
+var UNIT_MS = { h: 36e5, d: 864e5, w: 6048e5 };
+function parseSince(value, nowMs) {
+  const v = value.trim();
+  const d = /^(\d{1,6})([hdw])$/i.exec(v);
+  if (d) return nowMs - Number(d[1]) * UNIT_MS[d[2].toLowerCase()];
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) {
+    const ms = Date.parse(v);
+    if (Number.isFinite(ms)) return ms;
+  }
+  throw new ContrailError("--since takes a date such as 2026-09-01, or a duration back from now such as 12h, 30d or 2w.");
+}
+function projectsRoot(env, home) {
+  return join5(env.CLAUDE_CONFIG_DIR || join5(home, ".claude"), "projects");
+}
+var SESSION_FILE = /^[\w-]{1,128}\.jsonl$/;
+function listSessions(root, folder) {
+  const folders = folder ? [folder] : entries(root).map((name2) => join5(root, name2));
+  const out = [];
+  for (const dir of folders) {
+    for (const name2 of entries(dir)) {
+      if (!SESSION_FILE.test(name2)) continue;
+      const file = join5(dir, name2);
+      const st = regularFile(file);
+      if (!st) continue;
+      const sessionId = name2.slice(0, -".jsonl".length);
+      const subDir = join5(dir, sessionId, "subagents");
+      const subagents = entries(subDir).filter((n) => /^agent-[\w-]{1,128}\.jsonl$/.test(n) && regularFile(join5(subDir, n))).map((n) => {
+        const agentId = n.slice("agent-".length, -".jsonl".length);
+        return { file: join5(subDir, n), agentId, agentType: agentTypeOf(join5(subDir, `agent-${agentId}.meta.json`)) };
+      });
+      out.push({ sessionId, file, mtimeMs: st.mtimeMs, subagents });
+    }
+  }
+  return out.sort((a, b) => a.mtimeMs - b.mtimeMs || a.file.localeCompare(b.file));
+}
+async function importSessions(db, files, o) {
+  const summary2 = { found: 0, sessions: [], stats: { entries: 0, malformed: 0, unknown: 0, skipped: 0 } };
+  const done = /* @__PURE__ */ new Set();
+  for (const f of files) {
+    const cwd = firstCwd(f.file);
+    if (cwd === null ? !o.belongs(null) : !o.belongs(cwd)) continue;
+    summary2.found++;
+    const result = { sessionId: f.sessionId, file: f.file, cwd, status: "imported", events: 0, lastUs: null };
+    summary2.sessions.push(result);
+    if (cwd === null) {
+      result.status = "unparseable";
+      continue;
+    }
+    const lastUs = f.mtimeMs * 1e3;
+    if (done.has(f.sessionId)) result.status = "duplicate";
+    else if (lastUs < o.retentionUs) result.status = "expired";
+    else if (o.sinceUs !== null && lastUs < o.sinceUs) result.status = "older";
+    else if (db && recordedLive(db, f.sessionId)) result.status = "recorded";
+    if (result.status !== "imported") continue;
+    done.add(f.sessionId);
+    const parsed = await parseSession(f, o.hmac);
+    for (const k of Object.keys(summary2.stats)) summary2.stats[k] += parsed.stats[k];
+    result.lastUs = parsed.events.reduce((max, e) => Math.max(max, e.us), 0) || null;
+    if (!parsed.events.length) {
+      result.status = parsed.stats.entries ? "empty" : "unparseable";
+      continue;
+    }
+    if (result.lastUs !== null && result.lastUs < o.retentionUs) {
+      result.status = "expired";
+      continue;
+    }
+    if (o.sinceUs !== null && result.lastUs !== null && result.lastUs < o.sinceUs) {
+      result.status = "older";
+      continue;
+    }
+    if (o.dryRun || !db) {
+      result.events = db ? parsed.events.filter((e) => !isStored(db, name(f.sessionId, e))).length : parsed.events.length;
+      if (!result.events) result.status = "imported-before";
+      continue;
+    }
+    if (o.maxBytes !== void 0 && liveBytes(db) >= o.maxBytes) {
+      result.status = "full";
+      continue;
+    }
+    const stored2 = store(db, f.sessionId, parsed.events, o.repoKeyOf);
+    if (stored2 === null) result.status = "recorded";
+    else if (stored2 === 0) result.status = "imported-before";
+    else result.events = stored2;
+  }
+  return summary2;
+}
+async function parseSession(f, hmac) {
+  const keep = (p, hook) => stored(p, hook, hmac);
+  const streams = [new TranscriptStream(f.sessionId, null, null, keep)];
+  const files = [f.file];
+  for (const s of f.subagents) {
+    streams.push(new TranscriptStream(f.sessionId, s.agentId, s.agentType, keep));
+    files.push(s.file);
+  }
+  const stats = { entries: 0, malformed: 0, unknown: 0, skipped: 0 };
+  const events = [];
+  for (const [i, stream] of streams.entries()) {
+    try {
+      for await (const line of readLines(files[i])) stream.line(line);
+    } catch {
+      stats.malformed++;
+    }
+    stream.end();
+    for (const k of Object.keys(stats)) stats[k] += stream.stats[k];
+    events.push(...stream.events);
+  }
+  return { events, stats };
+}
+var name = (sessionId, e) => `transcript:${sessionId}:${e.key}`;
+var isStored = (db, spoolName) => Boolean(db.get("SELECT 1 FROM events WHERE spool_name = ?", spoolName));
+function recordedLive(db, sessionId) {
+  try {
+    return Boolean(db.get("SELECT 1 FROM events WHERE session_id = ? AND source IS NULL LIMIT 1", sessionId));
+  } catch {
+    return Boolean(db.get("SELECT 1 FROM events WHERE session_id = ? LIMIT 1", sessionId));
+  }
+}
+var CHUNK = 500;
+function store(db, sessionId, events, repoKeyOf) {
+  let added = 0;
+  for (let i = 0; i < events.length; i += CHUNK) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (recordedLive(db, sessionId)) {
+        db.exec("ROLLBACK");
+        return null;
+      }
+      for (const e of events.slice(i, i + CHUNK)) {
+        const row = {
+          capturedUs: e.us,
+          sessionId,
+          promptId: e.promptId,
+          agentId: e.agentId,
+          hookEvent: e.hook,
+          toolName: e.toolName,
+          toolUseId: e.toolUseId,
+          cwd: e.cwd,
+          repoKey: e.cwd ? repoKeyOf(e.cwd) : null,
+          payload: JSON.stringify(e.payload),
+          parseError: null,
+          touches: e.touches
+        };
+        if (insertRow(db, name(sessionId, e), row, "transcript")) added++;
+      }
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  return added;
+}
+function firstCwd(file, limit = 4 * 1024 * 1024) {
+  let fd;
+  try {
+    fd = openRegular(file);
+  } catch {
+    return null;
+  }
+  try {
+    const buf = Buffer.alloc(64 * 1024);
+    let text = "";
+    for (let read = 0; read < limit; ) {
+      const n = readSync(fd, buf, 0, buf.length, read);
+      if (n <= 0) break;
+      read += n;
+      text += buf.toString("utf8", 0, n);
+      let nl;
+      while ((nl = text.indexOf("\n")) >= 0) {
+        const line = text.slice(0, nl);
+        text = text.slice(nl + 1);
+        const cwd = cwdOf(line);
+        if (cwd) return cwd;
+      }
+    }
+    return cwdOf(text);
+  } finally {
+    closeSync3(fd);
+  }
+}
+function cwdOf(line) {
+  if (!line.includes('"cwd"')) return null;
+  try {
+    return str(JSON.parse(line), "cwd") ?? null;
+  } catch {
+    return null;
+  }
+}
+function agentTypeOf(meta) {
+  let fd;
+  try {
+    fd = openRegular(meta);
+  } catch {
+    return null;
+  }
+  try {
+    if (fstatSync3(fd).size > 64 * 1024) return null;
+    return str(JSON.parse(readFileSync4(fd, "utf8")), "agentType") ?? null;
+  } catch {
+    return null;
+  } finally {
+    closeSync3(fd);
+  }
+}
+function entries(dir) {
+  try {
+    return readdirSync2(dir).sort();
+  } catch {
+    return [];
+  }
+}
+function regularFile(path) {
+  try {
+    const st = lstatSync(path);
+    return st.isFile() ? st : null;
+  } catch {
+    return null;
   }
 }
 
@@ -2777,29 +3596,29 @@ function gitCommonDir(cwd) {
 }
 
 // src/paths.ts
-import { existsSync, readdirSync as readdirSync2 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync, readdirSync as readdirSync3 } from "node:fs";
+import { join as join6 } from "node:path";
 function resolveDataDir(flag, env, home, pluginData) {
   if (flag) return flag;
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
   if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
-  const base = join4(env.CLAUDE_CONFIG_DIR || join4(home, ".claude"), "plugins", "data");
-  const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
-  if (hits.length === 1) return join4(base, hits[0]);
+  const base = join6(env.CLAUDE_CONFIG_DIR || join6(home, ".claude"), "plugins", "data");
+  const hits = existsSync(base) ? readdirSync3(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
+  if (hits.length === 1) return join6(base, hits[0]);
   if (hits.length === 0) {
     throw new ContrailError(
       `No Contrail data directory in ${base} yet. Install the plugin in Claude Code (/plugin install contrail@contrail) and start a session, or set CONTRAIL_HOME to a data directory.`
     );
   }
-  const list = hits.map((h) => `  ${join4(base, h)}`).join("\n");
+  const list = hits.map((h) => `  ${join6(base, h)}`).join("\n");
   throw new ContrailError(`Found ${hits.length} Contrail data directories:
 ${list}
 Set CONTRAIL_HOME to pick one.`);
 }
 
 // src/query/blame.ts
-import { readFileSync as readFileSync3, statSync as statSync2 } from "node:fs";
+import { readFileSync as readFileSync5, statSync as statSync2 } from "node:fs";
 import { basename as basename6 } from "node:path";
 
 // src/engine/blame.ts
@@ -2949,6 +3768,636 @@ function blameBlocks(lines) {
 
 // src/query/sessions.ts
 import { basename as basename5 } from "node:path";
+
+// src/render/style.ts
+var sgr = (code) => (s) => s ? `\x1B[${code}m${s}\x1B[0m` : s;
+var GRADE_COLOR = {
+  DIRECT: sgr("1;32"),
+  LIKELY: sgr("1;36"),
+  POSSIBLE: sgr("33"),
+  UNKNOWN: sgr("90")
+};
+var pad = (g, width) => " ".repeat(Math.max(1, width - g.length));
+var PLAIN = {
+  on: false,
+  grade: (g, width = 9) => g + pad(g, width),
+  bold: (s) => s,
+  dim: (s) => s,
+  flag: (s) => s,
+  accent: (s) => s
+};
+var COLOR = {
+  on: true,
+  grade: (g, width = 9) => (GRADE_COLOR[g]?.(g) ?? g) + pad(g, width),
+  bold: sgr("1"),
+  dim: sgr("2"),
+  flag: sgr("1;35"),
+  accent: sgr("1;36")
+};
+function styleFor(env, isTTY) {
+  if (env.NO_COLOR) return PLAIN;
+  if (env.FORCE_COLOR && env.FORCE_COLOR !== "0") return COLOR;
+  return isTTY ? COLOR : PLAIN;
+}
+
+// src/render/why.ts
+var HEADING = "Where the values came from (data provenance, not the agent's reasons)";
+var FOOTER = [
+  `LIKELY means "this value first appeared in the agent's context from this source", not "this source made the agent act".`,
+  "Not observable: the agent's reasons for this action."
+];
+function sourceNote(g) {
+  if (g.source === "transcript") return "reconstructed from Claude Code's transcript by contrail import, not recorded live";
+  if (g.source === "both") return "partly reconstructed from Claude Code's transcript by contrail import, partly recorded live";
+  return null;
+}
+function sourceTag(g) {
+  if (g.source === "transcript") return "(from transcript)";
+  if (g.source === "both") return "(partly from transcript)";
+  return "";
+}
+function renderWhy(e, g, note, s = PLAIN) {
+  const out = [];
+  const a = e.action;
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  const prompt = g.prompts.find((p) => p.promptId === a.promptId);
+  out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
+  out.push(
+    s.dim(
+      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : a.status === "denied" ? ` \xB7 DENIED ${deniedBy(a.deniedBy)}, never ran${a.denial ? `: ${clip(a.denial, 100)}` : ""}` : ` \xB7 ${a.status.toUpperCase()}`)
+    )
+  );
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(`  ${source}`));
+  if (note) out.push(s.dim(`  ${note}`));
+  out.push("");
+  const best = bestPerGroup(e.traces);
+  const credited = new Set(best.filter((t) => t.token.role !== "hint").flatMap((t) => t.links.filter((l) => l.grade !== "UNKNOWN").map((l) => l.to)));
+  const shown = best.filter((t) => t.token.role !== "hint" || t.links.some((l) => l.grade !== "UNKNOWN" && !credited.has(l.to)));
+  const found = shown.filter((t) => t.links.some((l) => l.grade !== "UNKNOWN"));
+  const unfound = shown.filter((t) => !found.includes(t));
+  out.push(...inShort(e, found, unfound, inputs, s), "");
+  out.push(...requestedLines(e, s));
+  out.push(
+    !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
+  );
+  out.push("", s.bold(HEADING));
+  for (const t of found) trace(t, 1, out, inputs, s);
+  if (unfound.length) {
+    out.push(`  ${s.grade("UNKNOWN")}no observed source for: ${unfound.map((t) => clip(t.token.text, 80)).join(", ")}  ${s.dim("[R4]")}`);
+  }
+  if (!e.traces.length) out.push(s.dim("  nothing distinctive in this action to trace"));
+  const searched = e.traces[0]?.searched;
+  if (searched) {
+    out.push(s.dim(`  (searched ${searched.count} input${searched.count === 1 ? "" : "s"} in this agent's context before seq ${searched.beforeSeq})`));
+  }
+  out.push("");
+  const effects = e.effects.map((l) => ({ l, fx: g.effects.find((x) => x.id === l.to) })).filter((x) => !!x.fx);
+  if (effects.length) {
+    out.push(s.bold("Effects"));
+    const target = (fx) => clip(fx.target, 100);
+    const width = Math.max(...effects.map((x) => target(x.fx).length));
+    for (const { l, fx } of effects) {
+      out.push(`  ${s.grade(l.grade)}${target(fx).padEnd(width)}  ${effectWording(fx)}  ${s.dim(`[${l.rule} ${clip(fx.evidence, 40)}]`)}`);
+      for (const line of fx.patch.slice(0, 6)) out.push(s.dim(`      ${clip(line, 100)}`));
+    }
+    out.push("");
+  }
+  out.push(`${s.bold("Weakest link on this trail:")} ${s.grade(e.chainGrade, 0).trim()}`);
+  for (const line of FOOTER) out.push(s.dim(line));
+  const said = a.scope.agentId ? g.agentSaid.byAgent[a.scope.agentId] : a.promptId ? g.agentSaid.byPrompt[a.promptId] : void 0;
+  if (said) out.push(s.dim(`Agent said (shown for context, never used as evidence): "${clip(said, 220)}"`));
+  out.push(s.dim(`Blind spots: ${e.blindSpots.join("; ")}. No observed source is not the same as no source.`));
+  return `${out.join("\n")}
+`;
+}
+function inShort(e, found, unfound, inputs, s) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const t of found) {
+    const chain = [];
+    let cur = t;
+    let next;
+    while (cur) {
+      const link = cur.links.find((l) => l.grade === "LIKELY") ?? cur.links.find((l) => l.firstSeen) ?? cur.links.find((l) => l.grade !== "UNKNOWN");
+      const src = link?.to ? inputs.get(link.to) : void 0;
+      if (!link || !src) break;
+      chain.push({ link, src, value: cur.token.text });
+      if (!cur.upstream && cur.truncated) next = cur.truncated.next;
+      cur = cur.upstream?.trace;
+    }
+    if (!chain.length) continue;
+    const key = chain.map((c) => `${c.src.id}:${c.link.quote?.line ?? ""}`).join(">");
+    const group = groups.get(key) ?? { values: [], chain, next };
+    group.values.push(clip(t.token.text, 60));
+    groups.set(key, group);
+  }
+  const external = [...groups.values()].some((g) => g.chain.some((c) => c.src.trust === "external"));
+  const facts = [
+    ASKED[e.requested.verdict](s),
+    ...sensitivity(e.action).map((k) => s.flag(k)),
+    ...external ? [s.flag("values from external content")] : []
+  ];
+  const out = [s.bold("In short"), `  ${facts.join(s.dim(" \xB7 "))}`];
+  const listed = [...groups.values()].slice(0, 3);
+  for (const g of listed) {
+    out.push(`  ${s.accent(clip(g.values.join(", "), 110))}`);
+    g.chain.forEach(({ link, src, value }, i) => {
+      const where2 = link.quote?.line != null ? `${clip(src.label, 90)}:${link.quote.line}` : clip(src.label, 90);
+      const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+      const via = i > 0 && value !== g.chain[i - 1].value ? s.dim(`  for ${clip(value, 60)}`) : "";
+      out.push(`    ${s.dim("\u2190")} ${s.grade(link.grade)}${where2}  ${trust2}${via}`);
+    });
+    if (g.next !== void 0) out.push(`    ${s.dim(`\u2190 \u2026 further back${g.next ? `: contrail why ${callId(g.next)}` : ""}`)}`);
+  }
+  if (groups.size > listed.length) out.push(s.dim(`  (${groups.size - listed.length} more below)`));
+  if (unfound.length) out.push(`  ${s.dim("no observed source for:")} ${clip(unfound.map((t) => t.token.text).join(", "), 100)}`);
+  if (!found.length && !unfound.length) out.push(s.dim("  nothing distinctive in this action to trace"));
+  return out;
+}
+var ASKED = {
+  NAMED: () => "named in your words",
+  NAMED_NEGATED: (s) => s.flag("named, but your latest mention is negated"),
+  PARTLY_NAMED: () => "partly named in your words",
+  NOT_NAMED: (s) => s.flag("not named in your words"),
+  NOTHING_TO_MATCH: () => "nothing in it to match against your words"
+};
+function trace(t, depth, out, inputs, s) {
+  const pad3 = "  ".repeat(depth);
+  const firstUse2 = t.firstUse ? `, first used in ${callId(t.firstUse.actionId)} at seq ${t.firstUse.preSeq}` : "";
+  out.push(`${pad3}${s.accent(clip(t.token.text, 80))}  ${s.dim(`(${t.token.argPath}${firstUse2})`)}`);
+  for (const l of t.links) {
+    if (!l.to) {
+      out.push(`${pad3}  ${s.grade(l.grade)}${l.note}  ${s.dim(`[${l.rule}]`)}`);
+      continue;
+    }
+    const src = inputs.get(l.to);
+    if (!src) continue;
+    const where2 = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
+    out.push(`${pad3}  ${s.grade(l.grade)}${sourceWording(l, where2)}  ${s.dim(`[${l.rule}]`)}`);
+    if (l.quote?.text) out.push(`${pad3}           ${s.dim(l.quote.line != null ? `${l.quote.line}\u2502` : "\u2502")} ${clip(l.quote.text, 100)}`);
+    else if (l.quote && src.hashed) out.push(`${pad3}           ${s.dim(`${l.quote.line ?? ""}\u2502 (text not stored)`)}`);
+    const origin = originWording(src);
+    out.push(`${pad3}           ${src.trust === "external" ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` \xB7 returned by ${callId(src.producedBy)} (seq ${src.availableAt})` : "")}`);
+  }
+  if (t.links.every((l) => l.grade === "UNKNOWN") && depth > 1) out.push(s.dim(`${pad3}  the trail starts here: the reason is not observable`));
+  if (t.upstream) {
+    const u = t.upstream;
+    const heading = u.kind === "call" ? `how the agent came to call ${u.via?.tool} ${callId(u.via?.id ?? "")}:` : u.kind === "conduit" ? `that text was written by the agent (${u.via?.tool} ${callId(u.via?.id ?? "")}); following the same value back:` : "a compaction summary is agent-written; the same value before the compaction:";
+    out.push(s.dim(`${pad3}  ${heading}`));
+    trace(u.trace, depth + 2, out, inputs, s);
+  }
+  if (t.truncated) {
+    const next = t.truncated.next ? `; contrail why ${callId(t.truncated.next)} picks it up from there` : "";
+    out.push(s.dim(`${pad3}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
+  }
+}
+function sourceWording(l, where2) {
+  if (l.note === "you supplied it") return `you supplied it: ${where2}`;
+  if (l.note === "also in") return `also in ${where2}`;
+  if (l.grade === "LIKELY") return `only observed in ${where2}`;
+  if (l.firstSeen) return `could be from ${where2} (seen first)`;
+  if (l.note) return `${where2} (${l.note})`;
+  return `could be from ${where2}`;
+}
+var ORIGIN_WORDING = {
+  prompt: "your words",
+  template: "slash-command template",
+  instructions: "instructions file",
+  file: "repo file",
+  dependency_file: "dependency file, written by a third party",
+  search: "search output",
+  shell: "shell output",
+  web: "web page, as a model's extraction of it, not the page itself",
+  web_search: "web search results",
+  mcp: "MCP server result",
+  skill: "skill",
+  subagent_prompt: "agent-written instructions to a subagent",
+  subagent_result: "agent-written subagent report",
+  compaction: "agent-written compaction summary",
+  tool_output: "tool output"
+};
+function originWording(i) {
+  if (i.origin === "instructions") {
+    return i.trust === "local" ? "repo instructions (repo content, not you)" : "your instructions (user-level)";
+  }
+  return `${ORIGIN_WORDING[i.origin]} (${i.trust})`;
+}
+function requestedLines(e, s) {
+  const r = e.requested;
+  const quoted = r.sentence ? `"${clip(r.sentence.text, 80)}"` : "";
+  const tag3 = (t) => s.dim(`[${t}]`);
+  switch (r.verdict) {
+    case "NAMED":
+      return [
+        `Requested?  ${s.bold("NAMED")}  ${quoted}  ${tag3(`R8 ${r.grade}`)}`,
+        s.dim('            "Named" means your words contain it. It is not a judgment of intent or permission.')
+      ];
+    case "NAMED_NEGATED":
+      return [`Requested?  ${s.flag("NAMED, BUT YOUR LATEST MENTION IS NEGATED:")} ${quoted}  ${tag3(`R8 ${r.grade}`)}`];
+    case "PARTLY_NAMED":
+      return [`Requested?  ${s.bold("PARTLY NAMED")}  ${quoted} names ${clip(r.matched ?? "", 80)}, not everything this action targets  ${tag3(`R8 ${r.grade}`)}`];
+    case "NOT_NAMED": {
+      const yours = r.searched === 1 ? "Your 1 sentence this session does not" : `None of your ${r.searched} sentences this session`;
+      return [`Requested?  ${s.flag("NOT NAMED")}. ${yours} name it.  ${tag3("R8")}`];
+    }
+    case "NOTHING_TO_MATCH":
+      return [`Requested?  nothing specific in this action to match against your words  ${tag3("R8")}`];
+  }
+}
+function deniedBy(kind) {
+  if (kind === "user-rejected") return "by you";
+  if (kind === "permission-rule") return "by a permission rule";
+  if (kind?.startsWith("automode")) return "by auto mode";
+  return kind ? `(${clip(kind, 40)})` : "by auto mode";
+}
+function describe(a, g) {
+  const path = str(a.input, "file_path") ?? str(a.input, "notebook_path");
+  if (path) return clip(displayPath(path, g.env.cwd, g.env.home), 120);
+  if (a.tool === "Bash") return clip(str(a.input, "command") ?? "", 90);
+  if (a.tool === "WebFetch") return clip(str(a.input, "url") ?? "", 90);
+  if (a.tool === "Agent" || a.tool === "Task") return clip(str(a.input, "description") ?? str(a.input, "prompt") ?? "", 90);
+  if (a.tool === "Grep" || a.tool === "Glob") {
+    const where2 = str(a.input, "path");
+    return clip(`${JSON.stringify(str(a.input, "pattern") ?? "")}${where2 ? ` in ${displayPath(where2, g.env.cwd, g.env.home)}` : ""}`, 90);
+  }
+  if (a.tool === "WebSearch") return clip(JSON.stringify(str(a.input, "query") ?? ""), 90);
+  if (a.tool === "Skill") return clip(str(a.input, "skill") ?? "", 90);
+  if (a.tool.startsWith("mcp__")) return clip(`${a.tool.slice(5).replace("__", "/")} ${JSON.stringify(a.input)}`, 90);
+  return clip(JSON.stringify(a.input), 90);
+}
+function effectWording(fx) {
+  if (fx.evidence === "filePath") return "written by this call";
+  if (fx.evidence === "bashEditDiff") return "changed while this command ran";
+  if (fx.evidence === "commit_stdout") return "commit made by this command";
+  if (fx.evidence === "expected") return fx.kind === "network" ? "the command names this host; the request itself was not observed" : "expected for this kind of command, not observed";
+  return "request made and answered";
+}
+
+// src/render/session.ts
+var IMPORT_HINT = "Sessions from before Contrail was installed can be brought in from Claude Code's transcripts: run contrail import in a terminal.";
+var TRANSCRIPT_LEGEND = "(from transcript): reconstructed from Claude Code's transcript by contrail import, not recorded live. (partly from transcript): some of each.";
+var KIND = {
+  Read: "READ",
+  Grep: "SEARCH",
+  Glob: "SEARCH",
+  LS: "SEARCH",
+  Edit: "EDIT",
+  MultiEdit: "EDIT",
+  Write: "WRITE",
+  NotebookEdit: "EDIT",
+  Bash: "SHELL",
+  WebFetch: "WEB",
+  WebSearch: "WEB",
+  Agent: "AGENT",
+  Task: "AGENT",
+  Skill: "SKILL"
+};
+var kindOf = (a) => a.tool.startsWith("mcp__") ? "MCP" : KIND[a.tool] ?? "TOOL";
+var summary = (a, g) => kindOf(a) === "TOOL" ? `${a.tool} ${describe(a, g)}` : describe(a, g);
+var EXPLAINED = /* @__PURE__ */ new Set(["EDIT", "WRITE", "SHELL", "WEB", "MCP", "AGENT"]);
+function matchesFilter(a, g, filter) {
+  if (!filter) return true;
+  const kind = kindOf(a);
+  if (filter === "writes") return g.effects.some((e) => e.actionId === a.id && e.kind === "file");
+  if (filter === "shell") return kind === "SHELL";
+  if (filter === "network") return kind === "WEB" || kind === "MCP" || g.effects.some((e) => e.actionId === a.id && e.kind === "network");
+  if (filter === "mcp") return kind === "MCP";
+  if (filter === "subagents") return kind === "AGENT" || a.scope.agentId !== null;
+  return false;
+}
+function renderTrace(g, explanations, filter, s = PLAIN) {
+  const out = [];
+  const sessionId = g.sessionId;
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(source));
+  out.push(
+    s.dim(
+      `${counted(g.prompts.length, "turn")} \xB7 ${counted(g.actions.length, "tool call")} \xB7 ${counted(g.effects.filter((e) => e.kind === "file").length, "file effect")}` + (filter ? ` \xB7 showing --${filter}` : "")
+    )
+  );
+  const items = [];
+  if (!filter) {
+    for (const p of g.prompts) {
+      const head = p.from === "task" ? `${s.dim("background task report, not your words:")} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
+      items.push({ seq: p.seq, line: () => ["", `${s.bold(p.label)}  ${head}`] });
+    }
+  }
+  if (!filter || filter === "instructions") {
+    for (const i of g.inputs.filter((x) => x.origin === "instructions")) {
+      const who = i.scope.agentId ? s.dim(` [subagent ${callId(i.scope.agentId)}]`) : "";
+      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad2(`${i.availableAt}`, 4))} ${pad2("LOADED", 7)} ${clip(i.label, 100)}${who}  ${s.dim(originWording(i))}`] });
+    }
+  }
+  if (!filter) {
+    for (const i of g.inputs.filter((x) => x.origin === "compaction")) {
+      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad2(`${i.availableAt}`, 4))} ${s.dim("COMPACTED  earlier context now visible only through the summary")}`] });
+    }
+  }
+  for (const a of g.actions) {
+    if (filter === "instructions" || !matchesFilter(a, g, filter)) continue;
+    items.push({ seq: a.preSeq, line: () => actionLines(a, g, explanations.get(a.id), inputs, s) });
+  }
+  items.sort((a, b) => a.seq - b.seq);
+  for (const item of items) out.push(...item.line());
+  if (!items.length) out.push("", s.dim("  nothing matches this filter"));
+  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
+  return `${out.join("\n")}
+`;
+}
+function actionLines(a, g, e, inputs, s) {
+  const kind = kindOf(a);
+  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+  const failed = a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? s.flag(` ${a.status.toUpperCase()}`) : "";
+  const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${summary(a, g)}${who}${failed}`];
+  if (!e) return lines;
+  const detail = trailDetail(e, inputs, s);
+  if (detail) lines.push(`         ${s.dim("\u21B3")} ${detail}`);
+  const effects = g.effects.filter((x) => x.actionId === a.id && x.kind !== "network");
+  if (effects.length && kind === "SHELL") {
+    const shown = effects.slice(0, 4).map((x) => clip(x.target, 80)).join(", ") + (effects.length > 4 ? `, +${effects.length - 4} more` : "");
+    const how = effects.every((x) => x.evidence === "expected") ? s.dim(" (expected, not observed)") : "";
+    lines.push(`         ${s.dim("\u2192")} ${shown}${how}`);
+  }
+  return lines;
+}
+function renderWatch(g, prompts, actions, explanations, findings, s = PLAIN) {
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  const byAction = new Map(findings.map((f) => [f.action.id, f]));
+  const at = (seq) => localTime(g.timeUs[seq - 1] ?? 0).slice(-5);
+  const items = [];
+  for (const p of prompts) {
+    const head = p.from === "task" ? `${s.dim("background task report, not your words:")} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
+    items.push({ seq: p.seq, lines: [`${s.dim(at(p.seq))}    ${s.bold(p.label)}  ${head}`] });
+  }
+  for (const a of actions) {
+    const f = byAction.get(a.id);
+    const mark = f?.externalUpstream ? s.flag("\u25B2") : f && f.requested === "NOT_NAMED" ? s.flag("\u25B3") : " ";
+    const lines = actionLines(a, g, explanations.get(a.id), inputs, s);
+    items.push({ seq: a.preSeq, lines: [`${s.dim(at(a.preSeq))} ${mark}${lines[0].slice(1)}`, ...lines.slice(1).map((l) => `      ${l}`)] });
+  }
+  items.sort((x, y) => x.seq - y.seq);
+  return items.map((i) => `${i.lines.join("\n")}
+`).join("");
+}
+function renderWatchEnds(g, ended, s = PLAIN) {
+  const at = (seq) => localTime(g.timeUs[(seq ?? 1) - 1] ?? 0).slice(-5);
+  return ended.filter((a) => a.status !== "ok").map((a) => `${s.dim(at(a.postSeq))}   ${s.dim(pad2(`${a.preSeq}`, 4))} ${s.flag(a.status.toUpperCase())}${a.status === "denied" && a.denial ? s.dim(`  ${clip(a.denial, 100)}`) : ""}
+`).join("");
+}
+function trailDetail(e, inputs, s) {
+  const head = headlineTrace(e);
+  const from = head ? traceSource(head, inputs, s) : "";
+  const found = from || (e.traces.length ? `${s.grade("UNKNOWN", 0).trim()} ${s.dim("no observed source")}` : "");
+  const asked = e.requested.verdict === "NAMED" ? s.dim("named by you") : e.requested.verdict === "NOT_NAMED" ? s.flag("not named by you") : "";
+  return [found, asked].filter(Boolean).join("   ");
+}
+function traceSource(t, inputs, s) {
+  const link = t.links.find((l) => l.grade !== "UNKNOWN");
+  const src = link?.to ? inputs.get(link.to) : void 0;
+  if (!src || !link) return "";
+  const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+  return `${s.grade(link.grade, 0).trim()} ${clip(t.token.text, 80)} \u2190 ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""} ${trust2}`;
+}
+function renderTree(g, forest, omitted, s = PLAIN) {
+  const out = [];
+  const sessionId = g.sessionId;
+  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(source));
+  out.push(s.dim("Each action sits under the call whose output first held its headline value. Data flow, not the agent's reasons."));
+  for (const root of forest) {
+    out.push("", rootLine(root, g, s));
+    root.children.forEach((child, i) => nodeLines(child, "", i === root.children.length - 1, g, s, out));
+  }
+  if (omitted) out.push("", s.dim(`${omitted} later actions are not shown; run contrail trace for the full timeline.`));
+  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
+  return `${out.join("\n")}
+`;
+}
+function rootLine(root, g, s) {
+  if (root.kind === "unknown") return s.bold("no observed source");
+  if (root.kind === "nothing") return s.bold("nothing to trace") + s.dim(" (no values in these calls to follow)");
+  const src = root.source;
+  const prompt = src.origin === "prompt" ? g.prompts.find((p) => `prompt:${p.promptId}` === src.id) : void 0;
+  const what = prompt ? `${clip(src.label, 100)}  "${clip(prompt.text, 70)}"` : clip(src.label, 100);
+  return `${s.bold(what)}  ${src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`;
+}
+function nodeLines(node, prefix, last, g, s, out) {
+  const a = node.action;
+  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+  const failed = a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? s.flag(` ${a.status.toUpperCase()}`) : "";
+  const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : "";
+  const external = node.source?.trust === "external" ? ` ${s.flag("(external)")}` : "";
+  const via = node.link && node.token ? `  ${s.dim("\u2190")} ${s.grade(node.link.grade, 0).trim()} ${clip(node.token, 80)}${line}${external}` : "";
+  out.push(`${s.dim(prefix + (last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 "))}${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kindOf(a), 7)} ${clip(summary(a, g), 60)}${who}${failed}${via}`);
+  const next = prefix + (last ? "    " : "\u2502   ");
+  node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
+}
+function renderStatusline(g, findings, s = PLAIN) {
+  const name2 = s.dim("contrail");
+  if (!g) return `${name2} ${s.dim("recording")}`;
+  const external = findings.filter((f) => f.externalUpstream).length;
+  const unnamed = findings.filter((f) => !f.externalUpstream && f.requested === "NOT_NAMED").length;
+  const parts = [
+    external ? s.flag(`\u25B2 ${external} from external content`) : "",
+    unnamed ? s.bold(`\u25B3 ${unnamed} not named by you`) : "",
+    s.dim(`${g.actions.length} call${g.actions.length === 1 ? "" : "s"}`)
+  ].filter(Boolean);
+  return `${name2} ${parts.join(s.dim(" \xB7 "))}`;
+}
+function renderFind(value, hits, scanned, s = PLAIN) {
+  const found = hits.filter((h) => h.sightings.length);
+  const out = [`${s.bold(`"${clip(value, 80)}"`)} ${s.dim(`in ${found.length} of ${scanned} session${scanned === 1 ? "" : "s"}`)}`];
+  if (!found.length) {
+    out.push("", `  ${s.dim("No recorded input or call contains it. Matching is whole-token and literal; no observed source is not the same as no source.")}`);
+    return `${out.join("\n")}
+`;
+  }
+  for (const { graph: g, sightings } of found) {
+    const sessionId = g.sessionId;
+    const first = g.prompts.find((p) => p.from === "you");
+    const tag3 = sourceTag(g);
+    out.push("", `${s.bold("Session")} ${sessionId.slice(0, 8)}${tag3 ? ` ${s.bold(tag3)}` : ""}  ${s.dim(first ? `"${clip(first.text, 70)}"` : "")}`);
+    let seenSource = false;
+    for (const hit of sightings) {
+      if (hit.source) {
+        const src = hit.source.input;
+        const where2 = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ""}`;
+        const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("HELD", 6)} ${where2}  ${trust2}${seenSource ? "" : `  ${s.accent("first seen")}`}`);
+        seenSource = true;
+        if (hit.source.text) out.push(`              ${s.dim(hit.source.line != null ? `${hit.source.line}\u2502` : "\u2502")} ${clip(hit.source.text, 96)}`);
+        else if (src.hashed) out.push(`              ${s.dim(`${hit.source.line ?? ""}\u2502 (text not stored)`)}`);
+      } else if (hit.use) {
+        const a = hit.use.action;
+        const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
+        const kinds = hit.use.kinds.length ? `  ${s.flag(hit.use.kinds.join(" \xB7 "))}` : "";
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("USED", 6)} ${kindOf(a)} ${clip(summary(a, g), 80)} ${s.dim(`(${hit.use.argPath})`)}${who}${kinds}`);
+      }
+    }
+  }
+  out.push("", s.dim(`HELD: an input that held the value. USED: a call whose arguments contain it. Run ${s.bold("contrail why")} on a call for its graded trail.`));
+  if (found.some((h) => h.graph.source !== "hooks")) out.push(s.dim(TRANSCRIPT_LEGEND));
+  return `${out.join("\n")}
+`;
+}
+function renderSessions(sessions2, s = PLAIN) {
+  if (!sessions2.length) return `No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.
+${IMPORT_HINT}
+`;
+  const mixed = sessions2.some((x) => x.graph.source !== "hooks");
+  const SOURCE_WORD = { hooks: "live", transcript: "transcript", both: "both" };
+  const head = ["SESSION", ...mixed ? ["SOURCE"] : [], "LAST ACTIVE", "TURNS", "READS", "WRITES", "SHELL", "WEB/MCP", "SUBAGENTS", "FLAGGED", "FIRST PROMPT"];
+  const rows = sessions2.map((x) => {
+    const g = x.graph;
+    const count2 = (kinds) => g.actions.filter((a) => kinds.includes(kindOf(a))).length;
+    const subagents = new Set(g.actions.map((a) => a.scope.agentId).filter(Boolean)).size;
+    return [
+      x.id.slice(0, 8),
+      ...mixed ? [SOURCE_WORD[g.source]] : [],
+      localTime(x.lastUs),
+      `${g.prompts.length}`,
+      `${count2(["READ", "SEARCH"])}`,
+      `${new Set(g.effects.filter((e) => e.kind === "file").map((e) => e.target)).size}`,
+      `${count2(["SHELL"])}`,
+      `${count2(["WEB", "MCP"])}`,
+      `${subagents}`,
+      `${x.flagged}`,
+      clip(g.prompts.find((p) => p.from === "you")?.text ?? "", 60)
+    ];
+  });
+  const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
+  const line = (cells) => cells.map((c, i) => i === cells.length - 1 ? c : c.padEnd(widths[i])).join("  ");
+  const body = rows.map(line);
+  const flaggedCol = head.indexOf("FLAGGED");
+  return [s.bold(line(head)), ...body.map((b, i) => rows[i][flaggedCol] !== "0" ? highlightFlag(b, s) : b)].join("\n") + `
+
+${s.dim("FLAGGED = sensitive actions whose values trace to external content. See: contrail risks --session <id>")}
+` + (mixed ? `${s.dim("SOURCE: live = recorded by Contrail's hooks; transcript = reconstructed from Claude Code's transcript by contrail import; both = some of each.")}
+` : "");
+}
+function highlightFlag(row, s) {
+  return s.on ? row.replace(/^(\S+)/, (m) => s.flag(m)) : row;
+}
+function renderRisks(findings, scanned, g, s = PLAIN) {
+  const out = [];
+  out.push(
+    `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${counted(scanned.actions, "tool call")} in ${counted(scanned.sessions, "session")})`)}`
+  );
+  if (!scanned.actions) {
+    out.push("", "  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.", `  ${IMPORT_HINT}`);
+    return `${out.join("\n")}
+`;
+  }
+  if (!findings.length) out.push("", "  None found.");
+  for (const f of findings) {
+    const graph = g.get(f.action.scope.sessionId);
+    const mark = f.externalUpstream ? s.flag("\u25B2") : f.requested === "NOT_NAMED" ? s.bold("\u25B3") : s.dim("\xB7");
+    out.push("", `${mark} ${s.bold(describe(f.action, graph))}`);
+    const asked = f.requested === "NAMED" ? "named by you" : f.requested === "NOT_NAMED" ? s.flag("not named by you") : f.requested.toLowerCase().replace(/_/g, " ");
+    const prompt = graph.prompts.find((p) => p.promptId === f.action.promptId);
+    const tag3 = sourceTag(graph);
+    out.push(`  ${s.accent(f.kinds.join(" \xB7 "))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)}`)}${tag3 ? ` ${s.bold(tag3)}` : ""}${s.dim(` \xB7 ${prompt?.label ?? "no turn"} \xB7 ${callId(f.action.id)}`)}`);
+    const external = f.sources.filter((x) => x.input.trust === "external");
+    const shown = (external.length ? external : f.sources).slice(0, 3);
+    if (!shown.length) {
+      out.push(`  ${s.dim("values trace to: no observed source")}`);
+      continue;
+    }
+    out.push(`  ${external.length ? s.flag("values trace to external content:") : s.dim("values trace to:")}`);
+    for (const { link, input } of shown) {
+      const where2 = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""}`;
+      out.push(`    ${s.grade(link.grade)}${clip(link.token ?? "", 80)}  \u2190 ${where2}  ${input.trust === "external" ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
+      if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}\u2502` : "\u2502")} ${clip(link.quote.text, 96)}`);
+      else if (link.quote && input.hashed) out.push(`             ${s.dim(`${link.quote.line ?? ""}\u2502 (text not stored)`)}`);
+    }
+  }
+  out.push(
+    "",
+    s.dim("\u25B2 values trace to web, MCP or dependency content   \u25B3 not named by you   \xB7 named by you"),
+    s.dim("Contrail explains; it does not judge or block. A flagged action is not proof of an attack, and an unflagged one is not proof of safety.")
+  );
+  const imported = [...g.values()].filter((x) => x.source !== "hooks").length;
+  if (imported) {
+    const which = imported === g.size ? g.size === 1 ? "This session was" : `All ${g.size} sessions searched were` : `${imported} of the ${g.size} sessions searched ${imported === 1 ? "was" : "were"}`;
+    const marked = findings.length && imported < g.size ? "; their findings are marked (from transcript)" : "";
+    out.push(s.dim(`${which} reconstructed, wholly or in part, from Claude Code's transcript by contrail import, not recorded live${marked}.`));
+  }
+  return `${out.join("\n")}
+`;
+}
+function renderCommit(r, g, s = PLAIN) {
+  const out = [];
+  const { commit, action, explanation: e } = r;
+  const prompt = g.prompts.find((p) => p.promptId === action.promptId);
+  out.push(`${s.bold("Commit")} ${s.accent(commit.sha)} on ${clip(commit.branch, 60)}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
+  if (r.via === "time") {
+    const at = r.commitSec ? new Date(r.commitSec * 1e3).toISOString().slice(11, 19) : "that second";
+    out.push(
+      `  ${s.grade("LIKELY")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim("[R9]")}`,
+      `           ${s.dim("git printed no commit line for this command, so the join is on time, not on git's output")}`
+    );
+  } else {
+    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${clip(commit.branch, 60)} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
+  }
+  const verdict = e.requested.verdict;
+  const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : "";
+  out.push(`Requested?  ${verdict === "NOT_NAMED" ? s.flag("NOT NAMED") : s.bold(verdict.replace(/_/g, " "))}${said}  ${s.dim(`[R8 ${e.requested.grade}]`)}`);
+  if (prompt) out.push(`Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`);
+  out.push("");
+  if (!r.files) {
+    out.push(s.dim("Commit contents unavailable: git could not show this commit here (run from inside the repository)."));
+    return `${out.join("\n")}
+`;
+  }
+  out.push(s.bold("What the commit contains") + s.dim(" (file list from git now, joined to the agent's changes by path)"));
+  const width = Math.max(...r.files.map((f) => displayPath(f.file, g.env.cwd, g.env.home).length));
+  const order = { LIKELY: 0, POSSIBLE: 1, UNKNOWN: 2 };
+  for (const f of [...r.files].sort((a, b) => order[a.grade] - order[b.grade])) {
+    const shown = displayPath(f.file, g.env.cwd, g.env.home).padEnd(width);
+    if (!f.writer) {
+      out.push(`  ${s.grade("UNKNOWN")}${shown}  ${s.dim("no agent change recorded in this session (you, another process, or an earlier session)")}`);
+      continue;
+    }
+    const w = f.writer;
+    out.push(
+      `  ${s.grade(f.grade)}${shown}  \u2190 ${w.action.tool} ${callId(w.action.id)} ${clip(describe(w.action, g), 44)}  ${w.named ? s.dim("named by you") : s.flag("not named by you")}  ${s.dim("[R7]")}`
+    );
+  }
+  const unnamed = r.files.filter((f) => f.writer && !f.writer.named).length;
+  out.push(
+    "",
+    s.dim("LIKELY, not DIRECT: git lists the file and the agent changed it earlier; whether that exact change is what was committed is not observed."),
+    `${unnamed} of ${r.files.length} files hold agent changes you did not name. ${s.dim("Run contrail why <file> for the trail behind each one.")}`
+  );
+  return `${out.join("\n")}
+`;
+}
+var pad2 = (text, width) => text.padEnd(width);
+var counted = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+function localTime(us) {
+  const d = new Date(Math.floor(us / 1e3));
+  const two = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+var TRIPWIRE_ASKED = {
+  NAMED: "named in your words",
+  NAMED_NEGATED: "named, but your latest mention is negated",
+  PARTLY_NAMED: "partly named in your words",
+  NOT_NAMED: "not named in your words",
+  NOTHING_TO_MATCH: "nothing in it to match against your words"
+};
+function renderTripwire(f, e) {
+  const external = f.sources.find((x) => x.input.trust === "external");
+  const values = [...new Set(f.sources.filter((x) => x.input.id === external.input.id).map((x) => x.link.token).filter((v) => !!v))];
+  const where2 = external.link.quote?.line != null ? `${clip(external.input.label, 80)}:${external.link.quote.line}` : clip(external.input.label, 80);
+  const shown = values.length ? clip(values.map((v) => clip(v, 60)).join(", "), 120) : "a value in it";
+  return `Contrail \u25B2 ${f.kinds.join(" \xB7 ")} \xB7 ${TRIPWIRE_ASKED[f.requested]}: ${shown} first appeared in ${where2} (external, ${external.link.grade}). Trail: /contrail:why ${callId(e.action.id)}`;
+}
+
+// src/query/sessions.ts
 function recentSessions(db, repoKey, limit, all = false) {
   const query = (where2, ...params) => db.all(
     `SELECT session_id AS id, MAX(captured_us) AS lastUs, MAX(cwd) AS cwd FROM events
@@ -2964,7 +4413,8 @@ function recentSessions(db, repoKey, limit, all = false) {
 function pickSession(db, prefix, repoKey) {
   if (!prefix || prefix === "last") {
     const [latest] = recentSessions(db, repoKey, 1);
-    if (!latest) throw new ContrailError("No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.");
+    if (!latest) throw new ContrailError(`No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.
+${IMPORT_HINT}`);
     return latest.id;
   }
   const matches = db.all(
@@ -2977,11 +4427,42 @@ function pickSession(db, prefix, repoKey) {
 ${matches.map((m) => `  ${clip(m.id, 80)}`).join("\n")}
 Use more characters.`);
 }
-function loadRows(db, sessionId) {
-  return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
+var TEXT_RESULTS = `IFNULL(hook_event = 'PostToolUse' AND (tool_name IN (${TEXT_RESULT_TOOLS.map((t) => `'${t}'`).join(", ")}) OR substr(tool_name, 1, 5) = 'mcp__'), 0)`;
+function loadRows(db, sessionId, { later = false } = {}) {
+  if (!later) return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
+  const rows = db.all(
+    `SELECT * FROM events WHERE session_id = ? AND NOT ${TEXT_RESULTS}
+     UNION ALL
+     SELECT id, spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, NULL, parse_error, source
+       FROM events WHERE session_id = ?1 AND ${TEXT_RESULTS}
+     ORDER BY captured_us, spool_name`,
+    sessionId
+  );
+  return rows.map((r) => {
+    const row = r;
+    if (r.payload === null) readLater(db, row);
+    return row;
+  });
+}
+function readLater(db, row) {
+  const settle = (payload) => {
+    Object.defineProperty(row, "payload", { value: payload, writable: true, enumerable: true, configurable: true });
+    return payload;
+  };
+  Object.defineProperty(row, "payload", {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      const stored2 = db.get("SELECT payload FROM events WHERE id = ?", row.id);
+      if (!stored2) throw new ContrailError("This session changed while it was being read. Run the command again.");
+      return settle(stored2.payload);
+    },
+    set: settle
+  });
+  row.payloadLater = true;
 }
 function loadGraph(db, sessionId, home, hashToken) {
-  return buildGraph(loadRows(db, sessionId), { home, user: basename5(home) }, hashToken);
+  return buildGraph(loadRows(db, sessionId, { later: true }), { home, user: basename5(home) }, hashToken);
 }
 
 // src/query/blame.ts
@@ -2999,7 +4480,7 @@ function readCurrent(path, shown) {
     throw new ContrailError(`No file ${shown}. Blame reads the file as it is now on disk.`);
   }
   if (size > MAX_FILE_BYTES) throw new ContrailError(`${shown} is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB; blame reads text files up to that size.`);
-  const text = readFileSync3(path, "utf8");
+  const text = readFileSync5(path, "utf8");
   if (text.includes("\0")) throw new ContrailError(`${shown} looks binary; blame matches lines of text.`);
   return text;
 }
@@ -3010,7 +4491,7 @@ function blameFile(db, path, shown, session = null) {
   if (!rows.length) {
     const where2 = session ? ` in session ${session.slice(0, 8)}` : "";
     throw new ContrailError(
-      `No recorded agent write to ${shown}${where2}. Contrail sees Edit, Write, MultiEdit and NotebookEdit calls, and shell heredocs, in sessions recorded since it was installed.`
+      `No recorded agent write to ${shown}${where2}. Contrail sees Edit, Write, MultiEdit and NotebookEdit calls, and shell heredocs, in sessions recorded since it was installed and earlier ones brought in with contrail import.`
     );
   }
   const notebook = real.endsWith(".ipynb");
@@ -3223,9 +4704,57 @@ function commitFiles(cwd, sha) {
   }
 }
 
+// src/query/denial.ts
+import { closeSync as closeSync4, constants as constants3, fstatSync as fstatSync4, openSync as openSync3, readFileSync as readFileSync6 } from "node:fs";
+import { sep } from "node:path";
+var MAX_TRANSCRIPT = 256 * 1024 * 1024;
+function denialFor(db, action, projectsRoot2) {
+  if (action.status !== "pending") return null;
+  const row = db.get(
+    `SELECT json_extract(payload, '$.transcript_path') AS path FROM events
+      WHERE session_id = ? AND source IS NULL AND json_extract(payload, '$.transcript_path') IS NOT NULL LIMIT 1`,
+    action.scope.sessionId
+  );
+  if (!row?.path) return null;
+  const root = realPath(projectsRoot2);
+  const file = realPath(row.path);
+  if (!file.startsWith(root + sep) || !file.endsWith(".jsonl")) return null;
+  let text;
+  try {
+    const fd = openSync3(file, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0) | (constants3.O_NONBLOCK ?? 0));
+    try {
+      const st = fstatSync4(fd);
+      if (!st.isFile() || st.size > MAX_TRANSCRIPT) return null;
+      text = readFileSync6(fd, "utf8");
+    } finally {
+      closeSync4(fd);
+    }
+  } catch {
+    return null;
+  }
+  const needle = `"tool_use_id":"${action.id}"`;
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + needle.length)) {
+    const line = text.slice(text.lastIndexOf("\n", at) + 1, text.indexOf("\n", at) === -1 ? text.length : text.indexOf("\n", at));
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const kind = typeof entry.toolDenialKind === "string" ? entry.toolDenialKind : null;
+    if (!kind) continue;
+    const content = entry.message?.content;
+    const block = Array.isArray(content) ? content.find((b) => b?.tool_use_id === action.id) : void 0;
+    const body = block?.content;
+    const reason = typeof body === "string" ? body : Array.isArray(body) ? body.map((b) => b?.text).filter((t) => typeof t === "string").join(" ") : "";
+    return { kind: kind.slice(0, 64), reason: redactString(reason.slice(0, 4e3)) };
+  }
+  return null;
+}
+
 // src/query/review.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { join as join5 } from "node:path";
+import { join as join7 } from "node:path";
 
 // src/engine/review.ts
 function branchFloor(mergeBaseSec, authorSecs) {
@@ -3290,21 +4819,21 @@ function branchRange(cwd, base) {
   if (!head) throw new ContrailError("This repository has no commits yet, so there is no branch to review.");
   const branch = git(["symbolic-ref", "-q", "--short", "HEAD"])?.trim() || null;
   const resolve8 = (rev) => git(["rev-parse", "--verify", "-q", `${rev}^{commit}`])?.trim() || null;
-  let name;
+  let name2;
   let baseSha;
   if (base !== void 0) {
     if (!REVISION.test(base)) throw new ContrailError(`"${clip(base, 80)}" is not a revision contrail review accepts. Name a branch, tag or commit, for example origin/main.`);
-    name = base;
+    name2 = base;
     baseSha = resolve8(base);
     if (!baseSha) throw new ContrailError(`Unknown base "${clip(base, 80)}": git has no commit by that name here. Name a branch, tag or commit, for example origin/main.`);
   } else {
     const found = DEFAULT_BASES.map((rev) => ({ rev, sha: resolve8(rev) })).find((c) => c.sha);
     if (!found) throw new ContrailError(`No base to compare with: none of ${DEFAULT_BASES.join(", ")} exists here. Name one: contrail review <base>.`);
-    name = found.rev === "origin/HEAD" ? git(["rev-parse", "--abbrev-ref", "origin/HEAD"])?.trim() || found.rev : found.rev;
+    name2 = found.rev === "origin/HEAD" ? git(["rev-parse", "--abbrev-ref", "origin/HEAD"])?.trim() || found.rev : found.rev;
     baseSha = found.sha;
   }
   const mergeBase = git(["merge-base", baseSha, head])?.trim();
-  if (!mergeBase) throw new ContrailError(`${clip(name, 80)} and HEAD share no history, so there is no range between them to review.`);
+  if (!mergeBase) throw new ContrailError(`${clip(name2, 80)} and HEAD share no history, so there is no range between them to review.`);
   const mergeBaseSec = Number(git(["show", "-s", "--format=%ct", mergeBase])?.trim() ?? 0);
   const range = `${mergeBase}..${head}`;
   const totalCommits = Number(git(["rev-list", "--count", range])?.trim() ?? 0);
@@ -3327,14 +4856,14 @@ function branchRange(cwd, base) {
   const commitsOf = /* @__PURE__ */ new Map();
   for (const c of commits) for (const f of c.files) commitsOf.set(f, [...commitsOf.get(f) ?? [], c.sha]);
   const files = all.slice(0, LIMITS.files).map((path) => ({ path, commits: commitsOf.get(path) ?? [], uncommitted: dirty.has(path) }));
-  return { top, head, branch, base: { name, given: base !== void 0, tried: base !== void 0 ? [base] : DEFAULT_BASES, mergeBase, mergeBaseSec }, commits, totalCommits, files, totalFiles: all.length };
+  return { top, head, branch, base: { name: name2, given: base !== void 0, tried: base !== void 0 ? [base] : DEFAULT_BASES, mergeBase, mergeBaseSec }, commits, totalCommits, files, totalFiles: all.length };
 }
 function reviewBranch(db, o) {
   const range = branchRange(o.cwd, o.base);
   const floorSec = branchFloor(range.base.mergeBaseSec, range.commits.map((c) => c.authorSec));
   const joins = joinCommits(db, range.commits, o.repoKey, floorSec);
   const top = realPath(range.top);
-  const wanted = new Map(range.files.map((f) => [join5(top, f.path), f.path]));
+  const wanted = new Map(range.files.map((f) => [join7(top, f.path), f.path]));
   const writesTo2 = /* @__PURE__ */ new Map();
   const real = /* @__PURE__ */ new Map();
   for (const t of recordedWrites(db, floorSec * 1e6, o.repoKey)) {
@@ -3352,8 +4881,8 @@ function reviewBranch(db, o) {
   const seen = (id, us) => latest.set(id, Math.max(latest.get(id) ?? 0, us));
   for (const j of joined) for (const w of j.writes) seen(w.sessionId, w.us);
   for (const c of range.commits) {
-    const join8 = joins.get(c.sha);
-    if (join8?.kind === "joined") seen(join8.sessionId, c.sec * 1e6);
+    const join9 = joins.get(c.sha);
+    if (join9?.kind === "joined") seen(join9.sessionId, c.sec * 1e6);
   }
   const ids = [...latest.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
   const graphs = new Map(ids.slice(0, LIMITS.sessions).map((id) => [id, loadGraph(db, id, o.home, o.hashToken)]));
@@ -3385,9 +4914,9 @@ function reviewBranch(db, o) {
     return { ...file, grade, writers, moreWriters: calls2.length - picked.length };
   });
   const commits = range.commits.map((c) => {
-    const join8 = joins.get(c.sha) ?? { kind: "none" };
-    const found = join8.kind === "joined" ? explainOnce(join8.sessionId, join8.toolUseId) : { action: null, explanation: null };
-    return { ...c, join: join8, ...found };
+    const join9 = joins.get(c.sha) ?? { kind: "none" };
+    const found = join9.kind === "joined" ? explainOnce(join9.sessionId, join9.toolUseId) : { action: null, explanation: null };
+    return { ...c, join: join9, ...found };
   });
   const external = [];
   const calls = [
@@ -3484,12 +5013,12 @@ function findTarget(db, target, repoKey) {
       real
     );
     if (!rows.length) {
-      throw new ContrailError(`No recorded agent change to ${target.shown}. Contrail only sees sessions recorded since it was installed.`);
+      throw new ContrailError(`No recorded agent change to ${target.shown}. Contrail only sees sessions recorded since it was installed, and earlier ones brought in with contrail import.`);
     }
   } else if (target.kind === "command") {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND tool_name = 'Bash'
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND tool_name = 'Bash'
           AND instr(${COMMAND}, ?) > 0 AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC`,
       target.text
@@ -3498,7 +5027,7 @@ function findTarget(db, target, repoKey) {
   } else if (target.kind === "call") {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
           AND (? = '' OR substr(tool_use_id, -?) = ?)
         ORDER BY captured_us DESC, spool_name DESC`,
       target.prefix.length,
@@ -3512,581 +5041,18 @@ function findTarget(db, target, repoKey) {
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey
     );
     if (!rows.length) {
       throw new ContrailError(
-        "No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again."
+        `No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again.
+${IMPORT_HINT}`
       );
     }
   }
   return { ...rows[0], total: rows.length };
-}
-
-// src/render/style.ts
-var sgr = (code) => (s) => s ? `\x1B[${code}m${s}\x1B[0m` : s;
-var GRADE_COLOR = {
-  DIRECT: sgr("1;32"),
-  LIKELY: sgr("1;36"),
-  POSSIBLE: sgr("33"),
-  UNKNOWN: sgr("90")
-};
-var pad = (g, width) => " ".repeat(Math.max(1, width - g.length));
-var PLAIN = {
-  on: false,
-  grade: (g, width = 9) => g + pad(g, width),
-  bold: (s) => s,
-  dim: (s) => s,
-  flag: (s) => s,
-  accent: (s) => s
-};
-var COLOR = {
-  on: true,
-  grade: (g, width = 9) => (GRADE_COLOR[g]?.(g) ?? g) + pad(g, width),
-  bold: sgr("1"),
-  dim: sgr("2"),
-  flag: sgr("1;35"),
-  accent: sgr("1;36")
-};
-function styleFor(env, isTTY) {
-  if (env.NO_COLOR) return PLAIN;
-  if (env.FORCE_COLOR && env.FORCE_COLOR !== "0") return COLOR;
-  return isTTY ? COLOR : PLAIN;
-}
-
-// src/render/why.ts
-var HEADING = "Where the values came from (data provenance, not the agent's reasons)";
-var FOOTER = [
-  `LIKELY means "this value first appeared in the agent's context from this source", not "this source made the agent act".`,
-  "Not observable: the agent's reasons for this action."
-];
-function renderWhy(e, g, note, s = PLAIN) {
-  const out = [];
-  const a = e.action;
-  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
-  const prompt = g.prompts.find((p) => p.promptId === a.promptId);
-  out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
-  out.push(
-    s.dim(
-      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : ` \xB7 ${a.status.toUpperCase()}`)
-    )
-  );
-  if (note) out.push(s.dim(`  ${note}`));
-  out.push("");
-  const best = bestPerGroup(e.traces);
-  const credited = new Set(best.filter((t) => t.token.role !== "hint").flatMap((t) => t.links.filter((l) => l.grade !== "UNKNOWN").map((l) => l.to)));
-  const shown = best.filter((t) => t.token.role !== "hint" || t.links.some((l) => l.grade !== "UNKNOWN" && !credited.has(l.to)));
-  const found = shown.filter((t) => t.links.some((l) => l.grade !== "UNKNOWN"));
-  const unfound = shown.filter((t) => !found.includes(t));
-  out.push(...inShort(e, found, unfound, inputs, s), "");
-  out.push(...requestedLines(e, s));
-  out.push(
-    !prompt ? `Turn        ${s.grade("UNKNOWN")}no prompt was recorded for this action` : prompt.from === "task" ? `Turn        ${s.grade("DIRECT")}ran while handling ${prompt.label}, a background task report, not your words: "${clip(prompt.text, 60)}"  ${s.dim("[R1]")}` : `Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`
-  );
-  out.push("", s.bold(HEADING));
-  for (const t of found) trace(t, 1, out, inputs, s);
-  if (unfound.length) {
-    out.push(`  ${s.grade("UNKNOWN")}no observed source for: ${unfound.map((t) => clip(t.token.text, 80)).join(", ")}  ${s.dim("[R4]")}`);
-  }
-  if (!e.traces.length) out.push(s.dim("  nothing distinctive in this action to trace"));
-  const searched = e.traces[0]?.searched;
-  if (searched) {
-    out.push(s.dim(`  (searched ${searched.count} input${searched.count === 1 ? "" : "s"} in this agent's context before seq ${searched.beforeSeq})`));
-  }
-  out.push("");
-  const effects = e.effects.map((l) => ({ l, fx: g.effects.find((x) => x.id === l.to) })).filter((x) => !!x.fx);
-  if (effects.length) {
-    out.push(s.bold("Effects"));
-    const target = (fx) => clip(fx.target, 100);
-    const width = Math.max(...effects.map((x) => target(x.fx).length));
-    for (const { l, fx } of effects) {
-      out.push(`  ${s.grade(l.grade)}${target(fx).padEnd(width)}  ${effectWording(fx)}  ${s.dim(`[${l.rule} ${clip(fx.evidence, 40)}]`)}`);
-      for (const line of fx.patch.slice(0, 6)) out.push(s.dim(`      ${clip(line, 100)}`));
-    }
-    out.push("");
-  }
-  out.push(`${s.bold("Weakest link on this trail:")} ${s.grade(e.chainGrade, 0).trim()}`);
-  for (const line of FOOTER) out.push(s.dim(line));
-  const said = a.scope.agentId ? g.agentSaid.byAgent[a.scope.agentId] : a.promptId ? g.agentSaid.byPrompt[a.promptId] : void 0;
-  if (said) out.push(s.dim(`Agent said (shown for context, never used as evidence): "${clip(said, 220)}"`));
-  out.push(s.dim(`Blind spots: ${e.blindSpots.join("; ")}. No observed source is not the same as no source.`));
-  return `${out.join("\n")}
-`;
-}
-function inShort(e, found, unfound, inputs, s) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const t of found) {
-    const chain = [];
-    let cur = t;
-    let next;
-    while (cur) {
-      const link = cur.links.find((l) => l.grade === "LIKELY") ?? cur.links.find((l) => l.firstSeen) ?? cur.links.find((l) => l.grade !== "UNKNOWN");
-      const src = link?.to ? inputs.get(link.to) : void 0;
-      if (!link || !src) break;
-      chain.push({ link, src, value: cur.token.text });
-      if (!cur.upstream && cur.truncated) next = cur.truncated.next;
-      cur = cur.upstream?.trace;
-    }
-    if (!chain.length) continue;
-    const key = chain.map((c) => `${c.src.id}:${c.link.quote?.line ?? ""}`).join(">");
-    const group = groups.get(key) ?? { values: [], chain, next };
-    group.values.push(clip(t.token.text, 60));
-    groups.set(key, group);
-  }
-  const external = [...groups.values()].some((g) => g.chain.some((c) => c.src.trust === "external"));
-  const facts = [
-    ASKED[e.requested.verdict](s),
-    ...sensitivity(e.action).map((k) => s.flag(k)),
-    ...external ? [s.flag("values from external content")] : []
-  ];
-  const out = [s.bold("In short"), `  ${facts.join(s.dim(" \xB7 "))}`];
-  const listed = [...groups.values()].slice(0, 3);
-  for (const g of listed) {
-    out.push(`  ${s.accent(clip(g.values.join(", "), 110))}`);
-    g.chain.forEach(({ link, src, value }, i) => {
-      const where2 = link.quote?.line != null ? `${clip(src.label, 90)}:${link.quote.line}` : clip(src.label, 90);
-      const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-      const via = i > 0 && value !== g.chain[i - 1].value ? s.dim(`  for ${clip(value, 60)}`) : "";
-      out.push(`    ${s.dim("\u2190")} ${s.grade(link.grade)}${where2}  ${trust2}${via}`);
-    });
-    if (g.next !== void 0) out.push(`    ${s.dim(`\u2190 \u2026 further back${g.next ? `: contrail why ${callId(g.next)}` : ""}`)}`);
-  }
-  if (groups.size > listed.length) out.push(s.dim(`  (${groups.size - listed.length} more below)`));
-  if (unfound.length) out.push(`  ${s.dim("no observed source for:")} ${clip(unfound.map((t) => t.token.text).join(", "), 100)}`);
-  if (!found.length && !unfound.length) out.push(s.dim("  nothing distinctive in this action to trace"));
-  return out;
-}
-var ASKED = {
-  NAMED: () => "named in your words",
-  NAMED_NEGATED: (s) => s.flag("named, but your latest mention is negated"),
-  PARTLY_NAMED: () => "partly named in your words",
-  NOT_NAMED: (s) => s.flag("not named in your words"),
-  NOTHING_TO_MATCH: () => "nothing in it to match against your words"
-};
-function trace(t, depth, out, inputs, s) {
-  const pad3 = "  ".repeat(depth);
-  const firstUse2 = t.firstUse ? `, first used in ${callId(t.firstUse.actionId)} at seq ${t.firstUse.preSeq}` : "";
-  out.push(`${pad3}${s.accent(clip(t.token.text, 80))}  ${s.dim(`(${t.token.argPath}${firstUse2})`)}`);
-  for (const l of t.links) {
-    if (!l.to) {
-      out.push(`${pad3}  ${s.grade(l.grade)}${l.note}  ${s.dim(`[${l.rule}]`)}`);
-      continue;
-    }
-    const src = inputs.get(l.to);
-    if (!src) continue;
-    const where2 = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
-    out.push(`${pad3}  ${s.grade(l.grade)}${sourceWording(l, where2)}  ${s.dim(`[${l.rule}]`)}`);
-    if (l.quote?.text) out.push(`${pad3}           ${s.dim(l.quote.line != null ? `${l.quote.line}\u2502` : "\u2502")} ${clip(l.quote.text, 100)}`);
-    else if (l.quote && src.hashed) out.push(`${pad3}           ${s.dim(`${l.quote.line ?? ""}\u2502 (text not stored)`)}`);
-    const origin = originWording(src);
-    out.push(`${pad3}           ${src.trust === "external" ? s.flag(origin) : s.dim(origin)}${s.dim(src.producedBy ? ` \xB7 returned by ${callId(src.producedBy)} (seq ${src.availableAt})` : "")}`);
-  }
-  if (t.links.every((l) => l.grade === "UNKNOWN") && depth > 1) out.push(s.dim(`${pad3}  the trail starts here: the reason is not observable`));
-  if (t.upstream) {
-    const u = t.upstream;
-    const heading = u.kind === "call" ? `how the agent came to call ${u.via?.tool} ${callId(u.via?.id ?? "")}:` : u.kind === "conduit" ? `that text was written by the agent (${u.via?.tool} ${callId(u.via?.id ?? "")}); following the same value back:` : "a compaction summary is agent-written; the same value before the compaction:";
-    out.push(s.dim(`${pad3}  ${heading}`));
-    trace(u.trace, depth + 2, out, inputs, s);
-  }
-  if (t.truncated) {
-    const next = t.truncated.next ? `; contrail why ${callId(t.truncated.next)} picks it up from there` : "";
-    out.push(s.dim(`${pad3}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
-  }
-}
-function sourceWording(l, where2) {
-  if (l.note === "you supplied it") return `you supplied it: ${where2}`;
-  if (l.note === "also in") return `also in ${where2}`;
-  if (l.grade === "LIKELY") return `only observed in ${where2}`;
-  if (l.firstSeen) return `could be from ${where2} (seen first)`;
-  if (l.note) return `${where2} (${l.note})`;
-  return `could be from ${where2}`;
-}
-var ORIGIN_WORDING = {
-  prompt: "your words",
-  template: "slash-command template",
-  instructions: "instructions file",
-  file: "repo file",
-  dependency_file: "dependency file, written by a third party",
-  search: "search output",
-  shell: "shell output",
-  web: "web page, as a model's extraction of it, not the page itself",
-  web_search: "web search results",
-  mcp: "MCP server result",
-  skill: "skill",
-  subagent_prompt: "agent-written instructions to a subagent",
-  subagent_result: "agent-written subagent report",
-  compaction: "agent-written compaction summary",
-  tool_output: "tool output"
-};
-function originWording(i) {
-  if (i.origin === "instructions") {
-    return i.trust === "local" ? "repo instructions (repo content, not you)" : "your instructions (user-level)";
-  }
-  return `${ORIGIN_WORDING[i.origin]} (${i.trust})`;
-}
-function requestedLines(e, s) {
-  const r = e.requested;
-  const quoted = r.sentence ? `"${clip(r.sentence.text, 80)}"` : "";
-  const tag3 = (t) => s.dim(`[${t}]`);
-  switch (r.verdict) {
-    case "NAMED":
-      return [
-        `Requested?  ${s.bold("NAMED")}  ${quoted}  ${tag3(`R8 ${r.grade}`)}`,
-        s.dim('            "Named" means your words contain it. It is not a judgment of intent or permission.')
-      ];
-    case "NAMED_NEGATED":
-      return [`Requested?  ${s.flag("NAMED, BUT YOUR LATEST MENTION IS NEGATED:")} ${quoted}  ${tag3(`R8 ${r.grade}`)}`];
-    case "PARTLY_NAMED":
-      return [`Requested?  ${s.bold("PARTLY NAMED")}  ${quoted} names ${clip(r.matched ?? "", 80)}, not everything this action targets  ${tag3(`R8 ${r.grade}`)}`];
-    case "NOT_NAMED": {
-      const yours = r.searched === 1 ? "Your 1 sentence this session does not" : `None of your ${r.searched} sentences this session`;
-      return [`Requested?  ${s.flag("NOT NAMED")}. ${yours} name it.  ${tag3("R8")}`];
-    }
-    case "NOTHING_TO_MATCH":
-      return [`Requested?  nothing specific in this action to match against your words  ${tag3("R8")}`];
-  }
-}
-function describe(a, g) {
-  const path = str(a.input, "file_path") ?? str(a.input, "notebook_path");
-  if (path) return clip(displayPath(path, g.env.cwd, g.env.home), 120);
-  if (a.tool === "Bash") return clip(str(a.input, "command") ?? "", 90);
-  if (a.tool === "WebFetch") return clip(str(a.input, "url") ?? "", 90);
-  if (a.tool === "Agent" || a.tool === "Task") return clip(str(a.input, "description") ?? str(a.input, "prompt") ?? "", 90);
-  if (a.tool === "Grep" || a.tool === "Glob") {
-    const where2 = str(a.input, "path");
-    return clip(`${JSON.stringify(str(a.input, "pattern") ?? "")}${where2 ? ` in ${displayPath(where2, g.env.cwd, g.env.home)}` : ""}`, 90);
-  }
-  if (a.tool === "WebSearch") return clip(JSON.stringify(str(a.input, "query") ?? ""), 90);
-  if (a.tool === "Skill") return clip(str(a.input, "skill") ?? "", 90);
-  if (a.tool.startsWith("mcp__")) return clip(`${a.tool.slice(5).replace("__", "/")} ${JSON.stringify(a.input)}`, 90);
-  return clip(JSON.stringify(a.input), 90);
-}
-function effectWording(fx) {
-  if (fx.evidence === "filePath") return "written by this call";
-  if (fx.evidence === "bashEditDiff") return "changed while this command ran";
-  if (fx.evidence === "commit_stdout") return "commit made by this command";
-  if (fx.evidence === "expected") return fx.kind === "network" ? "the command names this host; the request itself was not observed" : "expected for this kind of command, not observed";
-  return "request made and answered";
-}
-
-// src/render/session.ts
-var KIND = {
-  Read: "READ",
-  Grep: "SEARCH",
-  Glob: "SEARCH",
-  LS: "SEARCH",
-  Edit: "EDIT",
-  MultiEdit: "EDIT",
-  Write: "WRITE",
-  NotebookEdit: "EDIT",
-  Bash: "SHELL",
-  WebFetch: "WEB",
-  WebSearch: "WEB",
-  Agent: "AGENT",
-  Task: "AGENT",
-  Skill: "SKILL"
-};
-var kindOf = (a) => a.tool.startsWith("mcp__") ? "MCP" : KIND[a.tool] ?? "TOOL";
-var summary = (a, g) => kindOf(a) === "TOOL" ? `${a.tool} ${describe(a, g)}` : describe(a, g);
-var EXPLAINED = /* @__PURE__ */ new Set(["EDIT", "WRITE", "SHELL", "WEB", "MCP", "AGENT"]);
-function matchesFilter(a, g, filter) {
-  if (!filter) return true;
-  const kind = kindOf(a);
-  if (filter === "writes") return g.effects.some((e) => e.actionId === a.id && e.kind === "file");
-  if (filter === "shell") return kind === "SHELL";
-  if (filter === "network") return kind === "WEB" || kind === "MCP" || g.effects.some((e) => e.actionId === a.id && e.kind === "network");
-  if (filter === "mcp") return kind === "MCP";
-  if (filter === "subagents") return kind === "AGENT" || a.scope.agentId !== null;
-  return false;
-}
-function renderTrace(g, explanations, filter, s = PLAIN) {
-  const out = [];
-  const sessionId = g.sessionId;
-  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
-  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
-  out.push(
-    s.dim(
-      `${counted(g.prompts.length, "turn")} \xB7 ${counted(g.actions.length, "tool call")} \xB7 ${counted(g.effects.filter((e) => e.kind === "file").length, "file effect")}` + (filter ? ` \xB7 showing --${filter}` : "")
-    )
-  );
-  const items = [];
-  if (!filter) {
-    for (const p of g.prompts) {
-      const head = p.from === "task" ? `${s.dim("background task report, not your words:")} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
-      items.push({ seq: p.seq, line: () => ["", `${s.bold(p.label)}  ${head}`] });
-    }
-  }
-  if (!filter || filter === "instructions") {
-    for (const i of g.inputs.filter((x) => x.origin === "instructions")) {
-      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad2(`${i.availableAt}`, 4))} ${pad2("LOADED", 7)} ${clip(i.label, 100)}  ${s.dim(originWording(i))}`] });
-    }
-  }
-  if (!filter) {
-    for (const i of g.inputs.filter((x) => x.origin === "compaction")) {
-      items.push({ seq: i.availableAt, line: () => [`  ${s.dim(pad2(`${i.availableAt}`, 4))} ${s.dim("COMPACTED  earlier context now visible only through the summary")}`] });
-    }
-  }
-  for (const a of g.actions) {
-    if (filter === "instructions" || !matchesFilter(a, g, filter)) continue;
-    items.push({ seq: a.preSeq, line: () => actionLines(a, g, explanations.get(a.id), inputs, s) });
-  }
-  items.sort((a, b) => a.seq - b.seq);
-  for (const item of items) out.push(...item.line());
-  if (!items.length) out.push("", s.dim("  nothing matches this filter"));
-  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
-  return `${out.join("\n")}
-`;
-}
-function actionLines(a, g, e, inputs, s) {
-  const kind = kindOf(a);
-  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
-  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
-  const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${summary(a, g)}${who}${failed}`];
-  if (!e) return lines;
-  const detail = trailDetail(e, inputs, s);
-  if (detail) lines.push(`         ${s.dim("\u21B3")} ${detail}`);
-  const effects = g.effects.filter((x) => x.actionId === a.id && x.kind !== "network");
-  if (effects.length && kind === "SHELL") {
-    const shown = effects.slice(0, 4).map((x) => clip(x.target, 80)).join(", ") + (effects.length > 4 ? `, +${effects.length - 4} more` : "");
-    const how = effects.every((x) => x.evidence === "expected") ? s.dim(" (expected, not observed)") : "";
-    lines.push(`         ${s.dim("\u2192")} ${shown}${how}`);
-  }
-  return lines;
-}
-function trailDetail(e, inputs, s) {
-  const head = headlineTrace(e);
-  const from = head ? traceSource(head, inputs, s) : "";
-  const found = from || (e.traces.length ? `${s.grade("UNKNOWN", 0).trim()} ${s.dim("no observed source")}` : "");
-  const asked = e.requested.verdict === "NAMED" ? s.dim("named by you") : e.requested.verdict === "NOT_NAMED" ? s.flag("not named by you") : "";
-  return [found, asked].filter(Boolean).join("   ");
-}
-function traceSource(t, inputs, s) {
-  const link = t.links.find((l) => l.grade !== "UNKNOWN");
-  const src = link?.to ? inputs.get(link.to) : void 0;
-  if (!src || !link) return "";
-  const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-  return `${s.grade(link.grade, 0).trim()} ${clip(t.token.text, 80)} \u2190 ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""} ${trust2}`;
-}
-function renderTree(g, forest, omitted, s = PLAIN) {
-  const out = [];
-  const sessionId = g.sessionId;
-  out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
-  out.push(s.dim("Each action sits under the call whose output first held its headline value. Data flow, not the agent's reasons."));
-  for (const root of forest) {
-    out.push("", rootLine(root, g, s));
-    root.children.forEach((child, i) => nodeLines(child, "", i === root.children.length - 1, g, s, out));
-  }
-  if (omitted) out.push("", s.dim(`${omitted} later actions are not shown; run contrail trace for the full timeline.`));
-  out.push("", s.dim(`Run ${s.bold('contrail why <path | "command">')} for the full trail behind any line.`));
-  return `${out.join("\n")}
-`;
-}
-function rootLine(root, g, s) {
-  if (root.kind === "unknown") return s.bold("no observed source");
-  if (root.kind === "nothing") return s.bold("nothing to trace") + s.dim(" (no values in these calls to follow)");
-  const src = root.source;
-  const prompt = src.origin === "prompt" ? g.prompts.find((p) => `prompt:${p.promptId}` === src.id) : void 0;
-  const what = prompt ? `${clip(src.label, 100)}  "${clip(prompt.text, 70)}"` : clip(src.label, 100);
-  return `${s.bold(what)}  ${src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`;
-}
-function nodeLines(node, prefix, last, g, s, out) {
-  const a = node.action;
-  const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
-  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
-  const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : "";
-  const external = node.source?.trust === "external" ? ` ${s.flag("(external)")}` : "";
-  const via = node.link && node.token ? `  ${s.dim("\u2190")} ${s.grade(node.link.grade, 0).trim()} ${clip(node.token, 80)}${line}${external}` : "";
-  out.push(`${s.dim(prefix + (last ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 "))}${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kindOf(a), 7)} ${clip(summary(a, g), 60)}${who}${failed}${via}`);
-  const next = prefix + (last ? "    " : "\u2502   ");
-  node.children.forEach((child, i) => nodeLines(child, next, i === node.children.length - 1, g, s, out));
-}
-function renderStatusline(g, findings, s = PLAIN) {
-  const name = s.dim("contrail");
-  if (!g) return `${name} ${s.dim("recording")}`;
-  const external = findings.filter((f) => f.externalUpstream).length;
-  const unnamed = findings.filter((f) => !f.externalUpstream && f.requested === "NOT_NAMED").length;
-  const parts = [
-    external ? s.flag(`\u25B2 ${external} from external content`) : "",
-    unnamed ? s.bold(`\u25B3 ${unnamed} not named by you`) : "",
-    s.dim(`${g.actions.length} call${g.actions.length === 1 ? "" : "s"}`)
-  ].filter(Boolean);
-  return `${name} ${parts.join(s.dim(" \xB7 "))}`;
-}
-function renderFind(value, hits, scanned, s = PLAIN) {
-  const found = hits.filter((h) => h.sightings.length);
-  const out = [`${s.bold(`"${clip(value, 80)}"`)} ${s.dim(`in ${found.length} of ${scanned} session${scanned === 1 ? "" : "s"}`)}`];
-  if (!found.length) {
-    out.push("", `  ${s.dim("No recorded input or call contains it. Matching is whole-token and literal; no observed source is not the same as no source.")}`);
-    return `${out.join("\n")}
-`;
-  }
-  for (const { graph: g, sightings } of found) {
-    const sessionId = g.sessionId;
-    const first = g.prompts.find((p) => p.from === "you");
-    out.push("", `${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : "")}`);
-    let seenSource = false;
-    for (const hit of sightings) {
-      if (hit.source) {
-        const src = hit.source.input;
-        const where2 = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ""}`;
-        const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("HELD", 6)} ${where2}  ${trust2}${seenSource ? "" : `  ${s.accent("first seen")}`}`);
-        seenSource = true;
-        if (hit.source.text) out.push(`              ${s.dim(hit.source.line != null ? `${hit.source.line}\u2502` : "\u2502")} ${clip(hit.source.text, 96)}`);
-        else if (src.hashed) out.push(`              ${s.dim(`${hit.source.line ?? ""}\u2502 (text not stored)`)}`);
-      } else if (hit.use) {
-        const a = hit.use.action;
-        const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
-        const kinds = hit.use.kinds.length ? `  ${s.flag(hit.use.kinds.join(" \xB7 "))}` : "";
-        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("USED", 6)} ${kindOf(a)} ${clip(summary(a, g), 80)} ${s.dim(`(${hit.use.argPath})`)}${who}${kinds}`);
-      }
-    }
-  }
-  out.push("", s.dim(`HELD: an input that held the value. USED: a call whose arguments contain it. Run ${s.bold("contrail why")} on a call for its graded trail.`));
-  return `${out.join("\n")}
-`;
-}
-function renderSessions(sessions2, s = PLAIN) {
-  if (!sessions2.length) return "No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n";
-  const head = ["SESSION", "LAST ACTIVE", "TURNS", "READS", "WRITES", "SHELL", "WEB/MCP", "SUBAGENTS", "FLAGGED", "FIRST PROMPT"];
-  const rows = sessions2.map((x) => {
-    const g = x.graph;
-    const count2 = (kinds) => g.actions.filter((a) => kinds.includes(kindOf(a))).length;
-    const subagents = new Set(g.actions.map((a) => a.scope.agentId).filter(Boolean)).size;
-    return [
-      x.id.slice(0, 8),
-      localTime(x.lastUs),
-      `${g.prompts.length}`,
-      `${count2(["READ", "SEARCH"])}`,
-      `${new Set(g.effects.filter((e) => e.kind === "file").map((e) => e.target)).size}`,
-      `${count2(["SHELL"])}`,
-      `${count2(["WEB", "MCP"])}`,
-      `${subagents}`,
-      `${x.flagged}`,
-      clip(g.prompts.find((p) => p.from === "you")?.text ?? "", 60)
-    ];
-  });
-  const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
-  const line = (cells) => cells.map((c, i) => i === cells.length - 1 ? c : c.padEnd(widths[i])).join("  ");
-  const body = rows.map(line);
-  const flaggedCol = head.indexOf("FLAGGED");
-  return [s.bold(line(head)), ...body.map((b, i) => rows[i][flaggedCol] !== "0" ? highlightFlag(b, s) : b)].join("\n") + `
-
-${s.dim("FLAGGED = sensitive actions whose values trace to external content. See: contrail risks --session <id>")}
-`;
-}
-function highlightFlag(row, s) {
-  return s.on ? row.replace(/^(\S+)/, (m) => s.flag(m)) : row;
-}
-function renderRisks(findings, scanned, g, s = PLAIN) {
-  const out = [];
-  out.push(
-    `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${counted(scanned.actions, "tool call")} in ${counted(scanned.sessions, "session")})`)}`
-  );
-  if (!scanned.actions) {
-    out.push("", "  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.");
-    return `${out.join("\n")}
-`;
-  }
-  if (!findings.length) out.push("", "  None found.");
-  for (const f of findings) {
-    const graph = g.get(f.action.scope.sessionId);
-    const mark = f.externalUpstream ? s.flag("\u25B2") : f.requested === "NOT_NAMED" ? s.bold("\u25B3") : s.dim("\xB7");
-    out.push("", `${mark} ${s.bold(describe(f.action, graph))}`);
-    const asked = f.requested === "NAMED" ? "named by you" : f.requested === "NOT_NAMED" ? s.flag("not named by you") : f.requested.toLowerCase().replace(/_/g, " ");
-    const prompt = graph.prompts.find((p) => p.promptId === f.action.promptId);
-    out.push(`  ${s.accent(f.kinds.join(" \xB7 "))}   ${asked}   ${s.dim(`session ${f.action.scope.sessionId.slice(0, 8)} \xB7 ${prompt?.label ?? "no turn"} \xB7 ${callId(f.action.id)}`)}`);
-    const external = f.sources.filter((x) => x.input.trust === "external");
-    const shown = (external.length ? external : f.sources).slice(0, 3);
-    if (!shown.length) {
-      out.push(`  ${s.dim("values trace to: no observed source")}`);
-      continue;
-    }
-    out.push(`  ${external.length ? s.flag("values trace to external content:") : s.dim("values trace to:")}`);
-    for (const { link, input } of shown) {
-      const where2 = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""}`;
-      out.push(`    ${s.grade(link.grade)}${clip(link.token ?? "", 80)}  \u2190 ${where2}  ${input.trust === "external" ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
-      if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}\u2502` : "\u2502")} ${clip(link.quote.text, 96)}`);
-      else if (link.quote && input.hashed) out.push(`             ${s.dim(`${link.quote.line ?? ""}\u2502 (text not stored)`)}`);
-    }
-  }
-  out.push(
-    "",
-    s.dim("\u25B2 values trace to web, MCP or dependency content   \u25B3 not named by you   \xB7 named by you"),
-    s.dim("Contrail explains; it does not judge or block. A flagged action is not proof of an attack, and an unflagged one is not proof of safety.")
-  );
-  return `${out.join("\n")}
-`;
-}
-function renderCommit(r, g, s = PLAIN) {
-  const out = [];
-  const { commit, action, explanation: e } = r;
-  const prompt = g.prompts.find((p) => p.promptId === action.promptId);
-  out.push(`${s.bold("Commit")} ${s.accent(commit.sha)} on ${clip(commit.branch, 60)}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
-  if (r.via === "time") {
-    const at = r.commitSec ? new Date(r.commitSec * 1e3).toISOString().slice(11, 19) : "that second";
-    out.push(
-      `  ${s.grade("LIKELY")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): the only recorded git commit running when git dated this commit (${at} UTC)  ${s.dim("[R9]")}`,
-      `           ${s.dim("git printed no commit line for this command, so the join is on time, not on git's output")}`
-    );
-  } else {
-    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${clip(commit.branch, 60)} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
-  }
-  const verdict = e.requested.verdict;
-  const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : "";
-  out.push(`Requested?  ${verdict === "NOT_NAMED" ? s.flag("NOT NAMED") : s.bold(verdict.replace(/_/g, " "))}${said}  ${s.dim(`[R8 ${e.requested.grade}]`)}`);
-  if (prompt) out.push(`Turn        ${s.grade("DIRECT")}ran while answering ${prompt.label}: "${clip(prompt.text, 70)}"  ${s.dim("[R1]")}`);
-  out.push("");
-  if (!r.files) {
-    out.push(s.dim("Commit contents unavailable: git could not show this commit here (run from inside the repository)."));
-    return `${out.join("\n")}
-`;
-  }
-  out.push(s.bold("What the commit contains") + s.dim(" (file list from git now, joined to the agent's changes by path)"));
-  const width = Math.max(...r.files.map((f) => displayPath(f.file, g.env.cwd, g.env.home).length));
-  const order = { LIKELY: 0, POSSIBLE: 1, UNKNOWN: 2 };
-  for (const f of [...r.files].sort((a, b) => order[a.grade] - order[b.grade])) {
-    const shown = displayPath(f.file, g.env.cwd, g.env.home).padEnd(width);
-    if (!f.writer) {
-      out.push(`  ${s.grade("UNKNOWN")}${shown}  ${s.dim("no agent change recorded in this session (you, another process, or an earlier session)")}`);
-      continue;
-    }
-    const w = f.writer;
-    out.push(
-      `  ${s.grade(f.grade)}${shown}  \u2190 ${w.action.tool} ${callId(w.action.id)} ${clip(describe(w.action, g), 44)}  ${w.named ? s.dim("named by you") : s.flag("not named by you")}  ${s.dim("[R7]")}`
-    );
-  }
-  const unnamed = r.files.filter((f) => f.writer && !f.writer.named).length;
-  out.push(
-    "",
-    s.dim("LIKELY, not DIRECT: git lists the file and the agent changed it earlier; whether that exact change is what was committed is not observed."),
-    `${unnamed} of ${r.files.length} files hold agent changes you did not name. ${s.dim("Run contrail why <file> for the trail behind each one.")}`
-  );
-  return `${out.join("\n")}
-`;
-}
-var pad2 = (text, width) => text.padEnd(width);
-var counted = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-function localTime(us) {
-  const d = new Date(Math.floor(us / 1e3));
-  const two = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
-}
-var TRIPWIRE_ASKED = {
-  NAMED: "named in your words",
-  NAMED_NEGATED: "named, but your latest mention is negated",
-  PARTLY_NAMED: "partly named in your words",
-  NOT_NAMED: "not named in your words",
-  NOTHING_TO_MATCH: "nothing in it to match against your words"
-};
-function renderTripwire(f, e) {
-  const external = f.sources.find((x) => x.input.trust === "external");
-  const values = [...new Set(f.sources.filter((x) => x.input.id === external.input.id).map((x) => x.link.token).filter((v) => !!v))];
-  const where2 = external.link.quote?.line != null ? `${clip(external.input.label, 80)}:${external.link.quote.line}` : clip(external.input.label, 80);
-  const shown = values.length ? clip(values.map((v) => clip(v, 60)).join(", "), 120) : "a value in it";
-  return `Contrail \u25B2 ${f.kinds.join(" \xB7 ")} \xB7 ${TRIPWIRE_ASKED[f.requested]}: ${shown} first appeared in ${where2} (external, ${external.link.grade}). Trail: /contrail:why ${callId(e.action.id)}`;
 }
 
 // src/render/blame.ts
@@ -4337,13 +5303,13 @@ function renderReport(r) {
   for (const a of g.actions) {
     const e = r.explanations.get(a.id);
     const f = byAction.get(a.id);
-    const tone = [f ? "sensitive" : "", f?.externalUpstream ? "ext" : "", a.status === "failed" || a.status === "interrupted" ? "failed" : ""].filter(Boolean).join(" ");
+    const tone = [f ? "sensitive" : "", f?.externalUpstream ? "ext" : "", a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? "failed" : ""].filter(Boolean).join(" ");
     const pills = [
       e ? `<span class="grade ${gradeClass(e.chainGrade)}">${e.chainGrade}</span>` : "",
       e?.requested.verdict === "NOT_NAMED" ? '<span class="pill flag">not named by you</span>' : e?.requested.verdict === "NAMED" ? '<span class="pill">named by you</span>' : "",
       f ? `<span class="pill ${f.externalUpstream ? "ext" : "flag"}">${escapeHtml(f.kinds.join(" \xB7 "))}</span>` : "",
       a.scope.agentId ? `<span class="pill">subagent ${escapeHtml(callId(a.scope.agentId))}</span>` : "",
-      a.status === "failed" || a.status === "interrupted" ? `<span class="pill flag">${a.status}</span>` : ""
+      a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? `<span class="pill flag">${a.status}</span>` : ""
     ].join("");
     const head = `<span class="seq">${a.preSeq}</span><span class="kind">${escapeHtml(kindOf(a))}</span><code>${escapeHtml(clip(summary(a, g), 140))}</code>${pills}`;
     items.push({
@@ -4366,7 +5332,8 @@ function renderReport(r) {
 <header>
   <div class="brand">${LOGO_MARK}<span>contrail</span></div>
   <h1>Session ${escapeHtml(sessionId.slice(0, 8))}</h1>
-  <p class="meta"><code>${escapeHtml(clip(g.env.cwd, 160))}</code> \xB7 ${escapeHtml(time(first))} to ${escapeHtml(time(last))}</p>
+  <p class="meta"><code>${escapeHtml(clip(g.env.cwd, 160))}</code> \xB7 ${escapeHtml(time(first))} to ${escapeHtml(time(last))}</p>${sourceNote(g) ? `
+  <p class="meta"><b>${escapeHtml(sourceNote(g))}</b></p>` : ""}
   <nav><a href="#risks">Sensitive actions</a><a href="#timeline">Timeline</a><a href="#trails">Trails</a></nav>
 </header>
 <main>
@@ -4464,8 +5431,89 @@ details.full > summary { cursor: pointer; color: var(--muted); }
 footer { margin: 48px auto 40px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
 `;
 
+// src/render/import.ts
+var MAX_LISTED = 20;
+function renderImport(v, s = PLAIN) {
+  const { summary: summary2 } = v;
+  const count2 = (status) => summary2.sessions.filter((x) => x.status === status).length;
+  const plural3 = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+  const out = [`${s.bold(`${plural3(summary2.found, "Claude Code session")} found`)} ${s.dim(`for ${v.scope}, in ${v.root}`)}`];
+  if (!summary2.found) {
+    out.push(`  No transcripts here belong to ${v.scope}. ${s.dim("contrail import --all takes every project; --project <dir> takes another one.")}`);
+    return `${out.join("\n")}
+`;
+  }
+  const imported = summary2.sessions.filter((x) => x.status === "imported");
+  const events = imported.reduce((n, x) => n + x.events, 0);
+  const skipped = [
+    [count2("recorded"), "already recorded live by Contrail's hooks, left as recorded", true],
+    [count2("imported-before"), "already imported", true],
+    [count2("older"), `last active before --since ${v.since ?? ""}`.trim(), v.since !== null],
+    [count2("expired"), `last active over ${v.retentionDays} days ago, which retention would remove at once`, false],
+    [count2("unparseable"), "unparseable: no entry in them could be read", true],
+    [count2("empty"), "with no prompt or tool call to import", false],
+    [count2("duplicate"), "with a session id already taken from another project folder", false],
+    [count2("full"), `left out once the database reached its ${v.maxDbMb} MB size cap (max_db_mb), so no recorded session is pushed out`, false]
+  ];
+  const label = v.dryRun ? "would import" : "imported";
+  out.push(`  ${label.padEnd(12)} ${plural3(imported.length, "session")}, ${plural3(events, "event")}`);
+  let first = true;
+  for (const [n, what, always] of skipped) {
+    if (!n && !always) continue;
+    out.push(`  ${(first ? "skipped" : "").padEnd(12)} ${n} ${what}`);
+    first = false;
+  }
+  const { malformed, unknown } = summary2.stats;
+  if (malformed || unknown) {
+    const parts = [malformed ? `${plural3(malformed, "malformed line")}` : "", unknown ? `${plural3(unknown, "entry")} of a type this version does not know` : ""].filter(Boolean);
+    out.push(s.dim(`  Left out while reading: ${parts.join(" and ")}.`));
+  }
+  if (imported.length) {
+    out.push("");
+    for (const x of imported.slice(0, MAX_LISTED)) {
+      out.push(`  ${x.sessionId.slice(0, 8)}  ${x.lastUs ? localTime(x.lastUs) : "".padEnd(16)}  ${plural3(x.events, "event").padEnd(11)}  ${s.dim(clip(x.cwd ? v.shown(x.cwd) : "", 80))}`);
+    }
+    if (imported.length > MAX_LISTED) out.push(s.dim(`  and ${imported.length - MAX_LISTED} more`));
+  }
+  out.push("");
+  if (v.dryRun) {
+    out.push(s.bold("Dry run: nothing was written.") + s.dim(" Run again without --dry-run to import."));
+  } else if (imported.length) {
+    out.push(
+      s.dim("Every report marks these sessions as reconstructed from Claude Code's transcript, not recorded live, and lists what a transcript does not hold."),
+      `Next: ${s.bold("contrail sessions")}, or ${s.bold("contrail why last")}`
+    );
+  }
+  return `${out.join("\n")}
+`;
+}
+function importJson(v) {
+  const { summary: summary2 } = v;
+  const count2 = (status) => summary2.sessions.filter((x) => x.status === status).length;
+  const imported = summary2.sessions.filter((x) => x.status === "imported");
+  return {
+    dryRun: v.dryRun,
+    found: summary2.found,
+    imported: imported.length,
+    events: imported.reduce((n, x) => n + x.events, 0),
+    skipped: {
+      recorded: count2("recorded"),
+      importedBefore: count2("imported-before"),
+      older: count2("older"),
+      expired: count2("expired"),
+      unparseable: count2("unparseable"),
+      empty: count2("empty"),
+      duplicate: count2("duplicate"),
+      full: count2("full")
+    },
+    malformedLines: summary2.stats.malformed,
+    unknownEntries: summary2.stats.unknown,
+    sessions: summary2.sessions.map((x) => ({ id: x.sessionId, status: x.status, events: x.events, lastUs: x.lastUs, cwd: x.cwd }))
+  };
+}
+
 // src/render/otel.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 var SPAN_KIND_INTERNAL = 1;
 var STATUS_ERROR = 2;
 function attrs(o) {
@@ -4479,7 +5527,7 @@ function attrs(o) {
   return out;
 }
 var hexId = (kind, value, length) => {
-  const hex = createHash2("sha256").update(`${kind}:${value}`).digest("hex").slice(0, length);
+  const hex = createHash3("sha256").update(`${kind}:${value}`).digest("hex").slice(0, length);
   return /^0+$/.test(hex) ? `1${hex.slice(1)}` : hex;
 };
 var nanos = (us) => (BigInt(Math.round(us)) * 1000n).toString();
@@ -4503,7 +5551,7 @@ function toOtlp(g, explanations, findings, version) {
       kind: SPAN_KIND_INTERNAL,
       startTimeUnixNano: nanos(first),
       endTimeUnixNano: nanos(last),
-      attributes: attrs({ "session.id": sessionId, "contrail.cwd": g.env.cwd, "contrail.turns": g.prompts.length, "contrail.tool_calls": g.actions.length })
+      attributes: attrs({ "session.id": sessionId, "contrail.cwd": g.env.cwd, "contrail.source": g.source, "contrail.turns": g.prompts.length, "contrail.tool_calls": g.actions.length })
     }
   ];
   g.prompts.forEach((p, i) => {
@@ -4560,7 +5608,7 @@ function toOtlp(g, explanations, findings, version) {
         attributes: attrs({ "contrail.effect.kind": fx.kind, "contrail.effect.target": clip(fx.target, 200), "contrail.effect.evidence": fx.evidence })
       })),
       links: provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan),
-      ...a.status === "failed" || a.status === "interrupted" ? { status: { code: STATUS_ERROR, message: a.status } } : {}
+      ...a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? { status: { code: STATUS_ERROR, message: a.status } } : {}
     });
   }
   return {
@@ -4621,7 +5669,7 @@ var VERDICT_WORDS = {
   PARTLY_NAMED: "partly named by you",
   NOTHING_TO_MATCH: "nothing in it to match against your words"
 };
-var STATUS_WORDS = { ok: "", failed: "failed", interrupted: "interrupted", pending: "no result recorded" };
+var STATUS_WORDS = { ok: "", failed: "failed", interrupted: "interrupted", pending: "no result recorded", denied: "denied" };
 function headline2(e, g) {
   const head = headlineTrace(e);
   const link = head?.links.find((l) => l.grade !== "UNKNOWN");
@@ -4998,71 +6046,6 @@ function fileMd(f, r) {
   return lines.join("\n");
 }
 
-// src/store/retention.ts
-import { readFileSync as readFileSync4 } from "node:fs";
-import { join as join6 } from "node:path";
-var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true, tripwire: true };
-function loadConfig(dataDir) {
-  let raw;
-  try {
-    raw = readFileSync4(join6(dataDir, "config.json"), "utf8");
-  } catch {
-    return { config: DEFAULTS, problem: null };
-  }
-  try {
-    const c = JSON.parse(raw);
-    const positive = (v, fallback) => typeof v === "number" && v > 0 ? v : fallback;
-    return {
-      config: {
-        retentionDays: positive(c.retention_days, DEFAULTS.retentionDays),
-        maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb),
-        storeContent: c.store_content !== false,
-        tripwire: c.tripwire !== false
-      },
-      problem: null
-    };
-  } catch (e) {
-    return { config: DEFAULTS, problem: `config.json is not valid JSON (${e.message}); using defaults` };
-  }
-}
-function prune(db, config, nowMs) {
-  const cutoffUs = (nowMs - config.retentionDays * 864e5) * 1e3;
-  let removed = 0;
-  const drop = (sessionId) => {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      if (sessionId === null) db.run("DELETE FROM events WHERE session_id IS NULL AND captured_us < ?", cutoffUs);
-      else db.run("DELETE FROM events WHERE session_id = ?", sessionId);
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
-  };
-  const old = db.all("SELECT session_id AS id FROM events WHERE session_id IS NOT NULL GROUP BY session_id HAVING MAX(captured_us) < ?", cutoffUs);
-  for (const { id } of old) {
-    drop(id);
-    removed++;
-  }
-  drop(null);
-  const limit = config.maxDbMb * 1024 * 1024;
-  while (liveBytes(db) > limit) {
-    const oldest = db.get(
-      "SELECT session_id AS id FROM events WHERE session_id IS NOT NULL GROUP BY session_id ORDER BY MAX(captured_us) LIMIT 1"
-    );
-    if (!oldest) break;
-    drop(oldest.id);
-    removed++;
-  }
-  return { sessionsRemoved: removed };
-}
-function liveBytes(db) {
-  const pages = db.get("PRAGMA page_count")?.page_count ?? 0;
-  const free = db.get("PRAGMA freelist_count")?.freelist_count ?? 0;
-  const size = db.get("PRAGMA page_size")?.page_size ?? 4096;
-  return (pages - free) * size;
-}
-
 // src/store/schema.ts
 var MIGRATIONS = [
   [
@@ -5103,6 +6086,11 @@ var MIGRATIONS = [
     "DROP TABLE touches",
     "ALTER TABLE touches_v2 RENAME TO touches",
     "CREATE INDEX touches_path ON touches (path, kind)"
+  ],
+  [
+    // v3: where an event came from. NULL is a hook event recorded live; 'transcript' is one
+    // `contrail import` reconstructed from Claude Code's own session transcript.
+    "ALTER TABLE events ADD COLUMN source TEXT"
   ]
 ];
 var SCHEMA_VERSION = MIGRATIONS.length;
@@ -5187,10 +6175,14 @@ var OPTIONS = {
   session: { type: "string" },
   limit: { type: "string" },
   all: { type: "boolean" },
+  yes: { type: "boolean" },
   tree: { type: "boolean" },
   otel: { type: "boolean" },
   markdown: { type: "boolean" },
   output: { type: "string", short: "o" },
+  since: { type: "string" },
+  project: { type: "string" },
+  "dry-run": { type: "boolean" },
   "from-hook": { type: "boolean" },
   "from-skill": { type: "boolean" },
   help: { type: "boolean", short: "h" },
@@ -5228,13 +6220,20 @@ Usage:
                                     calls behind them (base: the first of origin/HEAD, origin/main,
                                     origin/master, main, master); --markdown for a pull request,
                                     -o to save that markdown and print this view
+  contrail import [--since <date | 30d>] [--project <dir> | --all] [--dry-run]
+                                    bring in sessions from before Contrail was installed, rebuilt
+                                    from Claude Code's own transcripts (this repository's, unless
+                                    --project or --all); reports mark them as reconstructed
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
+  contrail watch [--session <id>]   tool calls as they finish, with where their values came from
   contrail prune                    apply retention now and compact the database
+  contrail forget <session> | --all --yes
+                                    delete one recorded session, or everything, and compact
 
 Options:
-  --json          machine-readable output (why, blame, trace, risks, sessions, find, review)
+  --json          machine-readable output (why, blame, trace, risks, sessions, find, review, import)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
@@ -5275,11 +6274,14 @@ ${USAGE}`);
     export: (args) => exportSession(args, flags, io),
     report: (args) => report(args, flags, io),
     statusline: () => statusline(flags, io),
+    watch: () => watch(flags, io, style),
     tripwire: () => tripwire(flags, io),
     find: (args) => find(args, flags, io, style),
     review: (args) => review(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
+    import: () => importCommand(flags, io, style),
     prune: () => pruneCommand(flags, io),
+    forget: (args) => forget(args, flags, io),
     doctor: () => doctor(flags, io)
   };
   const run = commands[command];
@@ -5306,7 +6308,7 @@ ${e.stack ?? String(e)}
   }
 }
 function prepareDataDir(dataDir) {
-  mkdirSync(join7(dataDir, "spool"), { recursive: true, mode: 448 });
+  mkdirSync(join8(dataDir, "spool"), { recursive: true, mode: 448 });
   try {
     chmodSync2(dataDir, 448);
   } catch {
@@ -5317,7 +6319,7 @@ async function withStore(flags, io, use) {
   let db;
   try {
     prepareDataDir(dataDir);
-    db = await openDb(join7(dataDir, "contrail.db"));
+    db = await openDb(join8(dataDir, "contrail.db"));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
     throw new ContrailError(`Cannot use the data directory ${dataDir}: ${e.message}`);
@@ -5327,7 +6329,7 @@ async function withStore(flags, io, use) {
     const repoKeyOf = makeRepoKeyOf();
     const storeContent = loadConfig(dataDir).config.storeContent;
     const hashToken = contentHmac(dataDir, !storeContent);
-    ingest(db, join7(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
+    ingest(db, join8(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
     return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd), ...hashToken ? { hashToken } : {} });
   } finally {
     db.close();
@@ -5352,7 +6354,7 @@ async function why(args, flags, io, s) {
       const use = latestUse(db, value, repoKey, io.home, hashToken);
       if (!use) {
         throw new ContrailError(
-          `Nothing recorded matches "${value}": no agent change to that file, no shell command containing it, and no call that used it. Contrail only sees sessions recorded since it was installed. Run /contrail:why with no argument for the last action.`
+          `Nothing recorded matches "${value}": no agent change to that file, no shell command containing it, and no call that used it. Contrail only sees sessions recorded since it was installed, and earlier ones brought in with contrail import. Run /contrail:why with no argument for the last action.`
         );
       }
       hit = use;
@@ -5360,6 +6362,8 @@ async function why(args, flags, io, s) {
     }
     const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const explanation = explain(hit.toolUseId, graph);
+    const denial = denialFor(db, explanation.action, projectsRoot(io.env, io.home));
+    if (denial) Object.assign(explanation.action, { status: "denied", deniedBy: denial.kind, denial: denial.reason });
     if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}
 `);
     else io.out(renderWhy(explanation, graph, note, s));
@@ -5463,7 +6467,7 @@ async function trace2(flags, io, s) {
       const explanations2 = new Map(graph.actions.slice(0, MAX_EXPLAINED).map((a) => [a.id, explain(a.id, graph)]));
       const forest = trailForest(graph, explanations2);
       const omitted = graph.actions.length - explanations2.size;
-      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, source: graph.source, forest: forest.map(treeJson), omitted }, null, 2)}
 `);
       else io.out(renderTree(graph, forest, omitted, s));
       return 0;
@@ -5474,7 +6478,7 @@ async function trace2(flags, io, s) {
       if (!matchesFilter(a, graph, filter) || !EXPLAINED.has(kindForExplain(a.tool))) continue;
       explanations.set(a.id, explain(a.id, graph));
     }
-    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}
+    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, source: graph.source, filter, explanations: [...explanations.values()] }, null, 2)}
 `);
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
@@ -5502,7 +6506,7 @@ async function risks(flags, io, s) {
     }
     const ranked = rankFindings(findings);
     if (flags.json) {
-      io.out(`${JSON.stringify(ranked.map((f) => ({ action: f.action.id, session: f.action.scope.sessionId, kinds: f.kinds, requested: f.requested, externalUpstream: f.externalUpstream, sources: f.sources.map((x) => ({ grade: x.link.grade, token: x.link.token, source: x.input.label, trust: x.input.trust, quote: x.link.quote })) })), null, 2)}
+      io.out(`${JSON.stringify(ranked.map((f) => ({ action: f.action.id, session: f.action.scope.sessionId, source: graphs.get(f.action.scope.sessionId)?.source, kinds: f.kinds, requested: f.requested, externalUpstream: f.externalUpstream, sources: f.sources.map((x) => ({ grade: x.link.grade, token: x.link.token, source: x.input.label, trust: x.input.trust, quote: x.link.quote })) })), null, 2)}
 `);
     } else {
       io.out(renderRisks(ranked, { actions, sessions: ids.length }, graphs, s));
@@ -5520,7 +6524,7 @@ async function sessions(flags, io, s) {
       return { ...r, graph, flagged: findingsFor(graph).filter((f) => f.externalUpstream).length };
     });
     if (flags.json) {
-      io.out(`${JSON.stringify(summaries.map((x) => ({ id: x.id, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts.find((p) => p.from === "you")?.text ?? null })), null, 2)}
+      io.out(`${JSON.stringify(summaries.map((x) => ({ id: x.id, source: x.graph.source, lastUs: x.lastUs, cwd: x.cwd, turns: x.graph.prompts.length, toolCalls: x.graph.actions.length, flagged: x.flagged, firstPrompt: x.graph.prompts.find((p) => p.from === "you")?.text ?? null })), null, 2)}
 `);
     } else {
       io.out(renderSessions(summaries, s));
@@ -5602,7 +6606,7 @@ async function tripwire(flags, io) {
     if (payload.hook_event_name !== "PreToolUse" || !sessionId || !toolUseId) return 0;
     const notice = await withStore(flags, io, ({ db, dataDir, hashToken }) => {
       if (!loadConfig(dataDir).config.tripwire) return null;
-      const rows = loadRows(db, sessionId);
+      const rows = loadRows(db, sessionId, { later: true });
       if (!rows.some((r) => r.hook_event === "PreToolUse" && r.tool_use_id === toolUseId)) {
         rows.push({
           id: 0,
@@ -5654,7 +6658,7 @@ Wrote the markdown for a pull request description to ${path}
   });
 }
 function writePrivate(path, text) {
-  const tmp = join7(dirname3(path), `.${basename7(path)}.${process.pid}.tmp`);
+  const tmp = join8(dirname3(path), `.${basename7(path)}.${process.pid}.tmp`);
   try {
     writeFileSync2(tmp, text, { mode: 384, flag: "wx" });
     renameSync(tmp, path);
@@ -5663,7 +6667,7 @@ function writePrivate(path, text) {
     throw new ContrailError(`Cannot write ${path}: ${e.message}`);
   }
 }
-var readStdin = (io) => io.stdin ? io.stdin() : readFileSync5(0, "utf8");
+var readStdin = (io) => io.stdin ? io.stdin() : readFileSync7(0, "utf8");
 async function statusline(flags, io) {
   const s = io.env.NO_COLOR ? PLAIN : COLOR;
   try {
@@ -5685,11 +6689,11 @@ async function statusline(flags, io) {
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   prepareDataDir(dataDir);
-  const db = await openDb(join7(dataDir, "contrail.db"));
+  const db = await openDb(join8(dataDir, "contrail.db"));
   try {
     migrate(db);
     const { config } = loadConfig(dataDir);
-    const r = ingest(db, join7(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
+    const r = ingest(db, join8(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
     const { sessionsRemoved } = prune(db, config, Date.now());
     if (!flags["from-hook"]) {
       io.out(
@@ -5700,6 +6704,57 @@ async function ingestCommand(flags, io) {
     return 0;
   } finally {
     db.close();
+  }
+}
+async function importCommand(flags, io, s) {
+  const now = Date.now();
+  const since = flags.since ?? null;
+  const sinceUs = since === null ? null : parseSince(since, now) * 1e3;
+  if (flags.all && flags.project) throw new ContrailError("Pick one of --project and --all.");
+  const dryRun = flags["dry-run"] === true;
+  const root = projectsRoot(io.env, io.home);
+  const shown = (path2) => displayPath(path2, "", io.home);
+  const repoKeyOf = makeRepoKeyOf();
+  let folder;
+  let belongs = () => true;
+  let scope = "all projects";
+  if (!flags.all) {
+    const dir = resolve7(io.cwd, flags.project ?? ".");
+    if (flags.project && (dir === root || dir.startsWith(`${root}/`))) {
+      folder = dir;
+      scope = `the project folder ${shown(dir)}`;
+    } else {
+      const key = repoKeyOf(dir);
+      belongs = (cwd) => cwd !== null && repoKeyOf(cwd) === key;
+      scope = shown(dir);
+    }
+  }
+  const run = async (db2, dataDir2, hmac) => {
+    const { config } = loadConfig(dataDir2);
+    const summary2 = await importSessions(db2, listSessions(root, folder), {
+      belongs,
+      sinceUs,
+      retentionUs: (now - config.retentionDays * 864e5) * 1e3,
+      maxBytes: config.maxDbMb * 1024 * 1024,
+      dryRun,
+      repoKeyOf,
+      ...hmac ? { hmac } : {}
+    });
+    const view = { summary: summary2, root: shown(root), scope, dryRun, since, retentionDays: config.retentionDays, maxDbMb: config.maxDbMb, shown };
+    io.out(flags.json ? `${JSON.stringify(importJson(view), null, 2)}
+` : renderImport(view, s));
+    return 0;
+  };
+  if (!dryRun) {
+    return withStore(flags, io, ({ db: db2, dataDir: dataDir2, hashToken }) => run(db2, dataDir2, loadConfig(dataDir2).config.storeContent ? void 0 : hashToken));
+  }
+  const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
+  const path = join8(dataDir, "contrail.db");
+  const db = existsSync3(path) ? await openDb(path) : null;
+  try {
+    return await run(db, dataDir);
+  } finally {
+    db?.close();
   }
 }
 async function pruneCommand(flags, io) {
@@ -5714,12 +6769,83 @@ async function pruneCommand(flags, io) {
     return 0;
   });
 }
+async function watch(flags, io, s, opts = {}) {
+  const sleep = opts.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms)));
+  const seen = /* @__PURE__ */ new Set();
+  let session = null;
+  let lastEvent = -1;
+  io.out(s.dim(`Watching Claude Code in ${clip(io.cwd, 100)}. Each tool call appears as it starts; \u25B2 marks values from external content. Ctrl-C stops.
+`));
+  for (let tick = 0; opts.ticks === void 0 || tick < opts.ticks; tick++) {
+    if (tick > 0) await sleep(1e3);
+    await withStore(flags, io, ({ db, repoKey, hashToken }) => {
+      const latest = flags.session ? pickSession(db, flags.session, repoKey) : recentSessions(db, repoKey, 1)[0]?.id;
+      if (!latest) return;
+      const newest = db.get("SELECT MAX(id) AS m FROM events WHERE session_id = ?", latest)?.m ?? 0;
+      if (latest === session && newest === lastEvent) return;
+      const graph = loadGraph(db, latest, io.home, hashToken);
+      if (latest !== session) {
+        if (session === null) {
+          for (const p of graph.prompts) seen.add(`p:${p.promptId}`);
+          for (const a of graph.actions) seen.add(a.id).add(`end:${a.id}`);
+        }
+        io.out(`
+${s.bold("Session")} ${latest.slice(0, 8)}  ${s.dim(clip(graph.env.cwd, 100))}
+`);
+        session = latest;
+      }
+      lastEvent = newest;
+      const prompts = graph.prompts.filter((p) => !seen.has(`p:${p.promptId}`));
+      const actions = graph.actions.filter((a) => !seen.has(a.id));
+      const ended = graph.actions.filter((a) => seen.has(a.id) && !seen.has(`end:${a.id}`) && a.status !== "pending");
+      const explanations = new Map(actions.map((a) => [a.id, explain(a.id, graph)]));
+      const findings = actions.map((a) => assess(explanations.get(a.id), graph)).filter((f) => f !== null);
+      io.out(renderWatch(graph, prompts, actions, explanations, findings, s) + renderWatchEnds(graph, ended, s));
+      for (const p of prompts) seen.add(`p:${p.promptId}`);
+      for (const a of [...actions, ...ended]) seen.add(a.id).add(a.status === "pending" ? a.id : `end:${a.id}`);
+    });
+  }
+  return 0;
+}
+async function forget(args, flags, io) {
+  const target = args[0] ?? flags.session;
+  if (flags.all ? target : !target) throw new ContrailError("Usage: contrail forget <session> | contrail forget --all --yes");
+  if (flags.all && !flags.yes) throw new ContrailError("contrail forget --all deletes every recorded session. Add --yes to confirm.");
+  return withStore(flags, io, ({ db, dataDir, repoKey }) => {
+    db.exec("PRAGMA secure_delete = ON");
+    let what;
+    let events;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (flags.all) {
+        events = db.run("DELETE FROM events");
+        what = "every recorded session";
+      } else {
+        const id = pickSession(db, target, repoKey);
+        events = db.run("DELETE FROM events WHERE session_id = ?", id);
+        what = `session ${id.slice(0, 8)}`;
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+    if (flags.all) {
+      for (const name2 of readdirSync4(join8(dataDir, "spool"))) rmSync2(join8(dataDir, "spool", name2), { force: true, recursive: true });
+    }
+    db.exec("VACUUM");
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    io.out(`forgot ${what} (${events} event${events === 1 ? "" : "s"}); database compacted
+`);
+    return 0;
+  });
+}
 async function doctor(flags, io) {
   const versions = process.versions;
   io.out(`contrail ${VERSION} on ${versions.bun ? `bun ${versions.bun}` : `node ${process.versions.node}`}
 `);
   return withStore(flags, io, ({ db, dataDir }) => {
-    const backlog = readdirSync3(join7(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
+    const backlog = readdirSync4(join8(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
     const stats = db.get(
       `SELECT COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions,
               SUM(parse_error IS NOT NULL) AS parseErrors, MAX(captured_us) AS last FROM events`
@@ -5735,9 +6861,9 @@ async function doctor(flags, io) {
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1e3)).toISOString() : "never"}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ""}`,
       `content          ${config.storeContent ? "stored as redacted text" : "stored as keyed hashes only (store_content: false)"}`,
-      `launcher         ${existsSync3(join7(dataDir, "bin", "contrail")) ? join7(dataDir, "bin", "contrail") : "written at the next session start"}`,
+      `launcher         ${existsSync3(join8(dataDir, "bin", "contrail")) ? join8(dataDir, "bin", "contrail") : "written at the next session start"}`,
       ...hook ? [`capture hook     ${hook} ms per event (median of 5)`] : [],
-      stats.events === 0 && backlog === 0 ? "No events yet. Run a Claude Code session with the plugin enabled, then check again." : "Recording and queries work."
+      stats.events === 0 && backlog === 0 ? `No events yet. Run a Claude Code session with the plugin enabled, then check again. ${IMPORT_HINT}` : "Recording and queries work."
     ];
     io.out(`${lines.join("\n")}
 `);
@@ -5752,7 +6878,7 @@ function captureTiming() {
     return null;
   }
   if (!existsSync3(hook)) return null;
-  const dir = mkdtempSync(join7(tmpdir(), "contrail-doctor-"));
+  const dir = mkdtempSync(join8(tmpdir(), "contrail-doctor-"));
   try {
     const times = [];
     for (let i = 0; i < 5; i++) {

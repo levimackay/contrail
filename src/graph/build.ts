@@ -20,6 +20,10 @@ export interface EventRow {
   repo_key?: string | null;
   payload: string;
   parse_error: string | null;
+  /** null for a hook event recorded live; 'transcript' for one `contrail import` reconstructed */
+  source?: string | null;
+  /** payload is read from the database the first time something reads it (loadRows) */
+  payloadLater?: boolean;
 }
 
 const DEPENDENCY_DIR = /(^|\/)(node_modules|vendor|\.venv|venv|site-packages)(\/|$)/;
@@ -48,11 +52,32 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
   const skillBodies = new Map<string, { text: string; path: string }>();
   const notifications: Array<{ seq: number; promptId: string; text: string; toolUseId: string | null; taskId: string | null }> = [];
 
+  // What the model received for each call, first: whether a call's own result is needed while
+  // building depends on it.
+  rows.forEach((row, index) => {
+    if (row.hook_event !== 'PostToolBatch') return;
+    for (const call of arr(parsePayload(row.payload).tool_calls)) {
+      const useId = str(call, 'tool_use_id');
+      if (useId) modelSaw.set(useId, { seq: index + 1, text: toText(field(call, 'tool_response')) });
+    }
+  });
+
   rows.forEach((row, index) => {
     const seq = index + 1;
+    const id = row.tool_use_id;
+    const known = id ? actions.get(id) : undefined;
+    const large = row.hook_event === 'PostToolUse' && (row.payloadLater || row.payload.length > DEFER_OVER);
+    if (large && known && onlyTextUsed(known.tool) && modelSaw.get(known.id)?.text) {
+      // A large result whose text the model's own copy already gives: only the JSON reports print
+      // it, so it is read and parsed when first used, not for every query.
+      known.postSeq = seq;
+      known.status = 'ok';
+      deferResponse(known, row);
+      return;
+    }
+    if (row.hook_event === 'PostToolBatch') return; // read above
     const p = parsePayload(row.payload);
     const scope: Scope = { sessionId: row.session_id ?? '', agentId: row.agent_id };
-    const id = row.tool_use_id;
 
     switch (row.hook_event) {
       case 'UserPromptSubmit': {
@@ -80,6 +105,17 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
       case 'PreToolUse':
         if (id && !actions.has(id)) actions.set(id, newAction(id, scope, row, p, seq));
         break;
+      case 'PermissionDenied': {
+        // Auto mode refused the call: no PreToolUse fired, so this is the only record of the attempt.
+        if (!id) break;
+        const a = actions.get(id) ?? newAction(id, scope, row, p, seq);
+        actions.set(id, a);
+        a.postSeq = seq;
+        a.status = 'denied';
+        a.denial = str(p, 'reason') ?? '';
+        a.deniedBy = str(p, 'denial_kind') ?? 'automode-blocked';
+        break;
+      }
       case 'PostToolUse':
       case 'PostToolUseFailure': {
         if (!id) break;
@@ -98,12 +134,6 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
         }
         break;
       }
-      case 'PostToolBatch':
-        for (const call of arr(p.tool_calls)) {
-          const useId = str(call, 'tool_use_id');
-          if (useId) modelSaw.set(useId, { seq, text: toText(field(call, 'tool_response')) });
-        }
-        break;
       case 'PostCompact':
         (compactSeqs[scopeKey(scope)] ??= []).push(seq);
         inputs.push({
@@ -207,6 +237,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
 
   for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
+  const fromTranscript = rows.filter(r => r.source === 'transcript').length;
   return {
     sessionId: mainScope.sessionId,
     actions: actionList,
@@ -217,9 +248,34 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
     agentSaid,
     env,
     firstEvent: rows[0]?.hook_event ?? null,
+    source: fromTranscript === 0 ? 'hooks' : fromTranscript === rows.length ? 'transcript' : 'both',
     timeUs: rows.map(r => r.captured_us),
     ...(hashToken ? { hashToken } : {}),
   };
+}
+
+/** Results the graph reads only as text (outputInput), with no effect or agent id taken from them. */
+export const TEXT_RESULT_TOOLS: readonly string[] = ['Read', 'NotebookRead', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch'];
+const onlyTextUsed = (tool: string) => TEXT_RESULT_TOOLS.includes(tool) || tool.startsWith('mcp__');
+/** Smaller results are parsed as they are read: deferring them saves nothing worth the indirection. */
+const DEFER_OVER = 16 * 1024;
+
+/**
+ * Sets action.response to be parsed from the row's payload the first time it is read, to exactly
+ * what the PostToolUse case would have set. It stays an enumerable own property in the same
+ * place, so JSON output is unchanged.
+ */
+function deferResponse(a: Action, row: EventRow): void {
+  const settle = (value: unknown) => {
+    Object.defineProperty(a, 'response', { value, writable: true, enumerable: true, configurable: true });
+    return value;
+  };
+  Object.defineProperty(a, 'response', {
+    enumerable: true,
+    configurable: true,
+    get: () => settle(parsePayload(row.payload).tool_response ?? null),
+    set: settle,
+  });
 }
 
 function parsePayload(payload: string): Record<string, unknown> {

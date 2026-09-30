@@ -31,4 +31,4 @@ jobs:
         run: shellcheck plugin/hooks/*.sh plugin/bin/contrail scripts/*.sh
       - uses: oven-sh/setup-bun@v2
       - name: Runs under Bun
-        run: sh plugin/bin/contrail doctor --data "$(mktemp -d)"
+        run: node scripts/smoke.ts

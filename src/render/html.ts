@@ -5,7 +5,7 @@ import { callId, clip } from '../util.ts';
 import { parseAnsi } from './ansi.ts';
 import { kindOf, renderRisks, renderTree, summary } from './session.ts';
 import { COLOR } from './style.ts';
-import { originWording, renderWhy } from './why.ts';
+import { originWording, renderWhy, sourceNote } from './why.ts';
 
 /**
  * contrail report: one session as a single HTML file. The page loads nothing and runs no
@@ -87,13 +87,13 @@ export function renderReport(r: ReportInput): string {
   for (const a of g.actions) {
     const e = r.explanations.get(a.id);
     const f = byAction.get(a.id);
-    const tone = [f ? 'sensitive' : '', f?.externalUpstream ? 'ext' : '', a.status === 'failed' || a.status === 'interrupted' ? 'failed' : ''].filter(Boolean).join(' ');
+    const tone = [f ? 'sensitive' : '', f?.externalUpstream ? 'ext' : '', a.status === 'failed' || a.status === 'interrupted' || a.status === 'denied' ? 'failed' : ''].filter(Boolean).join(' ');
     const pills = [
       e ? `<span class="grade ${gradeClass(e.chainGrade)}">${e.chainGrade}</span>` : '',
       e?.requested.verdict === 'NOT_NAMED' ? '<span class="pill flag">not named by you</span>' : e?.requested.verdict === 'NAMED' ? '<span class="pill">named by you</span>' : '',
       f ? `<span class="pill ${f.externalUpstream ? 'ext' : 'flag'}">${escapeHtml(f.kinds.join(' · '))}</span>` : '',
       a.scope.agentId ? `<span class="pill">subagent ${escapeHtml(callId(a.scope.agentId))}</span>` : '',
-      a.status === 'failed' || a.status === 'interrupted' ? `<span class="pill flag">${a.status}</span>` : '',
+      a.status === 'failed' || a.status === 'interrupted' || a.status === 'denied' ? `<span class="pill flag">${a.status}</span>` : '',
     ].join('');
     const head = `<span class="seq">${a.preSeq}</span><span class="kind">${escapeHtml(kindOf(a))}</span><code>${escapeHtml(clip(summary(a, g), 140))}</code>${pills}`;
     items.push({
@@ -119,7 +119,7 @@ export function renderReport(r: ReportInput): string {
 <header>
   <div class="brand">${LOGO_MARK}<span>contrail</span></div>
   <h1>Session ${escapeHtml(sessionId.slice(0, 8))}</h1>
-  <p class="meta"><code>${escapeHtml(clip(g.env.cwd, 160))}</code> · ${escapeHtml(time(first))} to ${escapeHtml(time(last))}</p>
+  <p class="meta"><code>${escapeHtml(clip(g.env.cwd, 160))}</code> · ${escapeHtml(time(first))} to ${escapeHtml(time(last))}</p>${sourceNote(g) ? `\n  <p class="meta"><b>${escapeHtml(sourceNote(g)!)}</b></p>` : ''}
   <nav><a href="#risks">Sensitive actions</a><a href="#timeline">Timeline</a><a href="#trails">Trails</a></nav>
 </header>
 <main>

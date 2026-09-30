@@ -2,7 +2,7 @@ import type { CommitFile } from '../engine/effects.ts';
 import type { Finding } from '../engine/risks.ts';
 import type { Sighting } from '../engine/find.ts';
 import { headlineTrace, type TreeNode, type TreeRoot } from '../engine/tree.ts';
-import type { Action, Commit, Explanation, Graph, Grade, Input } from '../engine/types.ts';
+import type { Action, Commit, Explanation, Graph, Grade, Input, TokenTrace } from '../engine/types.ts';
 import { clip, displayPath } from '../util.ts';
 import { callId, PLAIN, type Style } from './style.ts';
 import { describe, originWording } from './why.ts';
@@ -94,14 +94,7 @@ function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Ma
   const lines = [`  ${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kind, 7)} ${summary(a, g)}${who}${failed}`];
   if (!e) return lines;
 
-  const head = headline(e);
-  const link = head?.links.find(l => l.grade !== 'UNKNOWN');
-  const src = link?.to ? inputs.get(link.to) : undefined;
-  const from = src && link
-    ? `${s.grade(link.grade, 0).trim()} ${clip(head!.token.text, 80)} ← ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ''} ${src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`
-    : e.traces.length ? `${s.grade('UNKNOWN', 0).trim()} ${s.dim('no observed source')}` : '';
-  const asked = e.requested.verdict === 'NAMED' ? s.dim('named by you') : e.requested.verdict === 'NOT_NAMED' ? s.flag('not named by you') : '';
-  const detail = [from, asked].filter(Boolean).join('   ');
+  const detail = trailDetail(e, inputs, s);
   if (detail) lines.push(`         ${s.dim('↳')} ${detail}`);
 
   const effects = g.effects.filter(x => x.actionId === a.id && x.kind !== 'network');
@@ -113,7 +106,23 @@ function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Ma
   return lines;
 }
 
-const headline = headlineTrace;
+/** An action's headline value and where it first came from, then whether you named it: one line. */
+export function trailDetail(e: Explanation, inputs: Map<string, Input>, s: Style): string {
+  const head = headlineTrace(e);
+  const from = head ? traceSource(head, inputs, s) : '';
+  const found = from || (e.traces.length ? `${s.grade('UNKNOWN', 0).trim()} ${s.dim('no observed source')}` : '');
+  const asked = e.requested.verdict === 'NAMED' ? s.dim('named by you') : e.requested.verdict === 'NOT_NAMED' ? s.flag('not named by you') : '';
+  return [found, asked].filter(Boolean).join('   ');
+}
+
+/** A traced value and the source first credited with it: `LIKELY jwt-decode ← README.md:13 (local)`; empty when none was found. */
+export function traceSource(t: TokenTrace, inputs: Map<string, Input>, s: Style): string {
+  const link = t.links.find(l => l.grade !== 'UNKNOWN');
+  const src = link?.to ? inputs.get(link.to) : undefined;
+  if (!src || !link) return '';
+  const trust = src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+  return `${s.grade(link.grade, 0).trim()} ${clip(t.token.text, 80)} ← ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ''} ${trust}`;
+}
 
 /** trace --tree: each action under the call whose output first held its headline value. */
 export function renderTree(g: Graph, forest: TreeRoot[], omitted: number, s: Style = PLAIN): string {
@@ -333,7 +342,7 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
 
 const pad = (text: string, width: number) => text.padEnd(width);
 
-function localTime(us: number): string {
+export function localTime(us: number): string {
   const d = new Date(Math.floor(us / 1000));
   const two = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;

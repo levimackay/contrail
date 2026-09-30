@@ -438,17 +438,18 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync5, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename4, dirname as dirname2, join as join5 } from "node:path";
+import { join as join6, resolve as resolve7 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 // src/engine/effects.ts
-import { basename as basename2, isAbsolute as isAbsolute3, resolve as resolve3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute3, resolve as resolve3 } from "node:path";
 
 // src/util.ts
-import { isAbsolute, relative, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 function stringLeaves(value, path = "$") {
   if (typeof value === "string") return [{ path, value }];
   if (Array.isArray(value)) return value.flatMap((v, i) => stringLeaves(v, `${path}[${i}]`));
@@ -503,10 +504,21 @@ function clip(s, max) {
 function callId(id) {
   return id.length > 12 ? `${id.slice(0, 5)}\u2026${id.slice(-5)}` : id;
 }
+function realPath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    try {
+      return join(realpathSync(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
+}
 
 // src/engine/tokens.ts
 var import_shell_quote = __toESM(require_shell_quote(), 1);
-import { basename, dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
+import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
 
 // src/engine/text.ts
 var INVISIBLE = /[​-‏‪-‮⁠-⁤﻿]/g;
@@ -684,7 +696,7 @@ function unwrapCommand(words2) {
       argv = argv.slice(1);
       continue;
     }
-    const wrapper = basename(argv[0]);
+    const wrapper = basename2(argv[0]);
     if (!WRAPPERS.has(wrapper)) break;
     argv = argv.slice(1);
     while (argv.length && argv[0].startsWith("-") && argv[0] !== "-") {
@@ -780,13 +792,13 @@ function collector(env) {
       const rel = displayPath(abs, env.cwd, env.home);
       if (targetCount >= MAX_TARGETS) return;
       if (push(rel, "target", group, argPath)) targetCount++;
-      const base = basename(abs);
+      const base = basename2(abs);
       if (!GENERIC_BASENAMES.has(base.toLowerCase())) {
         if (base !== rel && passes(base)) push(base, "target", group, argPath);
         const stem = base.replace(/\.[^.]+$/, "");
         if (stem !== base && passes(stem)) push(stem, "target", group, argPath, true);
       }
-      for (const seg of dirname(rel).split("/")) {
+      for (const seg of dirname2(rel).split("/")) {
         if (seg && seg !== "." && seg !== "~" && !GENERIC_DIRS.has(seg.toLowerCase())) api.hint(seg, argPath);
       }
     },
@@ -812,7 +824,7 @@ function bash(command, b) {
   for (const seg of segments(command)) {
     const argv = unwrapCommand(seg.words);
     if (argv.length === 0) continue;
-    const prog = basename(argv[0]);
+    const prog = basename2(argv[0]);
     const args = argv.slice(1);
     const packages = installArgs(prog, args);
     if (packages) {
@@ -1001,7 +1013,7 @@ function parseCommitSha(command, stdout) {
 function runsGitCommit(command) {
   return shellSegments(command).some((seg) => {
     const words2 = unwrapCommand(seg.words);
-    if (basename2(words2[0] ?? "") !== "git") return false;
+    if (basename3(words2[0] ?? "") !== "git") return false;
     if (words2.some((w) => w === "--dry-run" || w === "--abort" || w === "--quit")) return false;
     for (let i = 1; i < words2.length; i++) {
       const w = words2[i];
@@ -1034,7 +1046,7 @@ function expectedShellEffects(command, cwd) {
     const words2 = seg.words.filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
     const [first, ...args] = words2;
     if (!first) continue;
-    const prog = basename2(first === "sudo" ? args.shift() ?? "" : first);
+    const prog = basename3(first === "sudo" ? args.shift() ?? "" : first);
     const plain = args.filter((a) => !a.startsWith("-"));
     if (LOCKFILES[prog] && plain[0] && INSTALL_VERBS2.has(plain[0])) {
       file("package.json");
@@ -1530,12 +1542,12 @@ var ContrailError = class extends Error {
 // src/ingest/content.ts
 import { createHmac, randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 var STRUCTURE = /* @__PURE__ */ new Set(["filePath", "agentId", "status", "isAsync", "success", "commandName", "code", "url", "interrupted", "isImage", "noOutputExpected", "type", "bashEditDiff", "resolvedModel", "description"]);
 var COMMIT_LINE2 = /^\[[^\]\n]{1,200}\] [^\n]{0,300}$/m;
 var TASK_HEAD = /^\s*<task-notification>[\s\S]{0,4000}?<\/summary>/;
 function contentHmac(dataDir, create) {
-  const path = join(dataDir, "content.key");
+  const path = join2(dataDir, "content.key");
   let key;
   try {
     key = readFileSync(path);
@@ -1604,7 +1616,7 @@ ${hash(value)}` : hash(value);
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync as readFileSync2, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 
 // src/ingest/redact.ts
 var tag = (id) => `[REDACTED:${id}]`;
@@ -1721,7 +1733,7 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     return report2;
   }
   for (const name of names) {
-    const file = join2(spoolDir, name);
+    const file = join3(spoolDir, name);
     if (name.startsWith(".tmp.")) {
       if (removeIfStale(file, now)) report2.staleTmpRemoved++;
       continue;
@@ -1841,7 +1853,7 @@ function attachSkillText(p, capturedUs) {
   const name = str(obj(p, "tool_input"), "skill");
   const cwd = str(p, "cwd");
   if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
-  const candidates = [join2(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join2(cwd, ".claude", "skills", name, "SKILL.md")] : []];
+  const candidates = [join3(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join3(cwd, ".claude", "skills", name, "SKILL.md")] : []];
   const found = [...new Set(candidates)].filter((path) => {
     try {
       return statSync(path).isFile();
@@ -1928,7 +1940,7 @@ function sha256(s) {
 
 // src/ingest/repo.ts
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync as realpathSync2 } from "node:fs";
 function makeRepoKeyOf() {
   const cache = /* @__PURE__ */ new Map();
   return (cwd) => {
@@ -1947,7 +1959,7 @@ function gitCommonDir(cwd) {
       timeout: 2e3,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
-    return out ? realpathSync(out) : null;
+    return out ? realpathSync2(out) : null;
   } catch {
     return null;
   }
@@ -1955,93 +1967,175 @@ function gitCommonDir(cwd) {
 
 // src/paths.ts
 import { existsSync, readdirSync as readdirSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 function resolveDataDir(flag, env, home, pluginData) {
   if (flag) return flag;
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
   if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
-  const base = join3(home, ".claude", "plugins", "data");
+  const base = join4(home, ".claude", "plugins", "data");
   const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
-  if (hits.length === 1) return join3(base, hits[0]);
+  if (hits.length === 1) return join4(base, hits[0]);
   if (hits.length === 0) {
     throw new ContrailError("No recorded data found. Is the Contrail plugin installed? Set CONTRAIL_HOME to point at a data directory.");
   }
-  const list = hits.map((h) => `  ${join3(base, h)}`).join("\n");
+  const list = hits.map((h) => `  ${join4(base, h)}`).join("\n");
   throw new ContrailError(`Found ${hits.length} Contrail data directories:
 ${list}
 Set CONTRAIL_HOME to pick one.`);
 }
 
-// src/query/commit.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
-import { resolve as resolve4 } from "node:path";
-function findCommit(db, sha, cwd, repoKey) {
-  const wanted = sha.toLowerCase();
-  if (!/^[0-9a-f]{7,40}$/.test(wanted)) throw new ContrailError(`"${sha}" is not a commit sha (7 to 40 hex characters).`);
-  const rows = db.all(
-    `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, payload FROM events
-      WHERE hook_event = 'PostToolUse' AND tool_name = 'Bash' AND instr(payload, ?) > 0
-      ORDER BY captured_us DESC`,
-    wanted.slice(0, 7)
-  );
-  for (const row of rows) {
-    const p = JSON.parse(row.payload);
-    const commit = parseCommitSha(str(p.tool_input, "command") ?? "", str(p.tool_response, "stdout") ?? toText(p.tool_response));
-    if (commit && (wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) {
-      return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: "stdout" };
+// src/query/blame.ts
+import { readFileSync as readFileSync3, statSync as statSync2 } from "node:fs";
+import { basename as basename6 } from "node:path";
+
+// src/engine/blame.ts
+import { basename as basename4, isAbsolute as isAbsolute4, resolve as resolve4 } from "node:path";
+var STRUCTURE_WORDS = /* @__PURE__ */ new Set(["", "end", "else", "fi", "done", "esac", "then", "do", "try", "finally", "return", "break", "continue", "default", "pass", "endif", "begin"]);
+function splitLines(text) {
+  const lines = text.split("\n").map((l) => l.endsWith("\r") ? l.slice(0, -1) : l);
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+function lineKey(raw, notebook = false) {
+  let line = raw.trim();
+  if (notebook && line.startsWith('"')) {
+    const literal = line.endsWith(",") ? line.slice(0, -1) : line;
+    try {
+      const decoded = JSON.parse(literal);
+      if (typeof decoded === "string") line = decoded.trim();
+    } catch {
     }
   }
-  const info = cwd ? commitInfo(cwd, wanted) : null;
-  if (info) {
-    const window = 3600 * 1e6;
-    const calls = db.all(
-      `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
-                json_extract(payload, '$.tool_input.command') AS command
-           FROM events
-          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')
-            AND captured_us BETWEEN ? AND ? ${repoKey ? "AND repo_key = ?" : ""}`,
-      info.sec * 1e6 - window,
-      info.sec * 1e6 + window,
-      ...repoKey ? [repoKey] : []
-    ).reduce((byId, e) => {
-      const c = byId.get(e.toolUseId) ?? { sessionId: e.sessionId, toolUseId: e.toolUseId, cwd: e.cwd, command: "", preUs: 0, postUs: 0 };
-      if (e.hook === "PreToolUse") c.preUs = e.us;
-      else c.postUs = e.us;
-      c.command ||= e.command ?? "";
-      return byId.set(e.toolUseId, c);
-    }, /* @__PURE__ */ new Map());
-    const { match, candidates } = commitByTime(info.sec, [...calls.values()].filter((c) => c.preUs && c.postUs));
-    if (match) return { sessionId: match.sessionId, toolUseId: match.toolUseId, cwd: match.cwd, commit: info.commit, via: "time", commitSec: info.sec };
-    if (candidates > 1) {
-      throw new ContrailError(`${candidates} recorded git commits were running when git dated commit ${sha}, and git printed no commit line, so Contrail cannot tell which one made it.`);
+  return line;
+}
+function isTrivial(key) {
+  if (!key) return true;
+  if (key.length > 24) return false;
+  return STRUCTURE_WORDS.has(key.replace(/[^\p{L}\p{N}_]/gu, "").toLowerCase());
+}
+function untruncated(text) {
+  const cut = text.lastIndexOf("\n\u2026[contrail: truncated");
+  if (cut < 0) return text;
+  const kept = text.slice(0, cut);
+  const lastBreak = kept.lastIndexOf("\n");
+  return lastBreak < 0 ? "" : kept.slice(0, lastBreak);
+}
+function keysOf(text, notebook) {
+  return splitLines(untruncated(text)).map((l) => lineKey(l, notebook));
+}
+function addText(into, prev, next, notebook) {
+  const before = /* @__PURE__ */ new Map();
+  for (const k of keysOf(prev, notebook)) before.set(k, (before.get(k) ?? 0) + 1);
+  for (const k of keysOf(next, notebook)) {
+    into.all.add(k);
+    if (isTrivial(k)) continue;
+    const carried = before.get(k) ?? 0;
+    if (carried > 0) before.set(k, carried - 1);
+    else into.added.set(k, (into.added.get(k) ?? 0) + 1);
+  }
+}
+function writtenText(tool, input, isThisFile, cwd, notebook = false) {
+  const out = { added: /* @__PURE__ */ new Map(), all: /* @__PURE__ */ new Set() };
+  if (tool === "Edit") {
+    addText(out, str(input, "old_string") ?? "", str(input, "new_string") ?? "", notebook);
+  } else if (tool === "MultiEdit") {
+    for (const e of arr(input.edits)) addText(out, str(e, "old_string") ?? "", str(e, "new_string") ?? "", notebook);
+  } else if (tool === "Write") {
+    addText(out, "", str(input, "content") ?? "", notebook);
+  } else if (tool === "NotebookEdit") {
+    if (str(input, "edit_mode") === "delete") return null;
+    addText(out, "", str(input, "new_source") ?? "", false);
+  } else if (tool === "Bash") {
+    const bodies = heredocWrites(str(input, "command") ?? "", cwd).filter((h) => isThisFile(h.path));
+    if (!bodies.length) return null;
+    for (const h of bodies) addText(out, "", h.body, notebook);
+  } else {
+    return null;
+  }
+  return out.all.size ? out : null;
+}
+var HEREDOC = /<<(-?)[ \t]{0,8}(['"]?)([A-Za-z_][\w-]{0,63})\2/;
+function heredocWrites(command, cwd) {
+  const out = [];
+  const lines = command.split("\n");
+  let moved = false;
+  for (let i = 0; i < lines.length; i++) {
+    const m = HEREDOC.exec(lines[i]);
+    const targets = [];
+    for (const seg of shellSegments(lines[i])) {
+      const words2 = unwrapCommand(seg.words);
+      const prog = basename4(words2[0] ?? "");
+      if (prog === "cd" || prog === "pushd" || prog === "popd") moved = true;
+      if (!m) continue;
+      const found = prog === "cat" ? seg.redirects : prog === "tee" ? words2.slice(1).filter((w) => !w.startsWith("-") && w !== m[3]) : [];
+      for (const t of found) {
+        if (t === "/dev/null" || t.startsWith("&")) continue;
+        if (isAbsolute4(t)) targets.push(t);
+        else if (!moved && cwd) targets.push(resolve4(cwd, t));
+      }
     }
+    if (!m) continue;
+    const [, dash, quote2, delimiter] = m;
+    const body = [];
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      const candidate = dash ? lines[j].replace(/^\t{1,64}/, "") : lines[j];
+      if (candidate === delimiter) break;
+      body.push(candidate);
+    }
+    const literal = Boolean(quote2) || !body.some((l) => /[$`\\]/.test(l));
+    if (j < lines.length && literal) for (const path of targets) out.push({ path, body: body.join("\n") });
+    i = j;
   }
-  throw new ContrailError(`No recorded agent action made commit ${sha}. Contrail sees commits made by Claude Code through its shell tool.`);
+  return out;
 }
-function commitInfo(cwd, sha) {
-  try {
-    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const [full, sec, ...subject] = run(["show", "-s", "--format=%H%n%ct%n%s", `${sha}^{commit}`]).split("\n");
-    if (!full || !sec) return null;
-    const branch = run(["for-each-ref", "--contains", full, "--format=%(refname:short)", "refs/heads"]).split("\n")[0] || "(no branch)";
-    return { commit: { branch, sha: full.slice(0, 7), subject: subject.join(" ") }, sec: Number(sec) };
-  } catch {
-    return null;
+function blameLines(lines, writes, notebook = false) {
+  const latestFirst = [...writes].sort((a, b) => b.at - a.at || (a.tiebreak < b.tiebreak ? 1 : a.tiebreak > b.tiebreak ? -1 : 0));
+  const keys = lines.map((l) => lineKey(l, notebook));
+  const inFile = /* @__PURE__ */ new Map();
+  for (const k of keys) inFile.set(k, (inFile.get(k) ?? 0) + 1);
+  const byId = new Map(writes.map((w) => [w.id, w]));
+  const out = keys.map((key, i) => {
+    const base = { line: i + 1, text: lines[i], trivial: isTrivial(key), inFile: inFile.get(key) ?? 0 };
+    const writers = base.trivial ? [] : latestFirst.filter((w2) => w2.text.added.has(key));
+    const w = writers[0];
+    if (!w) return { ...base, call: null, grade: null, match: null, writers: 0, byCall: 0, unambiguous: false };
+    const byCall = w.text.added.get(key);
+    const unambiguous = w.observed && byCall >= base.inFile;
+    return { ...base, call: w.id, grade: unambiguous ? "LIKELY" : "POSSIBLE", match: "text", writers: writers.length, byCall, unambiguous };
+  });
+  const neighbour = (from, step) => {
+    for (let j = from + step; j >= 0 && j < out.length; j += step) if (!out[j].trivial) return out[j];
+    return "edge";
+  };
+  for (let i = 0; i < out.length; i++) {
+    const l = out[i];
+    if (!l.trivial) continue;
+    const above = neighbour(i, -1);
+    const below = neighbour(i, 1);
+    if (above === "edge" && below === "edge") continue;
+    const call = above !== "edge" ? above.call : below.call;
+    if (!call || above !== "edge" && above.call !== call || below !== "edge" && below.call !== call) continue;
+    const w = byId.get(call);
+    if (!w.text.all.has(keys[i])) continue;
+    const weakest = [above, below].some((n) => n !== "edge" && n.grade === "POSSIBLE") ? "POSSIBLE" : "LIKELY";
+    out[i] = { ...l, call, grade: weakest, match: "block", writers: 0, byCall: 0, unambiguous: weakest === "LIKELY" };
   }
+  return out;
 }
-function commitFiles(cwd, sha) {
-  try {
-    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const top = run(["rev-parse", "--show-toplevel"]);
-    return run(["show", "--name-only", "--format=", "--no-renames", sha]).split("\n").filter(Boolean).map((f) => resolve4(top, f));
-  } catch {
-    return null;
+function blameBlocks(lines) {
+  const out = [];
+  for (const l of lines) {
+    const last = out[out.length - 1];
+    if (last && last.call === l.call && last.grade === l.grade) last.end = l.line;
+    else out.push({ start: l.line, end: l.line, call: l.call, grade: l.grade });
   }
+  return out;
 }
 
 // src/query/sessions.ts
-import { basename as basename3 } from "node:path";
+import { basename as basename5 } from "node:path";
 
 // src/graph/build.ts
 var DEPENDENCY_DIR = /(^|\/)(node_modules|vendor|\.venv|venv|site-packages)(\/|$)/;
@@ -2455,19 +2549,191 @@ function loadRows(db, sessionId) {
   return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
 }
 function loadGraph(db, sessionId, home, hashToken) {
-  return buildGraph(loadRows(db, sessionId), { home, user: basename3(home) }, hashToken);
+  return buildGraph(loadRows(db, sessionId), { home, user: basename5(home) }, hashToken);
+}
+
+// src/query/blame.ts
+var MAX_WRITES = 500;
+var MAX_TRAILS = 60;
+var MAX_FILE_BYTES = 4 * 1024 * 1024;
+function readCurrent(path, shown) {
+  let size;
+  try {
+    const st = statSync2(path);
+    if (!st.isFile()) throw new ContrailError(`${shown} is not a regular file.`);
+    size = st.size;
+  } catch (e) {
+    if (e instanceof ContrailError) throw e;
+    throw new ContrailError(`No file ${shown}. Blame reads the file as it is now on disk.`);
+  }
+  if (size > MAX_FILE_BYTES) throw new ContrailError(`${shown} is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB; blame reads text files up to that size.`);
+  const text = readFileSync3(path, "utf8");
+  if (text.includes("\0")) throw new ContrailError(`${shown} looks binary; blame matches lines of text.`);
+  return text;
+}
+function blameFile(db, path, shown, session = null) {
+  const real = realPath(path);
+  const text = readCurrent(real, shown);
+  const rows = writesTo(db, path, real, session);
+  if (!rows.length) {
+    const where = session ? ` in session ${session.slice(0, 8)}` : "";
+    throw new ContrailError(
+      `No recorded agent write to ${shown}${where}. Contrail sees Edit, Write, MultiEdit and NotebookEdit calls, and shell heredocs, in sessions recorded since it was installed.`
+    );
+  }
+  const notebook = real.endsWith(".ipynb");
+  const isThisFile = (p) => realPath(p) === real;
+  const writes = [];
+  const byId = /* @__PURE__ */ new Map();
+  const textless = [];
+  for (const row of rows.slice(0, MAX_WRITES)) {
+    const payload = db.get("SELECT payload FROM events WHERE id = ?", row.eventId)?.payload ?? "{}";
+    let input = {};
+    try {
+      input = obj(JSON.parse(payload), "tool_input") ?? {};
+    } catch {
+      continue;
+    }
+    const written = writtenText(row.tool, input, isThisFile, row.cwd ?? "", notebook);
+    if (!written) {
+      textless.push(row);
+      continue;
+    }
+    writes.push({ id: row.toolUseId, at: row.us, tiebreak: row.spool, text: written, observed: row.kind === "write" });
+    byId.set(row.toolUseId, row);
+  }
+  const lines = blameLines(splitLines(text), writes, notebook);
+  const credited = new Set(lines.map((l) => l.call).filter((c) => c !== null));
+  const calls = [...credited].map((id) => byId.get(id)).sort((a, b) => b.us - a.us).map((r) => ({ id: r.toolUseId, sessionId: r.sessionId, us: r.us, tool: r.tool, observed: r.kind === "write" }));
+  const latest = textless[0];
+  return {
+    path: real,
+    lines,
+    calls,
+    writes: rows.length,
+    read: Math.min(rows.length, MAX_WRITES),
+    textless: textless.length,
+    latestTextless: latest ? { id: latest.toolUseId, tool: latest.tool } : null,
+    session
+  };
+}
+function writesTo(db, path, real, session) {
+  const tails = [.../* @__PURE__ */ new Set([`/${basename6(real)}`, `/${basename6(path)}`])];
+  const rows = db.all(
+    `SELECT e.id AS eventId, e.session_id AS sessionId, e.tool_use_id AS toolUseId, e.tool_name AS tool,
+            e.captured_us AS us, e.spool_name AS spool, e.cwd AS cwd, t.path AS path, t.kind AS kind
+       FROM touches t JOIN events e ON e.id = t.event_id
+      WHERE t.kind IN ('write', 'expected') AND e.tool_use_id IS NOT NULL AND e.session_id IS NOT NULL
+        AND (t.path IN (?, ?) ${tails.map(() => "OR substr(t.path, -?) = ?").join(" ")})
+        ${session ? "AND e.session_id = ?" : ""}
+      ORDER BY e.captured_us DESC, e.spool_name DESC`,
+    path,
+    real,
+    ...tails.flatMap((t) => [t.length, t]),
+    ...session ? [session] : []
+  );
+  const reals = /* @__PURE__ */ new Map();
+  const seen = /* @__PURE__ */ new Set();
+  return rows.filter((r) => {
+    if (seen.has(r.toolUseId)) return false;
+    const rp = reals.get(r.path) ?? reals.set(r.path, realPath(r.path)).get(r.path);
+    if (rp !== real) return false;
+    seen.add(r.toolUseId);
+    return true;
+  });
+}
+function explainCalls(db, blame2, home, hashToken) {
+  const graphs = /* @__PURE__ */ new Map();
+  let explained = 0;
+  for (const call of blame2.calls) {
+    if (explained >= MAX_TRAILS) break;
+    const graph = graphs.get(call.sessionId) ?? graphs.set(call.sessionId, loadGraph(db, call.sessionId, home, hashToken)).get(call.sessionId);
+    const action = graph.actions.find((a) => a.id === call.id);
+    if (!action) continue;
+    call.action = action;
+    call.graph = graph;
+    call.explanation = explain(action.id, graph);
+    explained++;
+  }
+}
+
+// src/query/commit.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { resolve as resolve5 } from "node:path";
+function findCommit(db, sha, cwd, repoKey) {
+  const wanted = sha.toLowerCase();
+  if (!/^[0-9a-f]{7,40}$/.test(wanted)) throw new ContrailError(`"${sha}" is not a commit sha (7 to 40 hex characters).`);
+  const rows = db.all(
+    `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, payload FROM events
+      WHERE hook_event = 'PostToolUse' AND tool_name = 'Bash' AND instr(payload, ?) > 0
+      ORDER BY captured_us DESC`,
+    wanted.slice(0, 7)
+  );
+  for (const row of rows) {
+    const p = JSON.parse(row.payload);
+    const commit = parseCommitSha(str(p.tool_input, "command") ?? "", str(p.tool_response, "stdout") ?? toText(p.tool_response));
+    if (commit && (wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) {
+      return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: "stdout" };
+    }
+  }
+  const info = cwd ? commitInfo(cwd, wanted) : null;
+  if (info) {
+    const window = 3600 * 1e6;
+    const calls = db.all(
+      `SELECT session_id AS sessionId, tool_use_id AS toolUseId, cwd, hook_event AS hook, captured_us AS us,
+                json_extract(payload, '$.tool_input.command') AS command
+           FROM events
+          WHERE tool_name = 'Bash' AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')
+            AND captured_us BETWEEN ? AND ? ${repoKey ? "AND repo_key = ?" : ""}`,
+      info.sec * 1e6 - window,
+      info.sec * 1e6 + window,
+      ...repoKey ? [repoKey] : []
+    ).reduce((byId, e) => {
+      const c = byId.get(e.toolUseId) ?? { sessionId: e.sessionId, toolUseId: e.toolUseId, cwd: e.cwd, command: "", preUs: 0, postUs: 0 };
+      if (e.hook === "PreToolUse") c.preUs = e.us;
+      else c.postUs = e.us;
+      c.command ||= e.command ?? "";
+      return byId.set(e.toolUseId, c);
+    }, /* @__PURE__ */ new Map());
+    const { match, candidates } = commitByTime(info.sec, [...calls.values()].filter((c) => c.preUs && c.postUs));
+    if (match) return { sessionId: match.sessionId, toolUseId: match.toolUseId, cwd: match.cwd, commit: info.commit, via: "time", commitSec: info.sec };
+    if (candidates > 1) {
+      throw new ContrailError(`${candidates} recorded git commits were running when git dated commit ${sha}, and git printed no commit line, so Contrail cannot tell which one made it.`);
+    }
+  }
+  throw new ContrailError(`No recorded agent action made commit ${sha}. Contrail sees commits made by Claude Code through its shell tool.`);
+}
+function commitInfo(cwd, sha) {
+  try {
+    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const [full, sec, ...subject] = run(["show", "-s", "--format=%H%n%ct%n%s", `${sha}^{commit}`]).split("\n");
+    if (!full || !sec) return null;
+    const branch = run(["for-each-ref", "--contains", full, "--format=%(refname:short)", "refs/heads"]).split("\n")[0] || "(no branch)";
+    return { commit: { branch, sha: full.slice(0, 7), subject: subject.join(" ") }, sec: Number(sec) };
+  } catch {
+    return null;
+  }
+}
+function commitFiles(cwd, sha) {
+  try {
+    const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const top = run(["rev-parse", "--show-toplevel"]);
+    return run(["show", "--name-only", "--format=", "--no-renames", sha]).split("\n").filter(Boolean).map((f) => resolve5(top, f));
+  } catch {
+    return null;
+  }
 }
 
 // src/query/target.ts
-import { existsSync as existsSync2, realpathSync as realpathSync2 } from "node:fs";
-import { resolve as resolve5 } from "node:path";
+import { existsSync as existsSync2, realpathSync as realpathSync3 } from "node:fs";
+import { resolve as resolve6 } from "node:path";
 var SHORT_CALL = /^([A-Za-z0-9_-]{1,40})(?:…|\.\.\.)([A-Za-z0-9_-]{1,40})$/;
 var FULL_CALL = /^toolu_[A-Za-z0-9_-]{8,200}$/;
 function parseTarget(args, cwd) {
   const text = unquote(args.join(" ").trim());
   if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | call id | last>');
   if (text === "last") return { kind: "last" };
-  const abs = resolve5(cwd, text);
+  const abs = resolve6(cwd, text);
   const short = SHORT_CALL.exec(text);
   if (short && !existsSync2(abs)) return { kind: "call", prefix: short[1], suffix: short[2], shown: text };
   if (FULL_CALL.test(text) && !existsSync2(abs)) return { kind: "call", prefix: text, suffix: "", shown: text };
@@ -2484,7 +2750,7 @@ var NOT_CONTRAIL = `NOT (${COMMAND} LIKE '%bin/contrail%' OR ${COMMAND} LIKE 'co
 function findTarget(db, target, repoKey) {
   let rows;
   if (target.kind === "path") {
-    const real = existsSync2(target.path) ? realpathSync2(target.path) : target.path;
+    const real = existsSync2(target.path) ? realpathSync3(target.path) : target.path;
     rows = db.all(
       `SELECT e.session_id AS sessionId, e.tool_use_id AS toolUseId
          FROM touches t JOIN events e ON e.id = t.event_id
@@ -2799,12 +3065,7 @@ function actionLines(a, g, e, inputs, s) {
   const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
   const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${summary(a, g)}${who}${failed}`];
   if (!e) return lines;
-  const head = headline2(e);
-  const link = head?.links.find((l) => l.grade !== "UNKNOWN");
-  const src = link?.to ? inputs.get(link.to) : void 0;
-  const from = src && link ? `${s.grade(link.grade, 0).trim()} ${clip(head.token.text, 80)} \u2190 ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""} ${src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}` : e.traces.length ? `${s.grade("UNKNOWN", 0).trim()} ${s.dim("no observed source")}` : "";
-  const asked = e.requested.verdict === "NAMED" ? s.dim("named by you") : e.requested.verdict === "NOT_NAMED" ? s.flag("not named by you") : "";
-  const detail = [from, asked].filter(Boolean).join("   ");
+  const detail = trailDetail(e, inputs, s);
   if (detail) lines.push(`         ${s.dim("\u21B3")} ${detail}`);
   const effects = g.effects.filter((x) => x.actionId === a.id && x.kind !== "network");
   if (effects.length && kind === "SHELL") {
@@ -2814,7 +3075,20 @@ function actionLines(a, g, e, inputs, s) {
   }
   return lines;
 }
-var headline2 = headlineTrace;
+function trailDetail(e, inputs, s) {
+  const head = headlineTrace(e);
+  const from = head ? traceSource(head, inputs, s) : "";
+  const found = from || (e.traces.length ? `${s.grade("UNKNOWN", 0).trim()} ${s.dim("no observed source")}` : "");
+  const asked = e.requested.verdict === "NAMED" ? s.dim("named by you") : e.requested.verdict === "NOT_NAMED" ? s.flag("not named by you") : "";
+  return [found, asked].filter(Boolean).join("   ");
+}
+function traceSource(t, inputs, s) {
+  const link = t.links.find((l) => l.grade !== "UNKNOWN");
+  const src = link?.to ? inputs.get(link.to) : void 0;
+  if (!src || !link) return "";
+  const trust = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+  return `${s.grade(link.grade, 0).trim()} ${clip(t.token.text, 80)} \u2190 ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""} ${trust}`;
+}
 function renderTree(g, forest, omitted, s = PLAIN) {
   const out = [];
   const sessionId = g.actions[0]?.scope.sessionId ?? "";
@@ -3013,6 +3287,145 @@ function localTime(us) {
   const d = new Date(Math.floor(us / 1e3));
   const two = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+// src/render/blame.ts
+var BLAME_FOOTER = [
+  "LIKELY: this call wrote this text to this file, and no later recorded write did [R10]. A text match, so never DIRECT.",
+  "POSSIBLE: the file holds the text more often than this call wrote it, or the shell write was expected, not reported.",
+  "UNKNOWN: no recorded agent write holds the text. Blank and bracket-only lines join a block only if both sides agree.",
+  "Which call last wrote a line is data provenance, not the agent's reasons."
+];
+var BLIND_SPOTS = [
+  "Blind spots: edits outside Claude Code's tools or before Contrail was installed; text redacted or cut when stored.",
+  "A Write counts every line it wrote, even unchanged ones. No match is not the same as not written by the agent."
+];
+var CODE_WIDTH = 104;
+function renderBlame(b, shown, s = PLAIN) {
+  const out = [];
+  const total = b.lines.length;
+  const attributed = b.lines.filter((l) => l.call).length;
+  const sessions2 = new Set(b.calls.map((c) => c.sessionId)).size;
+  out.push(`${s.bold("Blame")} ${s.bold(clip(shown, 110))}  ${s.dim("(the file as it is now)")}`);
+  out.push(
+    s.dim(
+      `${attributed} of ${total} line${total === 1 ? "" : "s"} attributed to ${plural(b.calls.length, "recorded agent call")} in ${plural(sessions2, "session")} \xB7 ${plural(b.writes, "recorded write")} to this file${b.read < b.writes ? ` (the newest ${b.read} read)` : ""}` + (b.session ? ` \xB7 only session ${b.session.slice(0, 8)}` : "")
+    )
+  );
+  if (b.latestTextless) {
+    const which = b.textless === 1 ? `1 of them (${b.latestTextless.tool} ${callId(b.latestTextless.id)})` : `${b.textless} of them`;
+    out.push(s.dim(`${which} recorded no text to match (a shell write other than a literal heredoc).`));
+    out.push(s.dim(`contrail why ${clip(shown, 80)} shows the latest write to the file.`));
+  }
+  const calls = new Map(b.calls.map((c) => [c.id, c]));
+  const shownCalls = /* @__PURE__ */ new Set();
+  const gutter = Math.max(4, String(total).length);
+  for (const block of blameBlocks(b.lines)) {
+    out.push("");
+    const call = block.call ? calls.get(block.call) : void 0;
+    if (!call) {
+      out.push(`${s.grade("UNKNOWN")}${s.dim("no recorded agent write holds these lines (they may be yours, pre-existing, or changed since)")}`);
+    } else if (shownCalls.has(call.id)) {
+      out.push(`${s.grade(block.grade)}${call.tool} ${callId(call.id)} ${s.dim("(shown above)")}`);
+    } else {
+      shownCalls.add(call.id);
+      out.push(...callHeader(call, block.grade, s));
+    }
+    const text = b.lines.slice(block.start - 1, block.end).map((l) => l.text).join("\n");
+    const value = call?.explanation ? blockValue(call, text) : void 0;
+    if (value && call?.graph) {
+      const from = traceSource(value, new Map(call.graph.inputs.map((i) => [i.id, i])), s);
+      if (from) out.push(`         ${s.dim("\u21B3 in these lines:")} ${from}`);
+    }
+    for (const l of b.lines.slice(block.start - 1, block.end)) {
+      const code = codeLine(l.text, CODE_WIDTH);
+      out.push(`${s.dim(`${String(l.line).padStart(gutter)} \u2502`)} ${call ? code : s.dim(code)}`.trimEnd());
+    }
+  }
+  out.push("");
+  const example = b.calls[0] ? `, as in ${s.bold(`contrail why ${callId(b.calls[0].id)}`)}` : "";
+  out.push(s.dim(`Run contrail why <call id>${example} for the full trail behind a call.`));
+  for (const line of BLAME_FOOTER) out.push(s.dim(line));
+  for (const line of BLIND_SPOTS) out.push(s.dim(line));
+  return `${out.join("\n")}
+`;
+}
+function callHeader(call, grade, s) {
+  const a = call.action;
+  const g = call.graph;
+  const prompt = a && g ? g.prompts.find((p) => p.promptId === a.promptId) : void 0;
+  const who = a?.scope.agentId ? s.dim(` \xB7 subagent ${callId(a.scope.agentId)}`) : "";
+  const tool = call.tool === "Bash" ? "Bash heredoc" : call.tool;
+  const lines = [`${s.grade(grade)}${s.bold(`${tool} ${callId(call.id)}`)}${s.dim(` \xB7 session ${call.sessionId.slice(0, 8)} \xB7 ${localTime(call.us)}`)}${who}`];
+  if (a) {
+    lines.push(
+      `         ${!prompt ? s.dim("turn not recorded") : prompt.from === "task" ? `${prompt.label} ${s.dim("a background task report, not your words:")} "${clip(prompt.text, 70)}"` : `${prompt.label} ${s.dim("your words:")} "${clip(prompt.text, 90)}"`}`
+    );
+  }
+  if (!call.observed) lines.push(`         ${s.dim("the write was expected from the command, not reported by Claude Code")}`);
+  if (call.explanation && g) {
+    const detail = trailDetail(call.explanation, new Map(g.inputs.map((i) => [i.id, i])), s);
+    if (detail) lines.push(`         ${s.dim("\u21B3")} ${detail}`);
+  } else {
+    lines.push(`         ${s.dim(`trail not loaded here (too many calls); run contrail why ${callId(call.id)}`)}`);
+  }
+  return lines;
+}
+function blockValue(call, text) {
+  const e = call.explanation;
+  const head = headlineTrace(e);
+  return bestPerGroup(e.traces).find(
+    (t) => t !== head && t.token.argPath !== "$.file_path" && t.links.some((l) => l.grade !== "UNKNOWN") && findMention(text, t.token.text) >= 0
+  );
+}
+function codeLine(raw, max) {
+  const safe = raw.replace(/\t/g, "    ").replace(/[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, "\uFFFD").replace(/`/g, "\u02CB").trimEnd();
+  const chars = [...safe];
+  return chars.length <= max ? safe : `${chars.slice(0, max - 1).join("")}\u2026`;
+}
+var plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+function blameJson(b) {
+  return {
+    file: b.path,
+    lines: b.lines.length,
+    attributed: b.lines.filter((l) => l.call).length,
+    calls: b.calls.length,
+    sessions: new Set(b.calls.map((c) => c.sessionId)).size,
+    writes: { recorded: b.writes, read: b.read },
+    session: b.session,
+    blocks: blameBlocks(b.lines).map((x) => ({ ...x, rule: x.call ? "R10" : null })),
+    lineDetail: b.lines.map((l) => ({
+      line: l.line,
+      call: l.call,
+      grade: l.grade,
+      rule: l.call ? "R10" : null,
+      match: l.match,
+      trivial: l.trivial,
+      unambiguous: l.unambiguous,
+      writers: l.writers,
+      inFile: l.inFile,
+      byCall: l.byCall
+    })),
+    writers: b.calls.map((c) => {
+      const inputs = new Map(c.graph?.inputs.map((i) => [i.id, i]) ?? []);
+      const prompt = c.action && c.graph ? c.graph.prompts.find((p) => p.promptId === c.action.promptId) : void 0;
+      const head = c.explanation ? headlineTrace(c.explanation) : void 0;
+      const link = head?.links.find((l) => l.grade !== "UNKNOWN");
+      const src = link?.to ? inputs.get(link.to) : void 0;
+      return {
+        call: c.id,
+        session: c.sessionId,
+        tool: c.tool,
+        at: new Date(Math.floor(c.us / 1e3)).toISOString(),
+        file: c.observed ? { grade: "DIRECT", rule: "R1" } : { grade: "POSSIBLE", rule: "R6" },
+        agent: c.action?.scope.agentId ?? null,
+        turn: prompt ? { label: prompt.label, from: prompt.from, text: prompt.text } : null,
+        requested: c.explanation?.requested.verdict ?? null,
+        trail: head && link && src ? { token: head.token.text, grade: link.grade, rule: link.rule, source: src.label, trust: src.trust, origin: src.origin, line: link.quote?.line ?? null } : null,
+        chainGrade: c.explanation?.chainGrade ?? null
+      };
+    })
+  };
 }
 
 // src/render/ansi.ts
@@ -3378,13 +3791,13 @@ function provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan)
 }
 
 // src/store/retention.ts
-import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { readFileSync as readFileSync4 } from "node:fs";
+import { join as join5 } from "node:path";
 var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true };
 function loadConfig(dataDir) {
   let raw;
   try {
-    raw = readFileSync3(join4(dataDir, "config.json"), "utf8");
+    raw = readFileSync4(join5(dataDir, "config.json"), "utf8");
   } catch {
     return { config: DEFAULTS, problem: null };
   }
@@ -3568,6 +3981,9 @@ Usage:
   contrail why <call id>            the trail behind one tool call, as reports print its id
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
+  contrail blame <file> [--session <id>]
+                                    each line of a file as it is now, with the recorded agent call
+                                    that last wrote it, its turn and its trail
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source
         [--writes | --shell | --network | --mcp | --subagents | --instructions | --tree]
                                     --tree: each action under the call whose output held its value
@@ -3586,11 +4002,11 @@ Usage:
   contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          machine-readable output (why, trace, risks, sessions)
+  --json          machine-readable output (why, blame, trace, risks, sessions, find)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
-  --stdin         read the why target from standard input (used by the /contrail:why skill)
+  --stdin         read the target from standard input (used by the /contrail:why, find and blame skills)
   -h, --help      show this help
   -v, --version   show the version
 `;
@@ -3620,6 +4036,7 @@ ${USAGE}`);
   const style = flags.json ? PLAIN : styleFor(io.env, io.isTTY ?? false);
   const commands = {
     why: (args) => why(args, flags, io, style),
+    blame: (args) => blame(args, flags, io, style),
     trace: () => trace2(flags, io, style),
     risks: () => risks(flags, io, style),
     sessions: () => sessions(flags, io, style),
@@ -3657,8 +4074,8 @@ async function withStore(flags, io, use) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   let db;
   try {
-    mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
-    db = await openDb(join5(dataDir, "contrail.db"));
+    mkdirSync(join6(dataDir, "spool"), { recursive: true, mode: 448 });
+    db = await openDb(join6(dataDir, "contrail.db"));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
     throw new ContrailError(`Cannot use the data directory ${dataDir}: ${e.message}`);
@@ -3668,7 +4085,7 @@ async function withStore(flags, io, use) {
     const repoKeyOf = makeRepoKeyOf();
     const storeContent = loadConfig(dataDir).config.storeContent;
     const hashToken = contentHmac(dataDir, !storeContent);
-    ingest(db, join5(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
+    ingest(db, join6(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
     return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd), ...hashToken ? { hashToken } : {} });
   } finally {
     db.close();
@@ -3728,16 +4145,20 @@ async function whyCommit(args, flags, io, s) {
     return 0;
   });
 }
-function realPath(path) {
-  try {
-    return realpathSync3(path);
-  } catch {
-    try {
-      return join5(realpathSync3(dirname2(path)), basename4(path));
-    } catch {
-      return path;
-    }
-  }
+async function blame(args, flags, io, s) {
+  const arg = unquote((flags.stdin ? readStdin(io) : args.join(" ")).trim());
+  if (!arg) throw new ContrailError("Usage: contrail blame <file> [--session <id>] [--json]");
+  const path = resolve7(io.cwd, arg);
+  const shown = displayPath(path, io.cwd, io.home);
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const session = flags.session ? pickSession(db, flags.session, repoKey) : null;
+    const b = blameFile(db, path, shown, session);
+    explainCalls(db, b, io.home, hashToken);
+    if (flags.json) io.out(`${JSON.stringify(blameJson(b), null, 2)}
+`);
+    else io.out(renderBlame(b, shown, s));
+    return 0;
+  });
 }
 async function trace2(flags, io, s) {
   const chosen = FILTERS.filter((f) => flags[f]);
@@ -3883,7 +4304,7 @@ async function find(args, flags, io, s) {
     return 0;
   });
 }
-var readStdin = (io) => io.stdin ? io.stdin() : readFileSync4(0, "utf8");
+var readStdin = (io) => io.stdin ? io.stdin() : readFileSync5(0, "utf8");
 async function statusline(flags, io) {
   const s = io.env.NO_COLOR ? PLAIN : COLOR;
   try {
@@ -3904,12 +4325,12 @@ async function statusline(flags, io) {
 }
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
-  mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
-  const db = await openDb(join5(dataDir, "contrail.db"));
+  mkdirSync(join6(dataDir, "spool"), { recursive: true, mode: 448 });
+  const db = await openDb(join6(dataDir, "contrail.db"));
   try {
     migrate(db);
     const { config } = loadConfig(dataDir);
-    const r = ingest(db, join5(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
+    const r = ingest(db, join6(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
     const { sessionsRemoved } = prune(db, config, Date.now());
     if (!flags["from-hook"]) {
       io.out(
@@ -3939,7 +4360,7 @@ async function doctor(flags, io) {
   io.out(`contrail ${VERSION} on ${versions.bun ? `bun ${versions.bun}` : `node ${process.versions.node}`}
 `);
   return withStore(flags, io, ({ db, dataDir }) => {
-    const backlog = readdirSync3(join5(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
+    const backlog = readdirSync3(join6(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
     const stats = db.get(
       `SELECT COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions,
               SUM(parse_error IS NOT NULL) AS parseErrors, MAX(captured_us) AS last FROM events`
@@ -3955,7 +4376,7 @@ async function doctor(flags, io) {
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1e3)).toISOString() : "never"}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ""}`,
       `content          ${config.storeContent ? "stored as redacted text" : "stored as keyed hashes only (store_content: false)"}`,
-      `launcher         ${existsSync3(join5(dataDir, "bin", "contrail")) ? join5(dataDir, "bin", "contrail") : "written at the next session start"}`,
+      `launcher         ${existsSync3(join6(dataDir, "bin", "contrail")) ? join6(dataDir, "bin", "contrail") : "written at the next session start"}`,
       ...hook ? [`capture hook     ${hook} ms per event (median of 5)`] : [],
       stats.events === 0 && backlog === 0 ? "No events yet. Run a Claude Code session with the plugin enabled, then check again." : "Recording and queries work."
     ];
@@ -3972,7 +4393,7 @@ function captureTiming() {
     return null;
   }
   if (!existsSync3(hook)) return null;
-  const dir = mkdtempSync(join5(tmpdir(), "contrail-doctor-"));
+  const dir = mkdtempSync(join6(tmpdir(), "contrail-doctor-"));
   try {
     const times = [];
     for (let i = 0; i < 5; i++) {

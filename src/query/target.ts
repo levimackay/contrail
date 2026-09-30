@@ -37,7 +37,7 @@ export function parseTarget(args: string[], cwd: string): Target {
 }
 
 /** Text typed through the skill arrives with its quotes: "npm install foo" → npm install foo. */
-function unquote(s: string): string {
+export function unquote(s: string): string {
   const m = /^(["'])(.*)\1$/s.exec(s);
   return m ? m[2]!.trim() : s;
 }

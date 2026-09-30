@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { commitContains } from './engine/effects.ts';
@@ -15,9 +15,11 @@ import { contentHmac } from './ingest/content.ts';
 import { ingest } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
+import { blameFile, explainCalls } from './query/blame.ts';
 import { commitFiles, findCommit } from './query/commit.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
-import { findTarget, parseTarget } from './query/target.ts';
+import { findTarget, parseTarget, unquote } from './query/target.ts';
+import { blameJson, renderBlame } from './render/blame.ts';
 import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
@@ -26,6 +28,7 @@ import { renderWhy } from './render/why.ts';
 import { loadConfig, prune } from './store/retention.ts';
 import { migrate, SCHEMA_VERSION } from './store/schema.ts';
 import { openDb, type Db } from './store/sqlite.ts';
+import { displayPath, realPath } from './util.ts';
 import { VERSION } from './version.ts';
 
 export interface Io {
@@ -69,6 +72,9 @@ Usage:
   contrail why <call id>            the trail behind one tool call, as reports print its id
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
+  contrail blame <file> [--session <id>]
+                                    each line of a file as it is now, with the recorded agent call
+                                    that last wrote it, its turn and its trail
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source
         [--writes | --shell | --network | --mcp | --subagents | --instructions | --tree]
                                     --tree: each action under the call whose output held its value
@@ -87,11 +93,11 @@ Usage:
   contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          machine-readable output (why, trace, risks, sessions)
+  --json          machine-readable output (why, blame, trace, risks, sessions, find)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
-  --stdin         read the why target from standard input (used by the /contrail:why skill)
+  --stdin         read the target from standard input (used by the /contrail:why, find and blame skills)
   -h, --help      show this help
   -v, --version   show the version
 `;
@@ -121,6 +127,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   const style = flags.json ? PLAIN : styleFor(io.env, io.isTTY ?? false);
   const commands: Record<string, (args: string[]) => Promise<number>> = {
     why: args => why(args, flags, io, style),
+    blame: args => blame(args, flags, io, style),
     trace: () => trace(flags, io, style),
     risks: () => risks(flags, io, style),
     sessions: () => sessions(flags, io, style),
@@ -244,17 +251,19 @@ async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promis
   });
 }
 
-/** The path with symlinks resolved; for a file that no longer exists, its directory's real path. */
-function realPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    try {
-      return join(realpathSync(dirname(path)), basename(path));
-    } catch {
-      return path;
-    }
-  }
+async function blame(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
+  const arg = unquote((flags.stdin ? readStdin(io) : args.join(' ')).trim());
+  if (!arg) throw new ContrailError('Usage: contrail blame <file> [--session <id>] [--json]');
+  const path = resolve(io.cwd, arg);
+  const shown = displayPath(path, io.cwd, io.home);
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const session = flags.session ? pickSession(db, flags.session as string, repoKey) : null;
+    const b = blameFile(db, path, shown, session);
+    explainCalls(db, b, io.home, hashToken);
+    if (flags.json) io.out(`${JSON.stringify(blameJson(b), null, 2)}\n`);
+    else io.out(renderBlame(b, shown, s));
+    return 0;
+  });
 }
 
 async function trace(flags: Flags, io: Io, s: Style): Promise<number> {

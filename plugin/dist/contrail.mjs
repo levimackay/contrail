@@ -1784,6 +1784,18 @@ function secretValue(name, value, literal = false) {
   if (!isSecretName(name) || namesSecret(value, name, literal)) return false;
   return flat(name) === "auth" ? credentialBlob(value) : true;
 }
+function splitTrailing(value) {
+  let end = value.length;
+  while (end > 0) {
+    const c = value[end - 1];
+    const opener = c === ")" ? "(" : c === "]" ? "[" : c === "}" ? "{" : "";
+    if (c === "," || c === ".") end--;
+    else if (opener && count(value.slice(0, end), c) > count(value.slice(0, end), opener)) end--;
+    else break;
+  }
+  return [value.slice(0, end), value.slice(end)];
+}
+var count = (s, c) => s.split(c).length - 1;
 var PEM_BEGIN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
 var PEM_END = /-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
 var PEM_BODY = /(?:(?:\r?\n|\\r\\n|\\n)[A-Za-z0-9+/=]{1,1024}(?=\r?\n|\\[rn]|["']|$)){0,1024}/y;
@@ -1814,6 +1826,9 @@ function redactPrivateKeys(s) {
   return out + s.slice(last);
 }
 var NAME = String.raw`(?<![A-Za-z0-9_.])(?<![A-Za-z0-9_.]-)(?=[A-Za-z_])([A-Za-z0-9_.-]{0,128}(?:secret|token|pass|pwd|pw|key|auth|credential|cred|private|master|signing|encryption|crypt|cookie|certificate)[A-Za-z0-9_.-]{0,64})`;
+var SEP = String.raw`(["']?[ \t]{0,4}(?::[ \t]{0,4}[A-Za-z_][\w.[\]|]{0,40}[ \t]{1,4}=(?![=>~])|:=|=>|:(?!:)|=(?![=>~]))[ \t]{0,4})`;
+var BARE = String.raw`((?:[^\s"'\`;&,]|[&,](?![ \t]{0,4}["']?[A-Za-z_][\w.-]{0,64}["']?[ \t]{0,4}[:=])){1,16384})`;
+var QUOTED = String.raw`"((?:[^"\\\n]|\\.){1,16384})"|'([^'\n]{1,16384})'`;
 var RULES = [
   { id: "aws-access-key", re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
   { id: "github-token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g },
@@ -1897,12 +1912,18 @@ var RULES = [
   },
   {
     id: "env-secret",
-    re: new RegExp(`${NAME}(["']?\\s{0,4}[:=]\\s{0,4})(?:(["'])([^"'\\n]{6,512})\\3|([^\\s"',;]{6,512}))`, "gi"),
-    replace: (m, name, sep, quote2, quoted, bare) => {
-      const value = quoted ?? bare ?? "";
-      if (!secretValue(name, value, quote2 !== void 0)) return m;
-      if (!quote2 && /^["']?[ \t]*:[ \t]*$/.test(sep) && TYPE_NAME.test(value)) return m;
-      return quote2 ? `${name}${sep}${quote2}${tag("env-secret")}${quote2}` : `${name}${sep}${tag("env-secret")}`;
+    re: new RegExp(`${NAME}${SEP}((?:bearer|basic|token)[ \\t]{1,4})?(?:${QUOTED}|${BARE})`, "gi"),
+    replace: (m, name, sep, scheme, dq, sq, bare) => {
+      if (dq !== void 0 || sq !== void 0) {
+        const value2 = dq ?? sq ?? "";
+        if (!secretValue(name, value2, true)) return m;
+        const quote2 = dq !== void 0 ? '"' : "'";
+        return `${name}${sep}${scheme ?? ""}${quote2}${tag("env-secret")}${quote2}`;
+      }
+      const [value, trailing] = splitTrailing(bare ?? "");
+      if (value.length < 4 || !secretValue(name, value)) return m;
+      if (/^["']?[ \t]*:[ \t]*$/.test(sep) && TYPE_NAME.test(value)) return m;
+      return `${name}${sep}${scheme ?? ""}${tag("env-secret")}${trailing}`;
     }
   }
 ];
@@ -3140,16 +3161,16 @@ function renderSessions(sessions2, s = PLAIN) {
   const head = ["SESSION", "LAST ACTIVE", "TURNS", "READS", "WRITES", "SHELL", "WEB/MCP", "SUBAGENTS", "FLAGGED", "FIRST PROMPT"];
   const rows = sessions2.map((x) => {
     const g = x.graph;
-    const count = (kinds) => g.actions.filter((a) => kinds.includes(kindOf(a))).length;
+    const count2 = (kinds) => g.actions.filter((a) => kinds.includes(kindOf(a))).length;
     const subagents = new Set(g.actions.map((a) => a.scope.agentId).filter(Boolean)).size;
     return [
       x.id.slice(0, 8),
       localTime(x.lastUs),
       `${g.prompts.length}`,
-      `${count(["READ", "SEARCH"])}`,
+      `${count2(["READ", "SEARCH"])}`,
       `${new Set(g.effects.filter((e) => e.kind === "file").map((e) => e.target)).size}`,
-      `${count(["SHELL"])}`,
-      `${count(["WEB", "MCP"])}`,
+      `${count2(["SHELL"])}`,
+      `${count2(["WEB", "MCP"])}`,
       `${subagents}`,
       `${x.flagged}`,
       clip(g.prompts.find((p) => p.from === "you")?.text ?? "", 60)

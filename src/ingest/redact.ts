@@ -131,6 +131,20 @@ function secretValue(name: string, value: string, literal = false): boolean {
   return flat(name) === 'auth' ? credentialBlob(value) : true;
 }
 
+/** The bare value's last character when it is sentence or list punctuation, not part of the secret. */
+function splitTrailing(value: string): [string, string] {
+  let end = value.length;
+  while (end > 0) {
+    const c = value[end - 1]!;
+    const opener = c === ')' ? '(' : c === ']' ? '[' : c === '}' ? '{' : '';
+    if (c === ',' || c === '.') end--;
+    else if (opener && count(value.slice(0, end), c) > count(value.slice(0, end), opener)) end--;
+    else break;
+  }
+  return [value.slice(0, end), value.slice(end)];
+}
+const count = (s: string, c: string) => s.split(c).length - 1;
+
 const PEM_BEGIN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
 const PEM_END = /-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
 /** An unterminated key (truncated output) takes only whole base64 lines, split by real or JSON-escaped newlines. */
@@ -168,11 +182,15 @@ function redactPrivateKeys(s: string): string {
 }
 
 /**
- * A name that may hold a secret; isSecretName decides. A name starts only where a run of name
- * characters starts (or after a flag's dash, as in -Dapp.password=), so a long a-b-c-key-… run
- * is tried once, not at every word in it.
+ * A name, then = : => := or a typed assignment (password: str =), then maybe a Bearer/Basic scheme.
+ * A name starts only where a run of name characters starts (or after a flag's dash, as in
+ * -Dapp.password=), so a long a-b-c-key-… run is tried once, not at every word in it.
  */
 const NAME = String.raw`(?<![A-Za-z0-9_.])(?<![A-Za-z0-9_.]-)(?=[A-Za-z_])([A-Za-z0-9_.-]{0,128}(?:secret|token|pass|pwd|pw|key|auth|credential|cred|private|master|signing|encryption|crypt|cookie|certificate)[A-Za-z0-9_.-]{0,64})`;
+const SEP = String.raw`(["']?[ \t]{0,4}(?::[ \t]{0,4}[A-Za-z_][\w.[\]|]{0,40}[ \t]{1,4}=(?![=>~])|:=|=>|:(?!:)|=(?![=>~]))[ \t]{0,4})`;
+/** A bare value runs to whitespace or a quote, and stops at a , or & that starts the next name=value. */
+const BARE = String.raw`((?:[^\s"'\`;&,]|[&,](?![ \t]{0,4}["']?[A-Za-z_][\w.-]{0,64}["']?[ \t]{0,4}[:=])){1,16384})`;
+const QUOTED = String.raw`"((?:[^"\\\n]|\\.){1,16384})"|'([^'\n]{1,16384})'`;
 
 const RULES: Rule[] = [
   { id: 'aws-access-key', re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
@@ -258,12 +276,18 @@ const RULES: Rule[] = [
   },
   {
     id: 'env-secret',
-    re: new RegExp(`${NAME}(["']?\\s{0,4}[:=]\\s{0,4})(?:(["'])([^"'\\n]{6,512})\\3|([^\\s"',;]{6,512}))`, 'gi'),
-    replace: (m, name, sep, quote, quoted, bare) => {
-      const value = quoted ?? bare ?? '';
-      if (!secretValue(name!, value, quote !== undefined)) return m;
-      if (!quote && /^["']?[ \t]*:[ \t]*$/.test(sep!) && TYPE_NAME.test(value)) return m; // secret: NonSharedBuffer
-      return quote ? `${name}${sep}${quote}${tag('env-secret')}${quote}` : `${name}${sep}${tag('env-secret')}`;
+    re: new RegExp(`${NAME}${SEP}((?:bearer|basic|token)[ \\t]{1,4})?(?:${QUOTED}|${BARE})`, 'gi'),
+    replace: (m, name, sep, scheme, dq, sq, bare) => {
+      if (dq !== undefined || sq !== undefined) {
+        const value = dq ?? sq ?? '';
+        if (!secretValue(name!, value, true)) return m;
+        const quote = dq !== undefined ? '"' : "'";
+        return `${name}${sep}${scheme ?? ''}${quote}${tag('env-secret')}${quote}`;
+      }
+      const [value, trailing] = splitTrailing(bare ?? '');
+      if (value.length < 4 || !secretValue(name!, value)) return m;
+      if (/^["']?[ \t]*:[ \t]*$/.test(sep!) && TYPE_NAME.test(value)) return m; // secret: NonSharedBuffer
+      return `${name}${sep}${scheme ?? ''}${tag('env-secret')}${trailing}`;
     },
   },
 ];

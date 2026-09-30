@@ -257,6 +257,16 @@ const LEAKS: Array<[string, string, string]> = [
   ['a password with brackets', 'PASSWORD=P(ssw0rd!)', 'ssw0rd'],
   ['a quoted password that reads like code', 'password = "Hello(World).x"', 'World'],
   ['-Dapp.password=X', `java -Dspring.datasource.password=${PW} -jar app.jar`, PW],
+  // Value shapes
+  ['a quoted value holding the other quote', `PASSWORD="it's-a-${PW}"`, PW],
+  ['a value with a comma', `PASSWORD=ab,${PW}`, PW],
+  ['ruby :password =>', `:password => "${PW}"`, PW],
+  ['yaml password:', `db:\n  password: ${PW}\n`, PW],
+  ['a short yaml password', '  password: abc1\n', 'abc1'],
+  ['go :=', `password := "${PW}"`, PW],
+  ['a typed python assignment', `API_KEY: str = "${PW}"`, PW],
+  ['an escaped JSON string under a secret name', `"SecretString": "{\\"password\\":\\"${PW}\\"}"`, PW],
+  ['a long value, whole', `client-key-data: ${repeat(B64, 200)}`, B64],
 ];
 for (const [what, text, secret] of LEAKS) {
   test(`redacts ${what}`, () => {
@@ -303,9 +313,22 @@ const CODE = [
   'PASSWORD=',
   '"auth": "required"',
 ];
+// ...and where a bare value ends: at list or sentence punctuation, a closing bracket it did not open, a backtick.
+CODE.push(
+  'function login(user: string, password: string) {}',
+  'callback: (err: Error | null, secret: NonSharedBuffer) => void,',
+  'Values like `auth: true` and `password: string` are code.',
+  'connect(host=h, password=db_password)',
+  'connect(host=h, password=password)',
+);
 for (const text of CODE) {
   test(`leaves alone: ${text.slice(0, 40)}`, () => assert.equal(redactString(text), text));
 }
+
+test('punctuation after a bare value is kept outside the redaction', () => {
+  assert.equal(redactString(`f(password=${PW}), then`), 'f(password=[REDACTED:env-secret]), then');
+  assert.equal(redactString(`{password: ${PW}, user: bob}`), '{password: [REDACTED:env-secret], user: bob}');
+});
 
 test('values under secret-named JSON keys are redacted whatever they look like', () => {
   const out = redactValue({ password: '123456', token: 'Summer.Winter', auth: B64, max_tokens: '1024', auths: { auth: 'required' } });
@@ -317,6 +340,7 @@ test('values under secret-named JSON keys are redacted whatever they look like',
 test('name patterns redact hostile 256 KB input in linear time', () => {
   const inputs = [
     fill('a_token='), fill('password="'), fill("key: '"), fill('secret:'), fill('a.b.password.'), fill('x-key-'), fill('KEY=,'),
+    fill('password=a,'), fill('password=a, b'), fill('PASSWORD=x&y'), fill('token: str ='), fill('token=bearer '), fill('password=\\"'),
     fill('x', 'PASSWORD='), fill('(', 'PASSWORD=ab'), fill('a.', 'PASSWORD=ab'), fill('{"auth":"a","token":"b","key":1},'),
     fill('const password = getPassword(a, b);\n'),
   ];

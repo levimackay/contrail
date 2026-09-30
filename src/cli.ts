@@ -273,7 +273,7 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
       const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map(a => [a.id, explain(a.id, graph)]));
       const forest = trailForest(graph, explanations);
       const omitted = graph.actions.length - explanations.size;
-      if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
       else io.out(renderTree(graph, forest, omitted, s));
       return 0;
     }
@@ -283,7 +283,7 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
       if (!matchesFilter(a, graph, filter) || !EXPLAINED.has(kindForExplain(a.tool))) continue;
       explanations.set(a.id, explain(a.id, graph));
     }
-    if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
+    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
   });
@@ -405,7 +405,7 @@ async function find(args: string[], flags: Flags, io: Io, s: Style): Promise<num
       const json = hits
         .filter(h => h.sightings.length)
         .map(h => ({
-          session: h.graph.actions[0]?.scope.sessionId ?? null,
+          session: h.graph.sessionId,
           sightings: h.sightings.map(x =>
             x.source
               ? { seq: x.seq, held: { source: x.source.input.label, trust: x.source.input.trust, origin: x.source.input.origin, line: x.source.line } }

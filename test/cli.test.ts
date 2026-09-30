@@ -138,6 +138,14 @@ test('the data directory resolves as the capture hook does: CONTRAIL_HOME before
   assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev'), '/env');
 });
 
+test('a session with prompts and no tool calls is labeled with its own id, not a prompt id', async () => {
+  const data = spoolFrom(session([d.prompt('hello there', 'p1'), d.prompt('and again', 'p2')], 'abcdef12-session'));
+  const r = await run(['trace', '--data', data]);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /^Session abcdef12 /);
+  assert.equal(JSON.parse((await run(['trace', '--json', '--data', data])).out).session, 'abcdef12-session');
+});
+
 test('from a skill, an error is the output and the exit is 0, so Claude Code shows it as the report', async () => {
   const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
   const plain = await run(['why', 'last', '--data', data]);

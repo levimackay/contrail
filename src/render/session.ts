@@ -47,7 +47,7 @@ export function renderTrace(
   s: Style = PLAIN,
 ): string {
   const out: string[] = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? '';
+  const sessionId = g.sessionId;
   const inputs = new Map(g.inputs.map(i => [i.id, i]));
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(
@@ -118,7 +118,7 @@ const headline = headlineTrace;
 /** trace --tree: each action under the call whose output first held its headline value. */
 export function renderTree(g: Graph, forest: TreeRoot[], omitted: number, s: Style = PLAIN): string {
   const out: string[] = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? '';
+  const sessionId = g.sessionId;
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(s.dim('Each action sits under the call whose output first held its headline value. Data flow, not the agent\'s reasons.'));
   for (const root of forest) {
@@ -177,7 +177,7 @@ export function renderFind(value: string, hits: Array<{ graph: Graph; sightings:
     return `${out.join('\n')}\n`;
   }
   for (const { graph: g, sightings } of found) {
-    const sessionId = g.actions[0]?.scope.sessionId ?? '';
+    const sessionId = g.sessionId;
     const first = g.prompts.find(p => p.from === 'you');
     out.push('', `${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : '')}`);
     let seenSource = false;

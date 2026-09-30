@@ -2256,6 +2256,7 @@ function buildGraph(rows, who, hashToken) {
   for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
   return {
+    sessionId: mainScope.sessionId,
     actions: actionList,
     inputs,
     effects,
@@ -2757,7 +2758,7 @@ function matchesFilter(a, g, filter) {
 }
 function renderTrace(g, explanations, filter, s = PLAIN) {
   const out = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? "";
+  const sessionId = g.sessionId;
   const inputs = new Map(g.inputs.map((i) => [i.id, i]));
   out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(
@@ -2817,7 +2818,7 @@ function actionLines(a, g, e, inputs, s) {
 var headline2 = headlineTrace;
 function renderTree(g, forest, omitted, s = PLAIN) {
   const out = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? "";
+  const sessionId = g.sessionId;
   out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(s.dim("Each action sits under the call whose output first held its headline value. Data flow, not the agent's reasons."));
   for (const root of forest) {
@@ -2869,7 +2870,7 @@ function renderFind(value, hits, scanned, s = PLAIN) {
 `;
   }
   for (const { graph: g, sightings } of found) {
-    const sessionId = g.actions[0]?.scope.sessionId ?? "";
+    const sessionId = g.sessionId;
     const first = g.prompts.find((p) => p.from === "you");
     out.push("", `${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : "")}`);
     let seenSource = false;
@@ -3090,7 +3091,7 @@ var gradeClass = (g) => g.toLowerCase();
 var time = (us) => us ? new Date(Math.floor(us / 1e3)).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "";
 function renderReport(r) {
   const g = r.graph;
-  const sessionId = g.actions[0]?.scope.sessionId ?? "";
+  const sessionId = g.sessionId;
   const anchor = (id) => `a-${id.replace(/[^\w-]/g, "_")}`;
   const byAction = new Map(r.findings.map((f) => [f.action.id, f]));
   const external = r.findings.filter((f) => f.externalUpstream).length;
@@ -3261,7 +3262,7 @@ var hexId = (kind, value, length) => {
 };
 var nanos = (us) => (BigInt(Math.round(us)) * 1000n).toString();
 function toOtlp(g, explanations, findings, version) {
-  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? "unknown";
+  const sessionId = g.sessionId || "unknown";
   const traceId = hexId("trace", sessionId, 32);
   const rootId = hexId("session", sessionId, 16);
   const actionSpan = (id) => hexId("action", `${sessionId}:${id}`, 16);
@@ -3754,7 +3755,7 @@ async function trace2(flags, io, s) {
       const explanations2 = new Map(graph.actions.slice(0, MAX_EXPLAINED).map((a) => [a.id, explain(a.id, graph)]));
       const forest = trailForest(graph, explanations2);
       const omitted = graph.actions.length - explanations2.size;
-      if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}
 `);
       else io.out(renderTree(graph, forest, omitted, s));
       return 0;
@@ -3765,7 +3766,7 @@ async function trace2(flags, io, s) {
       if (!matchesFilter(a, graph, filter) || !EXPLAINED.has(kindForExplain(a.tool))) continue;
       explanations.set(a.id, explain(a.id, graph));
     }
-    if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}
+    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}
 `);
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
@@ -3874,7 +3875,7 @@ async function find(args, flags, io, s) {
     });
     if (flags.json) {
       const json = hits.filter((h) => h.sightings.length).map((h) => ({
-        session: h.graph.actions[0]?.scope.sessionId ?? null,
+        session: h.graph.sessionId,
         sightings: h.sightings.map(
           (x) => x.source ? { seq: x.seq, held: { source: x.source.input.label, trust: x.source.input.trust, origin: x.source.input.origin, line: x.source.line } } : { seq: x.seq, used: { action: x.use.action.id, tool: x.use.action.tool, argPath: x.use.argPath, sensitive: x.use.kinds } }
         )

@@ -208,6 +208,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
   for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
   return {
+    sessionId: mainScope.sessionId,
     actions: actionList,
     inputs,
     effects,

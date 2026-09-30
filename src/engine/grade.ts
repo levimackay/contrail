@@ -1,3 +1,4 @@
+import { normalizedText } from './context.ts';
 import { findMention, lineOf } from './text.ts';
 import type { Grade, Input, Link, Token } from './types.ts';
 
@@ -65,6 +66,6 @@ export function gradeSources(token: Token, candidates: Input[], actionId: string
 
 /** Where in the source the value sits. Hashed text keeps its line numbers but has no text to quote. */
 function quote(input: Input, index: number): Link['quote'] {
-  const { line, text } = lineOf(input.text, index);
+  const { line, text } = lineOf(input.text, index, normalizedText(input));
   return { ref: input.ref, line, text: input.hashed ? '' : text };
 }

@@ -1,5 +1,5 @@
 import { stringLeaves } from '../util.ts';
-import { findInInput } from './context.ts';
+import { findInInput, normalizedText } from './context.ts';
 import { sensitivity, type Sensitivity } from './risks.ts';
 import { findNormalized, lineOf, normalize } from './text.ts';
 import type { Action, Graph, Input } from './types.ts';
@@ -28,7 +28,7 @@ export function findValue(g: Graph, value: string): Sighting[] {
     if ((input.producedBy && own.has(input.producedBy)) || (input.origin === 'prompt' && /^\s*\/contrail:/.test(input.text))) continue;
     const index = findInInput(input, needle, g.hashToken);
     if (index < 0) continue;
-    const { line, text } = lineOf(input.text, index);
+    const { line, text } = lineOf(input.text, index, normalizedText(input));
     out.push({ seq: input.availableAt, source: { input, line, text: input.hashed ? '' : text } });
   }
   for (const action of g.actions) {

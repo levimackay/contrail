@@ -523,7 +523,6 @@ import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, 
 
 // src/engine/text.ts
 var INVISIBLE = /[​-‏‪-‮⁠-⁤﻿]/g;
-var WORD_CHAR = /[a-z0-9_-]/;
 var READ_PREFIX = /^\s*(\d+)(?:→|\t)(.*)$/;
 function normalize(s) {
   return s.normalize("NFKC").replace(INVISIBLE, "").toLowerCase();
@@ -537,23 +536,34 @@ function findMention(text, token) {
 function findNormalized(hay, needle) {
   if (!needle) return -1;
   for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
-    const before = hay[i - 1];
-    const after = hay[i + needle.length];
-    if ((before === void 0 || !WORD_CHAR.test(before)) && (after === void 0 || !WORD_CHAR.test(after))) return i;
+    if (!isWordCode(hay.charCodeAt(i - 1)) && !isWordCode(hay.charCodeAt(i + needle.length))) return i;
   }
   return -1;
 }
+function isWordCode(c) {
+  return c >= 97 && c <= 122 || c >= 48 && c <= 57 || c === 95 || c === 45;
+}
 var QUOTE_FROM_START = 60;
 var QUOTE_LEAD = 30;
-function lineOf(text, index) {
-  const before = normalize(text).slice(0, Math.max(0, index));
-  const lineIndex = before.split("\n").length - 1;
-  const column = before.length - (before.lastIndexOf("\n") + 1);
-  const lines = text.split("\n");
-  const raw = lines[lineIndex] ?? "";
+function lineOf(text, index, normalized = normalize(text)) {
+  const end = Math.min(Math.max(0, index), normalized.length);
+  let lineIndex = 0;
+  let lineStart = 0;
+  for (let k = normalized.indexOf("\n"); k !== -1 && k < end; k = normalized.indexOf("\n", k + 1)) {
+    lineIndex++;
+    lineStart = k + 1;
+  }
+  const column = end - lineStart;
+  let start = 0;
+  for (let n = 0; n < lineIndex && start !== -1; n++) {
+    const next = text.indexOf("\n", start);
+    start = next === -1 ? -1 : next + 1;
+  }
+  const stop = start === -1 ? -1 : text.indexOf("\n", start);
+  const raw = start === -1 ? "" : text.slice(start, stop === -1 ? text.length : stop);
   const prefixed = READ_PREFIX.exec(raw);
   const body = prefixed ? prefixed[2] : raw;
-  const line = prefixed ? Number(prefixed[1]) : lines.length > 1 ? lineIndex + 1 : null;
+  const line = prefixed ? Number(prefixed[1]) : text.includes("\n") ? lineIndex + 1 : null;
   return { line, text: around(body, column - (raw.length - body.length)) };
 }
 function around(body, column) {
@@ -1097,98 +1107,6 @@ function commitContains(commitSeq, files, writes, earlierCommits) {
   });
 }
 
-// src/engine/grade.ts
-var ORDER = ["DIRECT", "LIKELY", "POSSIBLE", "UNKNOWN"];
-function minGrade(grades) {
-  if (grades.length === 0) return "UNKNOWN";
-  return grades.reduce((weakest, g) => ORDER.indexOf(g) > ORDER.indexOf(weakest) ? g : weakest);
-}
-function maxGrade(grades) {
-  return grades.reduce((best, g) => ORDER.indexOf(g) < ORDER.indexOf(best) ? g : best, "UNKNOWN");
-}
-function gradeSources(token, candidates, actionId, indexIn) {
-  const base = { type: "value_from", from: actionId, recorded: false, token: token.text };
-  if (candidates.length === 0) {
-    return [{ ...base, to: null, grade: "UNKNOWN", rule: "R4", note: "no observed input contains it" }];
-  }
-  const bySource = /* @__PURE__ */ new Map();
-  for (const c of [...candidates].sort((a, b) => a.availableAt - b.availableAt)) {
-    if (!bySource.has(c.ref)) bySource.set(c.ref, c);
-  }
-  const sources = [...bySource.values()];
-  const link = (input, grade, extra = {}) => ({
-    ...base,
-    to: input.id,
-    grade,
-    rule: "R3",
-    quote: quote(input, indexIn ? indexIn(input) : findMention(input.text, token.text)),
-    ...extra
-  });
-  const yours = sources.find((s) => s.trust === "principal");
-  if (yours) {
-    return sources.map(
-      (s) => s === yours ? link(s, token.shaped ? "LIKELY" : "POSSIBLE", { note: "you supplied it" }) : link(s, "POSSIBLE", { note: "also in" })
-    );
-  }
-  if (sources.length === 1) {
-    const only = sources[0];
-    return [token.shaped ? link(only, "LIKELY") : link(only, "POSSIBLE", { note: "plain word; the model may know it" })];
-  }
-  if (sources.length <= 3) {
-    return sources.map((s, i) => link(s, "POSSIBLE", i === 0 ? { firstSeen: true } : {}));
-  }
-  return [{ ...base, to: null, grade: "UNKNOWN", rule: "R3", note: `in ${sources.length} observed inputs; too common to attribute` }];
-}
-function quote(input, index) {
-  const { line, text } = lineOf(input.text, index);
-  return { ref: input.ref, line, text: input.hashed ? "" : text };
-}
-
-// src/engine/requested.ts
-var NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
-var CLAUSE_BREAK = /[,;:()]|\s(?:but|then|just|so|and then)\s/gi;
-function negates(text, index) {
-  const before = text.slice(0, index);
-  let start = 0;
-  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
-  return NEGATOR.test(before.slice(start));
-}
-function splitSentences(text) {
-  return text.replace(/```[\s\S]*?(?:```|$)/g, "\n").split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
-}
-function requested(action, tokens, sentences) {
-  const before = sentences.filter((s) => s.seq < action.preSeq);
-  const searched = before.length;
-  const groups = /* @__PURE__ */ new Map();
-  for (const t of tokens) {
-    if (t.role === "target" && t.group !== null) groups.set(t.group, [...groups.get(t.group) ?? [], t]);
-  }
-  if (groups.size === 0) return { verdict: "NOTHING_TO_MATCH", grade: "UNKNOWN", searched };
-  const kept = [];
-  for (const alternatives of groups.values()) {
-    let latest2 = null;
-    for (const s of before) {
-      const hit = alternatives.find((t) => !t.derived && findMention(s.text, t.text) >= 0) ?? alternatives.find((t) => findMention(s.text, t.text) >= 0);
-      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived, negated: negates(s.text, findMention(s.text, hit.text)) };
-    }
-    if (latest2) kept.push(latest2);
-  }
-  if (kept.length === 0) return { verdict: "NOT_NAMED", grade: "UNKNOWN", searched };
-  const negated = kept.find((k) => k.negated);
-  if (negated) {
-    return { verdict: "NAMED_NEGATED", grade: "POSSIBLE", searched, sentence: negated.sentence, matched: negated.token.text };
-  }
-  const latest = kept.reduce((a, b) => b.sentence.seq > a.sentence.seq ? b : a);
-  const verdict = kept.length === groups.size && kept.every((k) => k.strong) ? "NAMED" : "PARTLY_NAMED";
-  return {
-    verdict,
-    grade: verdict === "NAMED" ? "LIKELY" : "POSSIBLE",
-    searched,
-    sentence: latest.sentence,
-    matched: latest.token.text
-  };
-}
-
 // src/engine/scope.ts
 var scopeKey = (s) => `${s.sessionId}/${s.agentId ?? "main"}`;
 var sameScope = (a, b) => a.sessionId === b.sessionId && a.agentId === b.agentId;
@@ -1274,23 +1192,200 @@ function normalizedText(i) {
   }
   return n;
 }
-var wordCache = /* @__PURE__ */ new WeakMap();
-var WORD_RUN2 = /[a-z0-9_-]{1,256}/g;
 function findInInput(i, needle, hashToken) {
   if (i.hashed) {
     const hashedNeedle = hashToken ? hashNeedle(needle, hashToken) : null;
     if (hashedNeedle === null) return -1;
     needle = hashedNeedle;
   }
-  let words2 = wordCache.get(i);
-  if (!words2) {
-    words2 = new Set(normalizedText(i).match(WORD_RUN2) ?? []);
-    wordCache.set(i, words2);
+  let found = foundCache.get(i);
+  if (!found) {
+    found = /* @__PURE__ */ new Map();
+    foundCache.set(i, found);
   }
-  for (const w of needle.match(WORD_RUN2) ?? []) {
-    if (w.length < 256 && !words2.has(w)) return -1;
+  let index = found.get(needle);
+  if (index === void 0) {
+    index = search(i, needle);
+    found.set(needle, index);
   }
+  return index;
+}
+var foundCache = /* @__PURE__ */ new WeakMap();
+function search(i, needle) {
+  let bits = wordFilterCache.get(i);
+  if (!bits) {
+    const searches = (searchCount.get(i) ?? 0) + 1;
+    if (searches <= SCANS_BEFORE_FILTER) {
+      searchCount.set(i, searches);
+      return findNormalized(normalizedText(i), needle);
+    }
+    bits = wordFilter(normalizedText(i));
+    wordFilterCache.set(i, bits);
+  }
+  if (!mayHoldWords(bits, needleWords(needle))) return -1;
   return findNormalized(normalizedText(i), needle);
+}
+var SCANS_BEFORE_FILTER = 8;
+var searchCount = /* @__PURE__ */ new WeakMap();
+var wordFilterCache = /* @__PURE__ */ new WeakMap();
+var needleWordCache = /* @__PURE__ */ new Map();
+var MAX_NEEDLES_CACHED = 1e4;
+var FNV_OFFSET = 2166136261;
+var FNV_PRIME = 16777619;
+function rehash(h) {
+  h = Math.imul(h ^ h >>> 16, 2246822507);
+  return h ^ h >>> 13;
+}
+function wordHashes(text) {
+  const out = [];
+  let h = FNV_OFFSET;
+  let inWord = false;
+  for (let k = 0; k < text.length; k++) {
+    const c = text.charCodeAt(k);
+    if (isWordCode(c)) {
+      h = Math.imul(h ^ c, FNV_PRIME);
+      inWord = true;
+    } else if (inWord) {
+      out.push(h);
+      h = FNV_OFFSET;
+      inWord = false;
+    }
+  }
+  if (inWord) out.push(h);
+  return out;
+}
+function wordFilter(text) {
+  let size = 1024;
+  while (size < text.length && size < 1 << 26) size *= 2;
+  const bits = new Uint32Array(size / 32);
+  const mask = size - 1;
+  let h = FNV_OFFSET;
+  let inWord = false;
+  for (let k = 0; k <= text.length; k++) {
+    const c = k < text.length ? text.charCodeAt(k) : -1;
+    if (isWordCode(c)) {
+      h = Math.imul(h ^ c, FNV_PRIME);
+      inWord = true;
+    } else if (inWord) {
+      const a = h & mask;
+      const b = rehash(h) & mask;
+      bits[a >>> 5] |= 1 << (a & 31);
+      bits[b >>> 5] |= 1 << (b & 31);
+      h = FNV_OFFSET;
+      inWord = false;
+    }
+  }
+  return bits;
+}
+function needleWords(needle) {
+  let hashes = needleWordCache.get(needle);
+  if (!hashes) {
+    if (needleWordCache.size >= MAX_NEEDLES_CACHED) needleWordCache.clear();
+    hashes = wordHashes(needle);
+    needleWordCache.set(needle, hashes);
+  }
+  return hashes;
+}
+function mayHoldWords(bits, hashes) {
+  const mask = bits.length * 32 - 1;
+  for (const h of hashes) {
+    const a = h & mask;
+    const b = rehash(h) & mask;
+    if (!(bits[a >>> 5] & 1 << (a & 31)) || !(bits[b >>> 5] & 1 << (b & 31))) return false;
+  }
+  return true;
+}
+
+// src/engine/grade.ts
+var ORDER = ["DIRECT", "LIKELY", "POSSIBLE", "UNKNOWN"];
+function minGrade(grades) {
+  if (grades.length === 0) return "UNKNOWN";
+  return grades.reduce((weakest, g) => ORDER.indexOf(g) > ORDER.indexOf(weakest) ? g : weakest);
+}
+function maxGrade(grades) {
+  return grades.reduce((best, g) => ORDER.indexOf(g) < ORDER.indexOf(best) ? g : best, "UNKNOWN");
+}
+function gradeSources(token, candidates, actionId, indexIn) {
+  const base = { type: "value_from", from: actionId, recorded: false, token: token.text };
+  if (candidates.length === 0) {
+    return [{ ...base, to: null, grade: "UNKNOWN", rule: "R4", note: "no observed input contains it" }];
+  }
+  const bySource = /* @__PURE__ */ new Map();
+  for (const c of [...candidates].sort((a, b) => a.availableAt - b.availableAt)) {
+    if (!bySource.has(c.ref)) bySource.set(c.ref, c);
+  }
+  const sources = [...bySource.values()];
+  const link = (input, grade, extra = {}) => ({
+    ...base,
+    to: input.id,
+    grade,
+    rule: "R3",
+    quote: quote(input, indexIn ? indexIn(input) : findMention(input.text, token.text)),
+    ...extra
+  });
+  const yours = sources.find((s) => s.trust === "principal");
+  if (yours) {
+    return sources.map(
+      (s) => s === yours ? link(s, token.shaped ? "LIKELY" : "POSSIBLE", { note: "you supplied it" }) : link(s, "POSSIBLE", { note: "also in" })
+    );
+  }
+  if (sources.length === 1) {
+    const only = sources[0];
+    return [token.shaped ? link(only, "LIKELY") : link(only, "POSSIBLE", { note: "plain word; the model may know it" })];
+  }
+  if (sources.length <= 3) {
+    return sources.map((s, i) => link(s, "POSSIBLE", i === 0 ? { firstSeen: true } : {}));
+  }
+  return [{ ...base, to: null, grade: "UNKNOWN", rule: "R3", note: `in ${sources.length} observed inputs; too common to attribute` }];
+}
+function quote(input, index) {
+  const { line, text } = lineOf(input.text, index, normalizedText(input));
+  return { ref: input.ref, line, text: input.hashed ? "" : text };
+}
+
+// src/engine/requested.ts
+var NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
+var CLAUSE_BREAK = /[,;:()]|\s(?:but|then|just|so|and then)\s/gi;
+function negates(text, index) {
+  const before = text.slice(0, index);
+  let start = 0;
+  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
+  return NEGATOR.test(before.slice(start));
+}
+function splitSentences(text) {
+  return text.replace(/```[\s\S]*?(?:```|$)/g, "\n").split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+}
+function requested(action, tokens, sentences) {
+  const before = sentences.filter((s) => s.seq < action.preSeq);
+  const searched = before.length;
+  const groups = /* @__PURE__ */ new Map();
+  for (const t of tokens) {
+    if (t.role === "target" && t.group !== null) groups.set(t.group, [...groups.get(t.group) ?? [], t]);
+  }
+  if (groups.size === 0) return { verdict: "NOTHING_TO_MATCH", grade: "UNKNOWN", searched };
+  const kept = [];
+  for (const alternatives of groups.values()) {
+    let latest2 = null;
+    for (const s of before) {
+      const hit = alternatives.find((t) => !t.derived && findMention(s.text, t.text) >= 0) ?? alternatives.find((t) => findMention(s.text, t.text) >= 0);
+      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived, negated: negates(s.text, findMention(s.text, hit.text)) };
+    }
+    if (latest2) kept.push(latest2);
+  }
+  if (kept.length === 0) return { verdict: "NOT_NAMED", grade: "UNKNOWN", searched };
+  const negated = kept.find((k) => k.negated);
+  if (negated) {
+    return { verdict: "NAMED_NEGATED", grade: "POSSIBLE", searched, sentence: negated.sentence, matched: negated.token.text };
+  }
+  const latest = kept.reduce((a, b) => b.sentence.seq > a.sentence.seq ? b : a);
+  const verdict = kept.length === groups.size && kept.every((k) => k.strong) ? "NAMED" : "PARTLY_NAMED";
+  return {
+    verdict,
+    grade: verdict === "NAMED" ? "LIKELY" : "POSSIBLE",
+    searched,
+    sentence: latest.sentence,
+    matched: latest.token.text
+  };
 }
 
 // src/engine/trace.ts
@@ -1540,7 +1635,7 @@ function findValue(g, value) {
     if (input.producedBy && own.has(input.producedBy) || input.origin === "prompt" && /^\s*\/contrail:/.test(input.text)) continue;
     const index = findInInput(input, needle, g.hashToken);
     if (index < 0) continue;
-    const { line, text } = lineOf(input.text, index);
+    const { line, text } = lineOf(input.text, index, normalizedText(input));
     out.push({ seq: input.availableAt, source: { input, line, text: input.hashed ? "" : text } });
   }
   for (const action of g.actions) {
@@ -1608,10 +1703,26 @@ function buildGraph(rows, who, hashToken) {
   const skillBodies = /* @__PURE__ */ new Map();
   const notifications = [];
   rows.forEach((row, index) => {
+    if (row.hook_event !== "PostToolBatch") return;
+    for (const call of arr(parsePayload(row.payload).tool_calls)) {
+      const useId = str(call, "tool_use_id");
+      if (useId) modelSaw.set(useId, { seq: index + 1, text: toText(field(call, "tool_response")) });
+    }
+  });
+  rows.forEach((row, index) => {
     const seq = index + 1;
+    const id = row.tool_use_id;
+    const known = id ? actions.get(id) : void 0;
+    const large = row.hook_event === "PostToolUse" && (row.payloadLater || row.payload.length > DEFER_OVER);
+    if (large && known && onlyTextUsed(known.tool) && modelSaw.get(known.id)?.text) {
+      known.postSeq = seq;
+      known.status = "ok";
+      deferResponse(known, row);
+      return;
+    }
+    if (row.hook_event === "PostToolBatch") return;
     const p = parsePayload(row.payload);
     const scope = { sessionId: row.session_id ?? "", agentId: row.agent_id };
-    const id = row.tool_use_id;
     switch (row.hook_event) {
       case "UserPromptSubmit": {
         const promptId = row.prompt_id ?? `seq-${seq}`;
@@ -1664,12 +1775,6 @@ function buildGraph(rows, who, hashToken) {
         }
         break;
       }
-      case "PostToolBatch":
-        for (const call of arr(p.tool_calls)) {
-          const useId = str(call, "tool_use_id");
-          if (useId) modelSaw.set(useId, { seq, text: toText(field(call, "tool_response")) });
-        }
-        break;
       case "PostCompact":
         (compactSeqs[scopeKey(scope)] ??= []).push(seq);
         inputs.push({
@@ -1824,6 +1929,21 @@ function buildGraph(rows, who, hashToken) {
     timeUs: rows.map((r) => r.captured_us),
     ...hashToken ? { hashToken } : {}
   };
+}
+var TEXT_RESULT_TOOLS = ["Read", "NotebookRead", "Grep", "Glob", "LS", "WebFetch", "WebSearch"];
+var onlyTextUsed = (tool) => TEXT_RESULT_TOOLS.includes(tool) || tool.startsWith("mcp__");
+var DEFER_OVER = 16 * 1024;
+function deferResponse(a, row) {
+  const settle = (value) => {
+    Object.defineProperty(a, "response", { value, writable: true, enumerable: true, configurable: true });
+    return value;
+  };
+  Object.defineProperty(a, "response", {
+    enumerable: true,
+    configurable: true,
+    get: () => settle(parsePayload(row.payload).tool_response ?? null),
+    set: settle
+  });
 }
 function parsePayload(payload) {
   try {
@@ -4295,11 +4415,42 @@ ${IMPORT_HINT}`);
 ${matches.map((m) => `  ${clip(m.id, 80)}`).join("\n")}
 Use more characters.`);
 }
-function loadRows(db, sessionId) {
-  return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
+var TEXT_RESULTS = `IFNULL(hook_event = 'PostToolUse' AND (tool_name IN (${TEXT_RESULT_TOOLS.map((t) => `'${t}'`).join(", ")}) OR substr(tool_name, 1, 5) = 'mcp__'), 0)`;
+function loadRows(db, sessionId, { later = false } = {}) {
+  if (!later) return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
+  const rows = db.all(
+    `SELECT * FROM events WHERE session_id = ? AND NOT ${TEXT_RESULTS}
+     UNION ALL
+     SELECT id, spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, NULL, parse_error, source
+       FROM events WHERE session_id = ?1 AND ${TEXT_RESULTS}
+     ORDER BY captured_us, spool_name`,
+    sessionId
+  );
+  return rows.map((r) => {
+    const row = r;
+    if (r.payload === null) readLater(db, row);
+    return row;
+  });
+}
+function readLater(db, row) {
+  const settle = (payload) => {
+    Object.defineProperty(row, "payload", { value: payload, writable: true, enumerable: true, configurable: true });
+    return payload;
+  };
+  Object.defineProperty(row, "payload", {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      const stored2 = db.get("SELECT payload FROM events WHERE id = ?", row.id);
+      if (!stored2) throw new ContrailError("This session changed while it was being read. Run the command again.");
+      return settle(stored2.payload);
+    },
+    set: settle
+  });
+  row.payloadLater = true;
 }
 function loadGraph(db, sessionId, home, hashToken) {
-  return buildGraph(loadRows(db, sessionId), { home, user: basename5(home) }, hashToken);
+  return buildGraph(loadRows(db, sessionId, { later: true }), { home, user: basename5(home) }, hashToken);
 }
 
 // src/query/blame.ts
@@ -6393,7 +6544,7 @@ async function tripwire(flags, io) {
     if (payload.hook_event_name !== "PreToolUse" || !sessionId || !toolUseId) return 0;
     const notice = await withStore(flags, io, ({ db, dataDir, hashToken }) => {
       if (!loadConfig(dataDir).config.tripwire) return null;
-      const rows = loadRows(db, sessionId);
+      const rows = loadRows(db, sessionId, { later: true });
       if (!rows.some((r) => r.hook_event === "PreToolUse" && r.tool_use_id === toolUseId)) {
         rows.push({
           id: 0,

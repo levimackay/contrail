@@ -97,3 +97,25 @@ test('a command that committed and then failed, like git commit -q && git push, 
   assert.equal(r.err, '');
   assert.match(r.out, /LIKELY {3}made by Bash c1 .*\[R9\]/);
 });
+
+test('an echoed commit line is not DIRECT: git dated the commit outside that command, so it is not its maker', async () => {
+  const echoed = call('e1', 'Bash', { command: 'git commit -q --allow-empty -m wip; echo "[main SHA] Add a"' }, '', { stdout: '[main SHA] Add a', stderr: '' });
+  const { repo, data, sha } = setup([
+    [d.prompt('tidy up', 'p1'), T + 500],
+    [echoed[0]!, T + 600],
+    [echoed[1]!, T + 601],
+    [echoed[2]!, T + 601],
+  ]);
+  // Put the real sha into the recorded echo, as a spoofing command would print it.
+  const { readdirSync, readFileSync } = await import('node:fs');
+  for (const f of readdirSync(join(data, 'spool'))) {
+    const file = join(data, 'spool', f);
+    const mtime = Number(f.split('-')[0]);
+    writeFileSync(file, readFileSync(file, 'utf8').replaceAll('SHA', sha.slice(0, 7)));
+    utimesSync(file, mtime, mtime);
+  }
+  const r = await why(repo, data, sha.slice(0, 7));
+  assert.doesNotMatch(r.out, /DIRECT {3}made by/);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /No recorded agent action made commit/);
+});

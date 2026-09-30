@@ -32,15 +32,17 @@ export function findCommit(db: Db, sha: string, cwd?: string, repoKey?: string):
       ORDER BY captured_us DESC`,
     wanted.slice(0, 7),
   );
+  const info = cwd ? commitInfo(cwd, wanted) : null;
   for (const row of rows) {
     const p = JSON.parse(row.payload) as Record<string, unknown>;
     const commit = parseCommitSha(str(p.tool_input, 'command') ?? '', str(p.tool_response, 'stdout') ?? toText(p.tool_response));
-    if (commit && (wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) {
-      return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: 'stdout' };
-    }
+    if (!commit || !(wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) continue;
+    // A command can print any text. When git can date the commit, its line counts only from a
+    // command that was running at that second; an echo of someone else's commit does not.
+    if (info && !ranAt(db, row.toolUseId, info.sec)) continue;
+    return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: 'stdout' };
   }
 
-  const info = cwd ? commitInfo(cwd, wanted) : null;
   if (info) {
     const window = 3600 * 1e6;
     const calls = db
@@ -68,6 +70,17 @@ export function findCommit(db: Db, sha: string, cwd?: string, repoKey?: string):
     }
   }
   throw new ContrailError(`No recorded agent action made commit ${sha}. Contrail sees commits made by Claude Code through its shell tool.`);
+}
+
+/** Whether a recorded call was running at a second git dated a commit (git counts whole seconds). */
+function ranAt(db: Db, toolUseId: string, sec: number): boolean {
+  const span = db.get<{ first: number | null; last: number | null }>(
+    `SELECT MIN(captured_us) AS first, MAX(captured_us) AS last FROM events
+      WHERE tool_use_id = ? AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')`,
+    toolUseId,
+  );
+  if (!span?.first || !span.last) return false;
+  return sec * 1e6 >= span.first - 1e6 && sec * 1e6 <= span.last + 1e6;
 }
 
 /** A commit as git knows it: its sha, the second it was committed, its first branch and subject. */

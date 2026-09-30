@@ -2547,30 +2547,8 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     if (row.parseError) report2.parseErrors++;
     db.exec("BEGIN IMMEDIATE");
     try {
-      const inserted = db.run(
-        `INSERT OR IGNORE INTO events
-           (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        name,
-        row.capturedUs,
-        row.sessionId,
-        row.promptId,
-        row.agentId,
-        row.hookEvent,
-        row.toolName,
-        row.toolUseId,
-        row.cwd,
-        row.repoKey,
-        row.payload,
-        row.parseError
-      );
-      if (inserted) {
-        const id = db.get("SELECT id FROM events WHERE spool_name = ?", name).id;
-        for (const t of row.touches) db.run("INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)", id, t.path, t.kind);
-        report2.ingested++;
-      } else {
-        report2.duplicates++;
-      }
+      if (insertRow(db, name, row)) report2.ingested++;
+      else report2.duplicates++;
       db.exec("COMMIT");
     } catch (e) {
       db.exec("ROLLBACK");
@@ -2582,6 +2560,30 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     }
   }
   return report2;
+}
+function insertRow(db, name, row, source = null) {
+  const inserted = db.run(
+    `INSERT OR IGNORE INTO events
+       (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    name,
+    row.capturedUs,
+    row.sessionId,
+    row.promptId,
+    row.agentId,
+    row.hookEvent,
+    row.toolName,
+    row.toolUseId,
+    row.cwd,
+    row.repoKey,
+    row.payload,
+    row.parseError,
+    source
+  );
+  if (!inserted) return false;
+  const id = db.get("SELECT id FROM events WHERE spool_name = ?", name).id;
+  for (const t of row.touches) db.run("INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)", id, t.path, t.kind);
+  return true;
 }
 function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
   let parsed;

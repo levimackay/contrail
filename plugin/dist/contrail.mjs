@@ -3880,6 +3880,30 @@ function actionLines(a, g, e, inputs, s) {
   }
   return lines;
 }
+function renderWatch(g, prompts, actions, explanations, findings, s = PLAIN) {
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  const byAction = new Map(findings.map((f) => [f.action.id, f]));
+  const at = (seq) => localTime(g.timeUs[seq - 1] ?? 0).slice(-5);
+  const items = [];
+  for (const p of prompts) {
+    const head = p.from === "task" ? `${s.dim("background task report, not your words:")} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
+    items.push({ seq: p.seq, lines: [`${s.dim(at(p.seq))}    ${s.bold(p.label)}  ${head}`] });
+  }
+  for (const a of actions) {
+    const f = byAction.get(a.id);
+    const mark = f?.externalUpstream ? s.flag("\u25B2") : f && f.requested === "NOT_NAMED" ? s.flag("\u25B3") : " ";
+    const lines = actionLines(a, g, explanations.get(a.id), inputs, s);
+    items.push({ seq: a.preSeq, lines: [`${s.dim(at(a.preSeq))} ${mark}${lines[0].slice(1)}`, ...lines.slice(1).map((l) => `      ${l}`)] });
+  }
+  items.sort((x, y) => x.seq - y.seq);
+  return items.map((i) => `${i.lines.join("\n")}
+`).join("");
+}
+function renderWatchEnds(g, ended, s = PLAIN) {
+  const at = (seq) => localTime(g.timeUs[(seq ?? 1) - 1] ?? 0).slice(-5);
+  return ended.filter((a) => a.status !== "ok").map((a) => `${s.dim(at(a.postSeq))}   ${s.dim(pad2(`${a.preSeq}`, 4))} ${s.flag(a.status.toUpperCase())}${a.status === "denied" && a.denial ? s.dim(`  ${clip(a.denial, 100)}`) : ""}
+`).join("");
+}
 function trailDetail(e, inputs, s) {
   const head = headlineTrace(e);
   const from = head ? traceSource(head, inputs, s) : "";
@@ -5257,6 +5281,7 @@ Usage:
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
+  contrail watch [--session <id>]   tool calls as they finish, with where their values came from
   contrail prune                    apply retention now and compact the database
   contrail forget <session> | --all --yes
                                     delete one recorded session, or everything, and compact
@@ -5303,6 +5328,7 @@ ${USAGE}`);
     export: (args) => exportSession(args, flags, io),
     report: (args) => report(args, flags, io),
     statusline: () => statusline(flags, io),
+    watch: () => watch(flags, io, style),
     tripwire: () => tripwire(flags, io),
     find: (args) => find(args, flags, io, style),
     review: (args) => review(args, flags, io, style),
@@ -5742,6 +5768,44 @@ async function pruneCommand(flags, io) {
 `);
     return 0;
   });
+}
+async function watch(flags, io, s, opts = {}) {
+  const sleep = opts.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms)));
+  const seen = /* @__PURE__ */ new Set();
+  let session = null;
+  let lastEvent = -1;
+  io.out(s.dim(`Watching Claude Code in ${clip(io.cwd, 100)}. Each tool call appears as it starts; \u25B2 marks values from external content. Ctrl-C stops.
+`));
+  for (let tick = 0; opts.ticks === void 0 || tick < opts.ticks; tick++) {
+    if (tick > 0) await sleep(1e3);
+    await withStore(flags, io, ({ db, repoKey, hashToken }) => {
+      const latest = flags.session ? pickSession(db, flags.session, repoKey) : recentSessions(db, repoKey, 1)[0]?.id;
+      if (!latest) return;
+      const newest = db.get("SELECT MAX(id) AS m FROM events WHERE session_id = ?", latest)?.m ?? 0;
+      if (latest === session && newest === lastEvent) return;
+      const graph = loadGraph(db, latest, io.home, hashToken);
+      if (latest !== session) {
+        if (session === null) {
+          for (const p of graph.prompts) seen.add(`p:${p.promptId}`);
+          for (const a of graph.actions) seen.add(a.id).add(`end:${a.id}`);
+        }
+        io.out(`
+${s.bold("Session")} ${latest.slice(0, 8)}  ${s.dim(clip(graph.env.cwd, 100))}
+`);
+        session = latest;
+      }
+      lastEvent = newest;
+      const prompts = graph.prompts.filter((p) => !seen.has(`p:${p.promptId}`));
+      const actions = graph.actions.filter((a) => !seen.has(a.id));
+      const ended = graph.actions.filter((a) => seen.has(a.id) && !seen.has(`end:${a.id}`) && a.status !== "pending");
+      const explanations = new Map(actions.map((a) => [a.id, explain(a.id, graph)]));
+      const findings = actions.map((a) => assess(explanations.get(a.id), graph)).filter((f) => f !== null);
+      io.out(renderWatch(graph, prompts, actions, explanations, findings, s) + renderWatchEnds(graph, ended, s));
+      for (const p of prompts) seen.add(`p:${p.promptId}`);
+      for (const a of [...actions, ...ended]) seen.add(a.id).add(a.status === "pending" ? a.id : `end:${a.id}`);
+    });
+  }
+  return 0;
 }
 async function forget(args, flags, io) {
   const target = args[0] ?? flags.session;

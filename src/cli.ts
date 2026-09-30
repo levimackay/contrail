@@ -23,7 +23,7 @@ import { reviewBranch } from './query/review.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
 import { findTarget, parseTarget, unquote, type Target } from './query/target.ts';
 import { blameJson, noLineWriter, renderBlame, renderLineNote } from './render/blame.ts';
-import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, renderTripwire, type TraceFilter } from './render/session.ts';
+import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, renderTripwire, renderWatch, renderWatchEnds, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
 import { toOtlp } from './render/otel.ts';
@@ -32,7 +32,7 @@ import { renderWhy } from './render/why.ts';
 import { loadConfig, prune } from './store/retention.ts';
 import { migrate, SCHEMA_VERSION } from './store/schema.ts';
 import { openDb, type Db } from './store/sqlite.ts';
-import { displayPath, realPath } from './util.ts';
+import { clip, displayPath, realPath } from './util.ts';
 import { VERSION } from './version.ts';
 
 export interface Io {
@@ -105,6 +105,7 @@ Usage:
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
+  contrail watch [--session <id>]   tool calls as they finish, with where their values came from
   contrail prune                    apply retention now and compact the database
   contrail forget <session> | --all --yes
                                     delete one recorded session, or everything, and compact
@@ -151,6 +152,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     export: args => exportSession(args, flags, io),
     report: args => report(args, flags, io),
     statusline: () => statusline(flags, io),
+    watch: () => watch(flags, io, style),
     tripwire: () => tripwire(flags, io),
     find: args => find(args, flags, io, style),
     review: args => review(args, flags, io, style),
@@ -638,6 +640,49 @@ async function pruneCommand(flags: Flags, io: Io): Promise<number> {
     io.out(`removed ${sessionsRemoved} sessions (keeping ${config.retentionDays} days, up to ${config.maxDbMb} MB); database compacted\n`);
     return 0;
   });
+}
+
+/**
+ * Follows the latest session in this repository as it happens: each new prompt and each finished
+ * tool call, with where its values came from. What was recorded before it started is not
+ * repeated; a session that starts later is shown from its beginning. Runs until interrupted.
+ */
+export async function watch(flags: Flags, io: Io, s: Style, opts: { ticks?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<number> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>(done => setTimeout(done, ms)));
+  const seen = new Set<string>();
+  let session: string | null = null;
+  let lastEvent = -1;
+  io.out(s.dim(`Watching Claude Code in ${clip(io.cwd, 100)}. Each tool call appears as it starts; ▲ marks values from external content. Ctrl-C stops.\n`));
+  for (let tick = 0; opts.ticks === undefined || tick < opts.ticks; tick++) {
+    if (tick > 0) await sleep(1000);
+    await withStore(flags, io, ({ db, repoKey, hashToken }) => {
+      const latest = flags.session ? pickSession(db, flags.session as string, repoKey) : recentSessions(db, repoKey, 1)[0]?.id;
+      if (!latest) return;
+      const newest = db.get<{ m: number | null }>('SELECT MAX(id) AS m FROM events WHERE session_id = ?', latest)?.m ?? 0;
+      if (latest === session && newest === lastEvent) return;
+      const graph = loadGraph(db, latest, io.home, hashToken);
+      if (latest !== session) {
+        if (session === null) {
+          // Already recorded when watch started: not repeated.
+          for (const p of graph.prompts) seen.add(`p:${p.promptId}`);
+          for (const a of graph.actions) seen.add(a.id).add(`end:${a.id}`);
+        }
+        io.out(`\n${s.bold('Session')} ${latest.slice(0, 8)}  ${s.dim(clip(graph.env.cwd, 100))}\n`);
+        session = latest;
+      }
+      lastEvent = newest;
+      // A call is shown as it starts; a result worth knowing (failed, interrupted, denied) follows.
+      const prompts = graph.prompts.filter(p => !seen.has(`p:${p.promptId}`));
+      const actions = graph.actions.filter(a => !seen.has(a.id));
+      const ended = graph.actions.filter(a => seen.has(a.id) && !seen.has(`end:${a.id}`) && a.status !== 'pending');
+      const explanations = new Map(actions.map(a => [a.id, explain(a.id, graph)]));
+      const findings = actions.map(a => assess(explanations.get(a.id)!, graph)).filter((f): f is Finding => f !== null);
+      io.out(renderWatch(graph, prompts, actions, explanations, findings, s) + renderWatchEnds(graph, ended, s));
+      for (const p of prompts) seen.add(`p:${p.promptId}`);
+      for (const a of [...actions, ...ended]) seen.add(a.id).add(a.status === 'pending' ? a.id : `end:${a.id}`);
+    });
+  }
+  return 0;
 }
 
 /**

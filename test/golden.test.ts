@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { main, type Io } from '../src/cli.ts';
@@ -22,6 +21,8 @@ process.env.TZ = 'UTC';
 
 const GOLDEN = join(import.meta.dirname, 'fixtures', 'golden');
 const WRITE = process.env.CONTRAIL_GOLDEN_WRITE === '1';
+/** Longer than /tmp's real path plus the name mkdtemp adds, on Linux and macOS. */
+const ROOT_LENGTH = 27;
 
 interface Case {
   name: string;
@@ -29,16 +30,22 @@ interface Case {
   stdin?: string;
 }
 
+let base = '';
 let root = '';
 let demo: { repo: string; data: string; sha: string };
 let long: { cwd: string; data: string };
 
 after(() => {
-  if (root) rmSync(root, { recursive: true, force: true });
+  if (base) rmSync(base, { recursive: true, force: true });
 });
 
 before(() => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), 'contrail-golden-')));
+  // One length on every machine: reports clip long paths and commands, so a longer temporary
+  // directory (macOS's is under /private/var/folders) would clip them at another place. /tmp is
+  // short everywhere; the directory made in it is padded to the same length.
+  base = mkdtempSync(join(realpathSync('/tmp'), 'cg-'));
+  root = join(base, 'x'.repeat(Math.max(1, ROOT_LENGTH - base.length - 1)));
+  mkdirSync(root);
   demo = buildDemo(join(root, 'demo'));
   const cwd = join(root, 'long', 'ledger');
   mkdirSync(cwd, { recursive: true });

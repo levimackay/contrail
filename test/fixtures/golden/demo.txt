@@ -1184,8 +1184,8 @@ Blind spots: model knowledge and reasoning; system prompt; AGENTS.md; context in
 
 @@@@@ why commit
 exit 0
-Commit 99d5e25 on main  "fix(auth): refresh tokens before they expire"
-  DIRECT   made by Bash t7 (seq 23): [main 99d5e25] fix(auth): refresh tokens before they expire  [R1]
+Commit 99af26e on main  "fix(auth): refresh tokens before they expire"
+  DIRECT   made by Bash t7 (seq 23): [main 99af26e] fix(auth): refresh tokens before they expire  [R1]
 Requested?  NAMED "looks good, commit it"  [R8 LIKELY]
 Turn        DIRECT   ran while answering p2: "looks good, commit it"  [R1]
 
@@ -1203,7 +1203,7 @@ exit 0
 {
   "commit": {
     "branch": "main",
-    "sha": "99d5e25",
+    "sha": "99af26e",
     "subject": "fix(auth): refresh tokens before they expire"
   },
   "madeBy": {
@@ -1531,7 +1531,7 @@ p1  "Users are getting logged out after 30 minutes. Figure out why and fix it."
 p2  "looks good, commit it"
   23   SHELL   git add -A && git commit -m "fix(auth): refresh tokens before they expire"
          ↳ POSSIBLE commit ← your prompt p2 (principal)   named by you
-         → 99d5e25 on main
+         → 99af26e on main
 
 Run contrail why <path | "command"> for the full trail behind any line.
 
@@ -3336,7 +3336,7 @@ HELD: an input that held the value. USED: a call whose arguments contain it. Run
 @@@@@ review
 exit 0
 Review  main against origin/main
-  base origin/main (default: first found of origin/HEAD, origin/main, origin/master, main, master) · merge-base 3c7a73c
+  base origin/main (default: first found of origin/HEAD, origin/main, origin/master, main, master) · merge-base ad3154f
   1 commit · 5 changed files (1 not committed) · 4 with recorded agent changes
   2 sessions · 1 of 1 commits joined to the call that made them
   agent changes: writes by sessions active here since 2026-09-01 07:00 UTC, joined by path
@@ -3364,20 +3364,20 @@ Changed without being named in your words
   scripts/dev-setup.sh         ← Write w6  session 9c1e7b52 · p1
 
 Commits (newest first)
-  99d5e25  "fix(auth): refresh tokens before they expire"
+  99af26e  "fix(auth): refresh tokens before they expire"
     DIRECT   made by Bash t7 · session 4f2a91c7 · seq 23  [R1]
              turn p2: "looks good, commit it"   named by you
 
 Files with recorded agent changes
-  auth-service/src/session.ts  committed in 99d5e25
+  auth-service/src/session.ts  committed in 99af26e
     LIKELY   Edit t5 · session 4f2a91c7 · seq 15  [R7]
              turn p1: "Users are getting logged out after 30 minutes. Figure out why and fix it."   not named by you
              LIKELY auth-service/src/session.ts ← the output of Grep "shouldRefresh" (local)
-  package-lock.json  committed in 99d5e25
+  package-lock.json  committed in 99af26e
     POSSIBLE Bash t4 npm install jwt-decode · session 4f2a91c7 · seq 12 · expected, not observed  [R7]
              turn p1: "Users are getting logged out after 30 minutes. Figure out why and fix it."   not named by you
              LIKELY jwt-decode ← auth-service/README.md:13 (local)
-  package.json  committed in 99d5e25
+  package.json  committed in 99af26e
     POSSIBLE Bash t4 npm install jwt-decode · session 4f2a91c7 · seq 12 · expected, not observed  [R7]
              turn p1: "Users are getting logged out after 30 minutes. Figure out why and fix it."   not named by you
              LIKELY jwt-decode ← auth-service/README.md:13 (local)
@@ -3387,7 +3387,7 @@ Files with recorded agent changes
              LIKELY get.quickauth.example/install.sh ← WebFetch of docs.quickauth.example/cli/setup:3 (external)
 
 No recorded agent change (you, another process, or a session Contrail did not record)
-  UNKNOWN  docs/CHANGELOG.md  committed in 99d5e25
+  UNKNOWN  docs/CHANGELOG.md  committed in 99af26e
 
 LIKELY, not DIRECT: the agent wrote that path while this branch was in progress; whether that exact change is what the diff holds is not observed.
 Data provenance from Contrail's local record, not a judgment of this change. Not observable: the agent's reasons.
@@ -3403,7 +3403,7 @@ exit 0
 
 **1 commit · 5 changed files (1 not committed) · 4 with recorded agent changes · 2 sessions · 1 of 1 commits joined to the call that made them**
 
-<sub>Merge-base `3c7a73c`, base chosen by default (the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists). Agent changes: recorded writes to these paths in sessions active in this repository since 2026-09-01 07:00 UTC, joined by path.</sub>
+<sub>Merge-base `ad3154f`, base chosen by default (the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists). Agent changes: recorded writes to these paths in sessions active in this repository since 2026-09-01 07:00 UTC, joined by path.</sub>
 
 #### Values from external content in this change
 
@@ -3430,14 +3430,14 @@ Marks: ▲ a value traces to web, MCP or dependency content; △ not named by yo
 
 #### Commits
 
-- `99d5e25` `fix(auth): refresh tokens before they expire` · **DIRECT** [R1] made by Bash `t7` in session `4f2a91c7` · turn p2: `looks good, commit it` · named by you
+- `99af26e` `fix(auth): refresh tokens before they expire` · **DIRECT** [R1] made by Bash `t7` in session `4f2a91c7` · turn p2: `looks good, commit it` · named by you
 
 #### Files with recorded agent changes (4)
 
 <details>
 <summary><code>auth-service/src/session.ts</code> · LIKELY · Edit <code>t5</code> · not named by you</summary>
 
-- committed in 99d5e25
+- committed in 99af26e
 - **LIKELY** [R7] Edit `t5` in session `4f2a91c7`, seq 15 · not named by you
   - Turn p1: `Users are getting logged out after 30 minutes. Figure out why and fix it.`
   - Trail: **LIKELY** [R3] `auth-service/src/session.ts` from `the output of Grep "shouldRefresh"`, search output (local)
@@ -3447,7 +3447,7 @@ Marks: ▲ a value traces to web, MCP or dependency content; △ not named by yo
 <details>
 <summary><code>package-lock.json</code> · POSSIBLE · Bash <code>t4</code> · not named by you</summary>
 
-- committed in 99d5e25
+- committed in 99af26e
 - **POSSIBLE** [R7] Bash `t4` `npm install jwt-decode` in session `4f2a91c7`, seq 12, expected, not observed · not named by you
   - Turn p1: `Users are getting logged out after 30 minutes. Figure out why and fix it.`
   - Trail: **LIKELY** [R3] `jwt-decode` from `auth-service/README.md:13`, repo file (local)
@@ -3457,7 +3457,7 @@ Marks: ▲ a value traces to web, MCP or dependency content; △ not named by yo
 <details>
 <summary><code>package.json</code> · POSSIBLE · Bash <code>t4</code> · not named by you</summary>
 
-- committed in 99d5e25
+- committed in 99af26e
 - **POSSIBLE** [R7] Bash `t4` `npm install jwt-decode` in session `4f2a91c7`, seq 12, expected, not observed · not named by you
   - Turn p1: `Users are getting logged out after 30 minutes. Figure out why and fix it.`
   - Trail: **LIKELY** [R3] `jwt-decode` from `auth-service/README.md:13`, repo file (local)
@@ -3478,7 +3478,7 @@ Marks: ▲ a value traces to web, MCP or dependency content; △ not named by yo
 
 You, another process, or a session Contrail did not record.
 
-- `docs/CHANGELOG.md` · committed in 99d5e25
+- `docs/CHANGELOG.md` · committed in 99af26e
 
 ---
 <sub>LIKELY, not DIRECT: the agent wrote that path while this branch was in progress; whether that exact change is what the diff holds is not observed. DIRECT is used only for joins Claude Code recorded, such as git's own commit line in a command's output. Text matches are LIKELY at best. The agent's own words are never evidence.</sub>
@@ -3491,13 +3491,13 @@ You, another process, or a session Contrail did not record.
 exit 0
 {
   "head": {
-    "sha": "99d5e25d4ccd12314e806f8be590f7e7cbb090aa",
+    "sha": "99af26e651d0f4e44d9d545178080b8e72c90969",
     "branch": "main"
   },
   "base": {
     "name": "origin/main",
     "given": false,
-    "mergeBase": "3c7a73c9ab05abc1d51b5868f4b881094fa3a87d"
+    "mergeBase": "ad3154f58749495edb61ab3c6f5bac83a47420fa"
   },
   "searchedSince": "2026-09-01T07:00:00.000Z",
   "counts": {
@@ -3639,7 +3639,7 @@ exit 0
   ],
   "commits": [
     {
-      "sha": "99d5e25d4ccd12314e806f8be590f7e7cbb090aa",
+      "sha": "99af26e651d0f4e44d9d545178080b8e72c90969",
       "subject": "fix(auth): refresh tokens before they expire",
       "merge": false,
       "madeBy": {
@@ -3655,7 +3655,7 @@ exit 0
     {
       "path": "auth-service/src/session.ts",
       "commits": [
-        "99d5e25d4ccd12314e806f8be590f7e7cbb090aa"
+        "99af26e651d0f4e44d9d545178080b8e72c90969"
       ],
       "uncommitted": false,
       "grade": "LIKELY",
@@ -3690,7 +3690,7 @@ exit 0
     {
       "path": "docs/CHANGELOG.md",
       "commits": [
-        "99d5e25d4ccd12314e806f8be590f7e7cbb090aa"
+        "99af26e651d0f4e44d9d545178080b8e72c90969"
       ],
       "uncommitted": false,
       "grade": "UNKNOWN",
@@ -3701,7 +3701,7 @@ exit 0
     {
       "path": "package-lock.json",
       "commits": [
-        "99d5e25d4ccd12314e806f8be590f7e7cbb090aa"
+        "99af26e651d0f4e44d9d545178080b8e72c90969"
       ],
       "uncommitted": false,
       "grade": "POSSIBLE",
@@ -3736,7 +3736,7 @@ exit 0
     {
       "path": "package.json",
       "commits": [
-        "99d5e25d4ccd12314e806f8be590f7e7cbb090aa"
+        "99af26e651d0f4e44d9d545178080b8e72c90969"
       ],
       "uncommitted": false,
       "grade": "POSSIBLE",
@@ -4173,7 +4173,7 @@ Turn        <span class="direct b">DIRECT</span>   ran while answering p1: &quot
 
 @@@@@ export --otel
 exit 0
-{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}},{"key":"contrail.version","value":{"stringValue":"0.4.0"}}]},"scopeSpans":[{"scope":{"name":"contrail","version":"0.4.0"},"spans":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"c09f159e21a2f55e","name":"claude-code session 4f2a91c7","kind":1,"startTimeUnixNano":"1788253207000000000","endTimeUnixNano":"1788253382000000000","attributes":[{"key":"session.id","value":{"stringValue":"4f2a91c7-3d0e-4b8a-9f61-2c7d0a1e5b33"}},{"key":"contrail.cwd","value":{"stringValue":"<tmp>/demo/acme-api"}},{"key":"contrail.source","value":{"stringValue":"hooks"}},{"key":"contrail.turns","value":{"intValue":"2"}},{"key":"contrail.tool_calls","value":{"intValue":"7"}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"f0819cf398d149a4","parentSpanId":"c09f159e21a2f55e","name":"turn p1","kind":1,"startTimeUnixNano":"1788253214000000000","endTimeUnixNano":"1788253347000000000","attributes":[{"key":"contrail.prompt.label","value":{"stringValue":"p1"}},{"key":"contrail.prompt.from","value":{"stringValue":"you"}},{"key":"contrail.prompt.text","value":{"stringValue":"Users are getting logged out after 30 minutes. Figure out why and fix it."}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"3d37bb87fcd3ccd4","parentSpanId":"c09f159e21a2f55e","name":"turn p2","kind":1,"startTimeUnixNano":"1788253354000000000","endTimeUnixNano":"1788253382000000000","attributes":[{"key":"contrail.prompt.label","value":{"stringValue":"p2"}},{"key":"contrail.prompt.from","value":{"stringValue":"you"}},{"key":"contrail.prompt.text","value":{"stringValue":"looks good, commit it"}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7f5056760f5d5d57","parentSpanId":"f0819cf398d149a4","name":"Read auth-service/README.md","kind":1,"startTimeUnixNano":"1788253221000000000","endTimeUnixNano":"1788253228000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Read"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t1"}},{"key":"contrail.seq","value":{"intValue":"3"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"auth-service"}},{"key":"contrail.source","value":{"stringValue":"CLAUDE.md"}},{"key":"contrail.origin","value":{"stringValue":"instructions"}},{"key":"contrail.trust","value":{"stringValue":"local"}}],"events":[],"links":[]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"6921644d33fc4641","parentSpanId":"f0819cf398d149a4","name":"Grep \"shouldRefresh\" in auth-service","kind":1,"startTimeUnixNano":"1788253242000000000","endTimeUnixNano":"1788253249000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Grep"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t2"}},{"key":"contrail.seq","value":{"intValue":"6"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"auth-service"}},{"key":"contrail.source","value":{"stringValue":"CLAUDE.md"}},{"key":"contrail.origin","value":{"stringValue":"instructions"}},{"key":"contrail.trust","value":{"stringValue":"local"}}],"events":[],"links":[]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"74e595edcc7ed330","parentSpanId":"f0819cf398d149a4","name":"Read auth-service/src/session.ts","kind":1,"startTimeUnixNano":"1788253263000000000","endTimeUnixNano":"1788253270000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Read"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t3"}},{"key":"contrail.seq","value":{"intValue":"9"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.source","value":{"stringValue":"the output of Grep \"shouldRefresh\""}},{"key":"contrail.origin","value":{"stringValue":"search"}},{"key":"contrail.trust","value":{"stringValue":"local"}}],"events":[],"links":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"6921644d33fc4641","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.source","value":{"stringValue":"the output of Grep \"shouldRefresh\""}},{"key":"contrail.trust","value":{"stringValue":"local"}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7f5056760f5d5d57","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"POSSIBLE"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"session.ts"}},{"key":"contrail.source","value":{"stringValue":"auth-service/README.md"}},{"key":"contrail.trust","value":{"stringValue":"local"}}]}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"3bc178fadd6e66b3","parentSpanId":"f0819cf398d149a4","name":"Bash npm install jwt-decode","kind":1,"startTimeUnixNano":"1788253284000000000","endTimeUnixNano":"1788253291000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Bash"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t4"}},{"key":"contrail.seq","value":{"intValue":"12"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"jwt-decode"}},{"key":"contrail.source","value":{"stringValue":"auth-service/README.md"}},{"key":"contrail.origin","value":{"stringValue":"file"}},{"key":"contrail.trust","value":{"stringValue":"local"}},{"key":"contrail.sensitive","value":{"stringValue":"install"}},{"key":"contrail.external_upstream","value":{"boolValue":false}}],"events":[{"timeUnixNano":"1788253291000000000","name":"contrail.effect","attributes":[{"key":"contrail.effect.kind","value":{"stringValue":"file"}},{"key":"contrail.effect.target","value":{"stringValue":"package.json"}},{"key":"contrail.effect.evidence","value":{"stringValue":"expected"}}]},{"timeUnixNano":"1788253291000000000","name":"contrail.effect","attributes":[{"key":"contrail.effect.kind","value":{"stringValue":"file"}},{"key":"contrail.effect.target","value":{"stringValue":"package-lock.json"}},{"key":"contrail.effect.evidence","value":{"stringValue":"expected"}}]}],"links":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7f5056760f5d5d57","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"jwt-decode"}},{"key":"contrail.source","value":{"stringValue":"auth-service/README.md"}},{"key":"contrail.trust","value":{"stringValue":"local"}}]}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7ecd9d1761de3579","parentSpanId":"f0819cf398d149a4","name":"Edit auth-service/src/session.ts","kind":1,"startTimeUnixNano":"1788253305000000000","endTimeUnixNano":"1788253312000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Edit"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t5"}},{"key":"contrail.seq","value":{"intValue":"15"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.source","value":{"stringValue":"the output of Grep \"shouldRefresh\""}},{"key":"contrail.origin","value":{"stringValue":"search"}},{"key":"contrail.trust","value":{"stringValue":"local"}}],"events":[{"timeUnixNano":"1788253312000000000","name":"contrail.effect","attributes":[{"key":"contrail.effect.kind","value":{"stringValue":"file"}},{"key":"contrail.effect.target","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.effect.evidence","value":{"stringValue":"filePath"}}]}],"links":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"6921644d33fc4641","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.source","value":{"stringValue":"the output of Grep \"shouldRefresh\""}},{"key":"contrail.trust","value":{"stringValue":"local"}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7f5056760f5d5d57","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"jwt-decode"}},{"key":"contrail.source","value":{"stringValue":"auth-service/README.md"}},{"key":"contrail.trust","value":{"stringValue":"local"}}]}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"3ac38a71ee402edf","parentSpanId":"f0819cf398d149a4","name":"Bash npm test","kind":1,"startTimeUnixNano":"1788253326000000000","endTimeUnixNano":"1788253333000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Bash"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t6"}},{"key":"contrail.seq","value":{"intValue":"18"}},{"key":"contrail.requested","value":{"stringValue":"NOTHING_TO_MATCH"}},{"key":"contrail.grade","value":{"stringValue":"UNKNOWN"}}],"events":[],"links":[]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"94cce507684e8ca8","parentSpanId":"3d37bb87fcd3ccd4","name":"Bash git add -A && git commit -m \"fix(auth): refresh tokens before they expire\"","kind":1,"startTimeUnixNano":"1788253361000000000","endTimeUnixNano":"1788253368000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Bash"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t7"}},{"key":"contrail.seq","value":{"intValue":"23"}},{"key":"contrail.requested","value":{"stringValue":"NAMED"}},{"key":"contrail.grade","value":{"stringValue":"POSSIBLE"}},{"key":"contrail.value","value":{"stringValue":"commit"}},{"key":"contrail.source","value":{"stringValue":"your prompt p2"}},{"key":"contrail.origin","value":{"stringValue":"prompt"}},{"key":"contrail.trust","value":{"stringValue":"principal"}}],"events":[{"timeUnixNano":"1788253368000000000","name":"contrail.effect","attributes":[{"key":"contrail.effect.kind","value":{"stringValue":"commit"}},{"key":"contrail.effect.target","value":{"stringValue":"99d5e25 on main"}},{"key":"contrail.effect.evidence","value":{"stringValue":"commit_stdout"}}]}],"links":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"3d37bb87fcd3ccd4","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"POSSIBLE"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"commit"}},{"key":"contrail.source","value":{"stringValue":"your prompt p2"}},{"key":"contrail.trust","value":{"stringValue":"principal"}}]}]}]}]}]}
+{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}},{"key":"contrail.version","value":{"stringValue":"0.4.0"}}]},"scopeSpans":[{"scope":{"name":"contrail","version":"0.4.0"},"spans":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"c09f159e21a2f55e","name":"claude-code session 4f2a91c7","kind":1,"startTimeUnixNano":"1788253207000000000","endTimeUnixNano":"1788253382000000000","attributes":[{"key":"session.id","value":{"stringValue":"4f2a91c7-3d0e-4b8a-9f61-2c7d0a1e5b33"}},{"key":"contrail.cwd","value":{"stringValue":"<tmp>/demo/acme-api"}},{"key":"contrail.source","value":{"stringValue":"hooks"}},{"key":"contrail.turns","value":{"intValue":"2"}},{"key":"contrail.tool_calls","value":{"intValue":"7"}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"f0819cf398d149a4","parentSpanId":"c09f159e21a2f55e","name":"turn p1","kind":1,"startTimeUnixNano":"1788253214000000000","endTimeUnixNano":"1788253347000000000","attributes":[{"key":"contrail.prompt.label","value":{"stringValue":"p1"}},{"key":"contrail.prompt.from","value":{"stringValue":"you"}},{"key":"contrail.prompt.text","value":{"stringValue":"Users are getting logged out after 30 minutes. Figure out why and fix it."}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"3d37bb87fcd3ccd4","parentSpanId":"c09f159e21a2f55e","name":"turn p2","kind":1,"startTimeUnixNano":"1788253354000000000","endTimeUnixNano":"1788253382000000000","attributes":[{"key":"contrail.prompt.label","value":{"stringValue":"p2"}},{"key":"contrail.prompt.from","value":{"stringValue":"you"}},{"key":"contrail.prompt.text","value":{"stringValue":"looks good, commit it"}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7f5056760f5d5d57","parentSpanId":"f0819cf398d149a4","name":"Read auth-service/README.md","kind":1,"startTimeUnixNano":"1788253221000000000","endTimeUnixNano":"1788253228000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Read"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t1"}},{"key":"contrail.seq","value":{"intValue":"3"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"auth-service"}},{"key":"contrail.source","value":{"stringValue":"CLAUDE.md"}},{"key":"contrail.origin","value":{"stringValue":"instructions"}},{"key":"contrail.trust","value":{"stringValue":"local"}}],"events":[],"links":[]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"6921644d33fc4641","parentSpanId":"f0819cf398d149a4","name":"Grep \"shouldRefresh\" in auth-service","kind":1,"startTimeUnixNano":"1788253242000000000","endTimeUnixNano":"1788253249000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Grep"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t2"}},{"key":"contrail.seq","value":{"intValue":"6"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"auth-service"}},{"key":"contrail.source","value":{"stringValue":"CLAUDE.md"}},{"key":"contrail.origin","value":{"stringValue":"instructions"}},{"key":"contrail.trust","value":{"stringValue":"local"}}],"events":[],"links":[]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"74e595edcc7ed330","parentSpanId":"f0819cf398d149a4","name":"Read auth-service/src/session.ts","kind":1,"startTimeUnixNano":"1788253263000000000","endTimeUnixNano":"1788253270000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Read"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t3"}},{"key":"contrail.seq","value":{"intValue":"9"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.source","value":{"stringValue":"the output of Grep \"shouldRefresh\""}},{"key":"contrail.origin","value":{"stringValue":"search"}},{"key":"contrail.trust","value":{"stringValue":"local"}}],"events":[],"links":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"6921644d33fc4641","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.source","value":{"stringValue":"the output of Grep \"shouldRefresh\""}},{"key":"contrail.trust","value":{"stringValue":"local"}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7f5056760f5d5d57","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"POSSIBLE"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"session.ts"}},{"key":"contrail.source","value":{"stringValue":"auth-service/README.md"}},{"key":"contrail.trust","value":{"stringValue":"local"}}]}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"3bc178fadd6e66b3","parentSpanId":"f0819cf398d149a4","name":"Bash npm install jwt-decode","kind":1,"startTimeUnixNano":"1788253284000000000","endTimeUnixNano":"1788253291000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Bash"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t4"}},{"key":"contrail.seq","value":{"intValue":"12"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"jwt-decode"}},{"key":"contrail.source","value":{"stringValue":"auth-service/README.md"}},{"key":"contrail.origin","value":{"stringValue":"file"}},{"key":"contrail.trust","value":{"stringValue":"local"}},{"key":"contrail.sensitive","value":{"stringValue":"install"}},{"key":"contrail.external_upstream","value":{"boolValue":false}}],"events":[{"timeUnixNano":"1788253291000000000","name":"contrail.effect","attributes":[{"key":"contrail.effect.kind","value":{"stringValue":"file"}},{"key":"contrail.effect.target","value":{"stringValue":"package.json"}},{"key":"contrail.effect.evidence","value":{"stringValue":"expected"}}]},{"timeUnixNano":"1788253291000000000","name":"contrail.effect","attributes":[{"key":"contrail.effect.kind","value":{"stringValue":"file"}},{"key":"contrail.effect.target","value":{"stringValue":"package-lock.json"}},{"key":"contrail.effect.evidence","value":{"stringValue":"expected"}}]}],"links":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7f5056760f5d5d57","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"jwt-decode"}},{"key":"contrail.source","value":{"stringValue":"auth-service/README.md"}},{"key":"contrail.trust","value":{"stringValue":"local"}}]}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7ecd9d1761de3579","parentSpanId":"f0819cf398d149a4","name":"Edit auth-service/src/session.ts","kind":1,"startTimeUnixNano":"1788253305000000000","endTimeUnixNano":"1788253312000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Edit"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t5"}},{"key":"contrail.seq","value":{"intValue":"15"}},{"key":"contrail.requested","value":{"stringValue":"NOT_NAMED"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.value","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.source","value":{"stringValue":"the output of Grep \"shouldRefresh\""}},{"key":"contrail.origin","value":{"stringValue":"search"}},{"key":"contrail.trust","value":{"stringValue":"local"}}],"events":[{"timeUnixNano":"1788253312000000000","name":"contrail.effect","attributes":[{"key":"contrail.effect.kind","value":{"stringValue":"file"}},{"key":"contrail.effect.target","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.effect.evidence","value":{"stringValue":"filePath"}}]}],"links":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"6921644d33fc4641","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"auth-service/src/session.ts"}},{"key":"contrail.source","value":{"stringValue":"the output of Grep \"shouldRefresh\""}},{"key":"contrail.trust","value":{"stringValue":"local"}}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"7f5056760f5d5d57","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"LIKELY"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"jwt-decode"}},{"key":"contrail.source","value":{"stringValue":"auth-service/README.md"}},{"key":"contrail.trust","value":{"stringValue":"local"}}]}]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"3ac38a71ee402edf","parentSpanId":"f0819cf398d149a4","name":"Bash npm test","kind":1,"startTimeUnixNano":"1788253326000000000","endTimeUnixNano":"1788253333000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Bash"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t6"}},{"key":"contrail.seq","value":{"intValue":"18"}},{"key":"contrail.requested","value":{"stringValue":"NOTHING_TO_MATCH"}},{"key":"contrail.grade","value":{"stringValue":"UNKNOWN"}}],"events":[],"links":[]},{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"94cce507684e8ca8","parentSpanId":"3d37bb87fcd3ccd4","name":"Bash git add -A && git commit -m \"fix(auth): refresh tokens before they expire\"","kind":1,"startTimeUnixNano":"1788253361000000000","endTimeUnixNano":"1788253368000000000","attributes":[{"key":"contrail.tool","value":{"stringValue":"Bash"}},{"key":"contrail.tool_use_id","value":{"stringValue":"t7"}},{"key":"contrail.seq","value":{"intValue":"23"}},{"key":"contrail.requested","value":{"stringValue":"NAMED"}},{"key":"contrail.grade","value":{"stringValue":"POSSIBLE"}},{"key":"contrail.value","value":{"stringValue":"commit"}},{"key":"contrail.source","value":{"stringValue":"your prompt p2"}},{"key":"contrail.origin","value":{"stringValue":"prompt"}},{"key":"contrail.trust","value":{"stringValue":"principal"}}],"events":[{"timeUnixNano":"1788253368000000000","name":"contrail.effect","attributes":[{"key":"contrail.effect.kind","value":{"stringValue":"commit"}},{"key":"contrail.effect.target","value":{"stringValue":"99af26e on main"}},{"key":"contrail.effect.evidence","value":{"stringValue":"commit_stdout"}}]}],"links":[{"traceId":"3201caa9c70c35b17f4538fca6895121","spanId":"3d37bb87fcd3ccd4","attributes":[{"key":"contrail.link","value":{"stringValue":"value_from"}},{"key":"contrail.grade","value":{"stringValue":"POSSIBLE"}},{"key":"contrail.rule","value":{"stringValue":"R3"}},{"key":"contrail.value","value":{"stringValue":"commit"}},{"key":"contrail.source","value":{"stringValue":"your prompt p2"}},{"key":"contrail.trust","value":{"stringValue":"principal"}}]}]}]}]}]}
 
 @@@@@ statusline auth
 exit 0

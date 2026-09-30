@@ -75,7 +75,7 @@ const git = (cwd: string, ...args: string[]) => gitAt(undefined, cwd, ...args);
 
 /** git with the commit dated at `sec` when given. */
 const gitAt = (sec: number | undefined, cwd: string, ...args: string[]) =>
-  execFileSync('git', ['-c', 'user.name=Demo', '-c', 'user.email=demo@example.com', '-C', cwd, ...args], {
+  execFileSync('git', ['-c', 'user.name=Demo', '-c', 'user.email=demo@example.com', '-c', 'commit.gpgsign=false', '-C', cwd, ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
     ...(sec ? { env: { ...process.env, GIT_AUTHOR_DATE: `@${sec} +0000`, GIT_COMMITTER_DATE: `@${sec} +0000` } } : {}),

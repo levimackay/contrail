@@ -1,4 +1,4 @@
-import { blameBlocks } from '../engine/blame.ts';
+import { blameBlocks, type LineBlame } from '../engine/blame.ts';
 import { bestPerGroup } from '../engine/explain.ts';
 import { findMention } from '../engine/text.ts';
 import { headlineTrace } from '../engine/tree.ts';
@@ -72,7 +72,7 @@ export function renderBlame(b: Blame, shown: string, s: Style = PLAIN): string {
 
   out.push('');
   const example = b.calls[0] ? `, as in ${s.bold(`contrail why ${callId(b.calls[0].id)}`)}` : '';
-  out.push(s.dim(`Run contrail why <call id>${example} for the full trail behind a call.`));
+  out.push(s.dim(`Run contrail why <call id>${example}, or contrail why <file>:<line>, for the full trail behind a call.`));
   for (const line of BLAME_FOOTER) out.push(s.dim(line));
   for (const line of BLIND_SPOTS) out.push(s.dim(line));
   return `${out.join('\n')}\n`;
@@ -131,6 +131,28 @@ export function codeLine(raw: string, max: number): string {
 }
 
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+const lineRef = (t: { shown: string; start: number; end: number }) => `${clip(t.shown, 100)}:${t.start}${t.end === t.start ? '' : `-${t.end}`}`;
+
+/** The line above a why report reached through file:line: which call last wrote it, and how that was matched. */
+export function renderLineNote(t: { shown: string; start: number; end: number }, line: LineBlame, call: BlameCall, s: Style = PLAIN): string {
+  const which = t.end === t.start ? lineRef(t) : `${lineRef(t)}: line ${line.line}`;
+  const how =
+    line.match === 'block'
+      ? 'a blank or bracket-only line between lines this call wrote'
+      : !call.observed
+        ? "matched by the line's text; the shell write was expected, not reported"
+        : line.unambiguous
+          ? "matched by the line's text"
+          : `matched by the line's text, which occurs ${line.inFile} times in the file; this call wrote it ${line.byCall === 1 ? 'once' : `${line.byCall} times`}`;
+  return `${s.bold(which)} was last written by ${s.bold(callId(call.id))} ${s.dim(`(session ${call.sessionId.slice(0, 8)}, ${localTime(call.us)})`)}; ${s.grade(line.grade!, 0).trim()} — ${how} ${s.dim('[R10]')}`;
+}
+
+/** When no recorded agent write holds the line: say so, and where to look instead. */
+export function noLineWriter(t: { shown: string; start: number; end: number }): string {
+  const what = t.end === t.start ? `line ${lineRef(t)}` : `any of lines ${lineRef(t)}`;
+  return `No recorded agent write holds ${what} as it is now (it may be yours, pre-existing, or changed since). Run contrail blame ${clip(t.shown, 100)} to see which lines are attributed.`;
+}
 
 /** The same, as data: every line, the blocks, and each credited call with its turn and headline trail. */
 export function blameJson(b: Blame): unknown {

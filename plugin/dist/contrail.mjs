@@ -2729,15 +2729,24 @@ import { existsSync as existsSync2, realpathSync as realpathSync3 } from "node:f
 import { resolve as resolve6 } from "node:path";
 var SHORT_CALL = /^([A-Za-z0-9_-]{1,40})(?:…|\.\.\.)([A-Za-z0-9_-]{1,40})$/;
 var FULL_CALL = /^toolu_[A-Za-z0-9_-]{8,200}$/;
+var LINE_SUFFIX = /^(\S{1,4096}):(\d{1,9})(?:-(\d{1,9}))?$/;
+var PATH_LIKE = /\/|\.[A-Za-z0-9]{1,8}$/;
 function parseTarget(args, cwd) {
   const text = unquote(args.join(" ").trim());
-  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | call id | last>');
+  if (!text) throw new ContrailError('Usage: contrail why <path | path:line | "command text" | call id | last>');
   if (text === "last") return { kind: "last" };
   const abs = resolve6(cwd, text);
   const short = SHORT_CALL.exec(text);
   if (short && !existsSync2(abs)) return { kind: "call", prefix: short[1], suffix: short[2], shown: text };
   if (FULL_CALL.test(text) && !existsSync2(abs)) return { kind: "call", prefix: text, suffix: "", shown: text };
-  if (!/\s/.test(text) && (existsSync2(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) return { kind: "path", path: abs, shown: text };
+  const line = LINE_SUFFIX.exec(text);
+  if (line && !existsSync2(abs) && (existsSync2(resolve6(cwd, line[1])) || PATH_LIKE.test(line[1]))) {
+    const start = Number(line[2]);
+    const end = line[3] ? Number(line[3]) : start;
+    if (start < 1 || end < start) throw new ContrailError(`"${text}" is not a line range: lines start at 1, and a range runs low to high.`);
+    return { kind: "line", path: resolve6(cwd, line[1]), shown: line[1], start, end };
+  }
+  if (!/\s/.test(text) && (existsSync2(abs) || PATH_LIKE.test(text))) return { kind: "path", path: abs, shown: text };
   return { kind: "command", text };
 }
 function unquote(s) {
@@ -3344,7 +3353,7 @@ function renderBlame(b, shown, s = PLAIN) {
   }
   out.push("");
   const example = b.calls[0] ? `, as in ${s.bold(`contrail why ${callId(b.calls[0].id)}`)}` : "";
-  out.push(s.dim(`Run contrail why <call id>${example} for the full trail behind a call.`));
+  out.push(s.dim(`Run contrail why <call id>${example}, or contrail why <file>:<line>, for the full trail behind a call.`));
   for (const line of BLAME_FOOTER) out.push(s.dim(line));
   for (const line of BLIND_SPOTS) out.push(s.dim(line));
   return `${out.join("\n")}
@@ -3384,6 +3393,16 @@ function codeLine(raw, max) {
   return chars.length <= max ? safe : `${chars.slice(0, max - 1).join("")}\u2026`;
 }
 var plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+var lineRef = (t) => `${clip(t.shown, 100)}:${t.start}${t.end === t.start ? "" : `-${t.end}`}`;
+function renderLineNote(t, line, call, s = PLAIN) {
+  const which = t.end === t.start ? lineRef(t) : `${lineRef(t)}: line ${line.line}`;
+  const how = line.match === "block" ? "a blank or bracket-only line between lines this call wrote" : !call.observed ? "matched by the line's text; the shell write was expected, not reported" : line.unambiguous ? "matched by the line's text" : `matched by the line's text, which occurs ${line.inFile} times in the file; this call wrote it ${line.byCall === 1 ? "once" : `${line.byCall} times`}`;
+  return `${s.bold(which)} was last written by ${s.bold(callId(call.id))} ${s.dim(`(session ${call.sessionId.slice(0, 8)}, ${localTime(call.us)})`)}; ${s.grade(line.grade, 0).trim()} \u2014 ${how} ${s.dim("[R10]")}`;
+}
+function noLineWriter(t) {
+  const what = t.end === t.start ? `line ${lineRef(t)}` : `any of lines ${lineRef(t)}`;
+  return `No recorded agent write holds ${what} as it is now (it may be yours, pre-existing, or changed since). Run contrail blame ${clip(t.shown, 100)} to see which lines are attributed.`;
+}
 function blameJson(b) {
   return {
     file: b.path,
@@ -3979,6 +3998,7 @@ Usage:
   contrail why <path>               the trail behind the latest agent change to a file
   contrail why "<command text>"     the trail behind the latest shell command containing the text
   contrail why <call id>            the trail behind one tool call, as reports print its id
+  contrail why <file>:<line>        the trail behind the recorded call that last wrote that line (or <start>-<end>)
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
   contrail blame <file> [--session <id>]
@@ -4095,6 +4115,7 @@ async function why(args, flags, io, s) {
   if (args[0] === "commit") return whyCommit(args.slice(1), flags, io, s);
   const target = parseTarget(flags.stdin ? [readStdin(io)] : args, io.cwd);
   if (target.kind === "command" && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(" ").slice(1), flags, io, s);
+  if (target.kind === "line") return whyLine(target, flags, io, s);
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findTarget(db, target, repoKey);
     const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
@@ -4141,6 +4162,28 @@ async function whyCommit(args, flags, io, s) {
 `);
     } else {
       io.out(renderCommit({ commit: hit.commit, action, explanation, files: joined, via: hit.via, commitSec: hit.commitSec }, graph, s));
+    }
+    return 0;
+  });
+}
+async function whyLine(target, flags, io, s) {
+  return withStore(flags, io, ({ db, hashToken }) => {
+    const b = blameFile(db, target.path, target.shown);
+    if (target.start > b.lines.length) {
+      throw new ContrailError(`${target.shown} has ${b.lines.length} line${b.lines.length === 1 ? "" : "s"} now; there is no line ${target.start}.`);
+    }
+    const hit = b.lines.slice(target.start - 1, target.end).find((l) => l.call);
+    if (!hit) throw new ContrailError(noLineWriter(target));
+    const call = b.calls.find((c) => c.id === hit.call);
+    const graph = loadGraph(db, call.sessionId, io.home, hashToken);
+    const explanation = explain(call.id, graph);
+    if (flags.json) {
+      const line = { file: b.path, line: hit.line, call: call.id, grade: hit.grade, rule: "R10", match: hit.match, unambiguous: hit.unambiguous, writers: hit.writers, inFile: hit.inFile, byCall: hit.byCall };
+      io.out(`${JSON.stringify({ line, ...explanation }, null, 2)}
+`);
+    } else {
+      io.out(`${renderLineNote(target, hit, call, s)}
+${renderWhy(explanation, graph, void 0, s)}`);
     }
     return 0;
   });

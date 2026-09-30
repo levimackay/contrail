@@ -133,12 +133,41 @@ test('a heredoc the shell reported writing is LIKELY; one only expected from the
   const r = await run(repo, ['blame', 'notes.md', '--data', data]);
   assert.match(r.out, /\nLIKELY {3}Bash heredoc h1 .*\n[\s\S]*1 │ alpha line\n/);
   assert.match(r.out, /\nPOSSIBLE Bash heredoc h2 .*\n {9}p1 .*\n {9}the write was expected from the command, not reported by Claude Code\n/);
+  const line = await run(repo, ['why', 'notes.md:2', '--data', data]);
+  assert.match(line.out, /^notes\.md:2 was last written by h2 .*; POSSIBLE — matched by the line's text; the shell write was expected, not reported \[R10\]\nBash {2}cat >> /);
 });
 
-test('blame takes the file on stdin, as the skill passes it, quotes and all', async () => {
+test('why <file>:<line> explains the call that last wrote that line; a range takes the first attributed line', async () => {
   const { repo, data } = twoSessions();
+  const one = await run(repo, ['why', 'src/limits.ts:2', '--data', data]);
+  assert.equal(one.err, '');
+  assert.match(one.out, /^src\/limits\.ts:2 was last written by toolu…Edit1 \(session bbbb2222, [^)]+\); LIKELY — matched by the line's text \[R10\]\nEdit {2}src\/limits\.ts\n/);
+  assert.match(one.out, /Weakest link on this trail/);
+  const range = await run(repo, ['why', 'src/limits.ts:1-9', '--data', data]);
+  assert.match(range.out, /^src\/limits\.ts:1-9: line 2 was last written by toolu…Edit1/, 'line 1 is yours; line 2 is the first attributed');
+  const yours = await run(repo, ['why', 'src/limits.ts:1', '--data', data]);
+  assert.equal(yours.code, 1);
+  assert.match(yours.err, /^contrail: No recorded agent write holds line src\/limits\.ts:1 as it is now \(it may be yours, pre-existing, or changed since\)\. Run contrail blame src\/limits\.ts to see which lines are attributed\./);
+  const block = await run(repo, ['why', 'src/limits.ts:4', '--data', data]);
+  assert.match(block.out, /^src\/limits\.ts:4 was last written by toolu…Write .*LIKELY — a blank or bracket-only line between lines this call wrote \[R10\]\nWrite {2}src\/limits\.ts/);
+  const json = JSON.parse((await run(repo, ['why', 'src/limits.ts:3', '--json', '--data', data])).out);
+  assert.deepEqual([json.line.line, json.line.call, json.line.grade, json.line.rule], [3, 'toolu_01AAAAAAAAAAAAAAAAAAWrite', 'LIKELY', 'R10']);
+  assert.equal(json.action.id, 'toolu_01AAAAAAAAAAAAAAAAAAWrite');
+  assert.match((await run(repo, ['why', 'src/limits.ts:40', '--data', data])).err, /src\/limits\.ts has 7 lines now; there is no line 40\./);
+});
+
+test('why takes path:line on stdin, as the skill passes it, and a file really named x:12 stays a path', async () => {
+  const { repo, data } = twoSessions();
+  const skill = await run(repo, ['why', '--stdin', '--data', data], 'src/limits.ts:2\n');
+  assert.match(skill.out, /^src\/limits\.ts:2 was last written by toolu…Edit1/);
   const viaBlame = await run(repo, ['blame', '--stdin', '--data', data], '"src/limits.ts"\n');
   assert.match(viaBlame.out, /^Blame src\/limits\.ts/);
+  const { parseTarget } = await import('../src/query/target.ts');
+  writeFileSync(join(repo, 'odd:12'), 'x\n');
+  assert.equal(parseTarget(['odd:12'], repo).kind, 'path');
+  assert.deepEqual(parseTarget(['src/limits.ts:4-6'], repo), { kind: 'line', path: join(repo, 'src/limits.ts'), shown: 'src/limits.ts', start: 4, end: 6 });
+  assert.equal(parseTarget(['localhost:8080'], repo).kind, 'command', 'not a file, not path-shaped');
+  assert.throws(() => parseTarget(['src/limits.ts:5-2'], repo), /not a line range/);
 });
 
 test('recorded and on-disk text cannot put terminal escapes or backticks into blame', async () => {
@@ -157,6 +186,8 @@ test('blame never uses causal or accusatory wording of its own', async () => {
   const { repo, data } = twoSessions();
   const outputs = [
     (await run(repo, ['blame', 'src/limits.ts', '--data', data])).out,
+    (await run(repo, ['why', 'src/limits.ts:2', '--data', data])).out,
+    (await run(repo, ['why', 'src/limits.ts:1', '--data', data])).err,
     (await run(repo, ['blame', 'README.md', '--data', data])).err,
   ];
   for (const out of outputs) {

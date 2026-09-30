@@ -18,8 +18,8 @@ import { resolveDataDir } from './paths.ts';
 import { blameFile, explainCalls } from './query/blame.ts';
 import { commitFiles, findCommit } from './query/commit.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
-import { findTarget, parseTarget, unquote } from './query/target.ts';
-import { blameJson, renderBlame } from './render/blame.ts';
+import { findTarget, parseTarget, unquote, type Target } from './query/target.ts';
+import { blameJson, noLineWriter, renderBlame, renderLineNote } from './render/blame.ts';
 import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
@@ -70,6 +70,7 @@ Usage:
   contrail why <path>               the trail behind the latest agent change to a file
   contrail why "<command text>"     the trail behind the latest shell command containing the text
   contrail why <call id>            the trail behind one tool call, as reports print its id
+  contrail why <file>:<line>        the trail behind the recorded call that last wrote that line (or <start>-<end>)
   contrail why last                 the latest side-effecting action in this repository
   contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
   contrail blame <file> [--session <id>]
@@ -192,6 +193,7 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
   if (args[0] === 'commit') return whyCommit(args.slice(1), flags, io, s);
   const target = parseTarget(flags.stdin ? [readStdin(io)] : args, io.cwd);
   if (target.kind === 'command' && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(' ').slice(1), flags, io, s);
+  if (target.kind === 'line') return whyLine(target, flags, io, s);
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
     const hit = findTarget(db, target, repoKey);
     const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
@@ -246,6 +248,28 @@ async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promis
       io.out(`${JSON.stringify({ commit: hit.commit, madeBy, requested: explanation.requested, files: joined }, null, 2)}\n`);
     } else {
       io.out(renderCommit({ commit: hit.commit, action, explanation, files: joined, via: hit.via, commitSec: hit.commitSec }, graph, s));
+    }
+    return 0;
+  });
+}
+
+/** why file.ts:42: the recorded call that last wrote that line, found as blame finds it, then that call's report. */
+async function whyLine(target: Extract<Target, { kind: 'line' }>, flags: Flags, io: Io, s: Style): Promise<number> {
+  return withStore(flags, io, ({ db, hashToken }) => {
+    const b = blameFile(db, target.path, target.shown);
+    if (target.start > b.lines.length) {
+      throw new ContrailError(`${target.shown} has ${b.lines.length} line${b.lines.length === 1 ? '' : 's'} now; there is no line ${target.start}.`);
+    }
+    const hit = b.lines.slice(target.start - 1, target.end).find(l => l.call);
+    if (!hit) throw new ContrailError(noLineWriter(target));
+    const call = b.calls.find(c => c.id === hit.call)!;
+    const graph = loadGraph(db, call.sessionId, io.home, hashToken);
+    const explanation = explain(call.id, graph);
+    if (flags.json) {
+      const line = { file: b.path, line: hit.line, call: call.id, grade: hit.grade, rule: 'R10', match: hit.match, unambiguous: hit.unambiguous, writers: hit.writers, inFile: hit.inFile, byCall: hit.byCall };
+      io.out(`${JSON.stringify({ line, ...explanation }, null, 2)}\n`);
+    } else {
+      io.out(`${renderLineNote(target, hit, call, s)}\n${renderWhy(explanation, graph, undefined, s)}`);
     }
     return 0;
   });

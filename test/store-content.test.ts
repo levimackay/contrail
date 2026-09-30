@@ -28,7 +28,7 @@ test('store_content: false keeps every grade and line number while storing none 
   const hashed = buildDemo(mkdtempSync(join(tmpdir(), 'contrail-hashed-')));
   writeFileSync(join(hashed.data, 'config.json'), '{"store_content": false}');
 
-  for (const argv of [['risks'], ['why', 'npm install jwt-decode'], ['trace', '--session', '9c1e', '--tree'], ['why', 'auth-service/src/session.ts'], ['find', 'jwt-decode'], ['blame', 'auth-service/src/session.ts']]) {
+  for (const argv of [['risks'], ['why', 'npm install jwt-decode'], ['trace', '--session', '9c1e', '--tree'], ['why', 'auth-service/src/session.ts'], ['find', 'jwt-decode'], ['blame', 'auth-service/src/session.ts'], ['why', 'auth-service/src/session.ts:3']]) {
     assert.equal(shape(await run(hashed, argv)).replaceAll(hashed.repo, plain.repo), shape(await run(plain, argv)), argv.join(' '));
   }
   const risks = await run(hashed, ['risks']);

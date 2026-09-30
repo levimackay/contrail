@@ -7,6 +7,8 @@ export type Target =
   | { kind: 'path'; path: string; shown: string }
   | { kind: 'command'; text: string }
   | { kind: 'call'; prefix: string; suffix: string; shown: string }
+  /** a line or range of a file as it is now: file.ts:42 or file.ts:40-48 */
+  | { kind: 'line'; path: string; shown: string; start: number; end: number }
   | { kind: 'last' };
 
 export interface Hit {
@@ -23,16 +25,30 @@ export interface Hit {
 const SHORT_CALL = /^([A-Za-z0-9_-]{1,40})(?:…|\.\.\.)([A-Za-z0-9_-]{1,40})$/;
 const FULL_CALL = /^toolu_[A-Za-z0-9_-]{8,200}$/;
 
-/** `last`, a call id, an existing or path-looking argument, or else text to find in a shell command. */
+/** file.ts:42 or file.ts:40-48: a path, then a line or a range. */
+const LINE_SUFFIX = /^(\S{1,4096}):(\d{1,9})(?:-(\d{1,9}))?$/;
+const PATH_LIKE = /\/|\.[A-Za-z0-9]{1,8}$/;
+
+/**
+ * `last`, a call id, an existing or path-looking argument, a path with a line (file.ts:42), or
+ * else text to find in a shell command. A file whose name really ends in :42 stays a path.
+ */
 export function parseTarget(args: string[], cwd: string): Target {
   const text = unquote(args.join(' ').trim());
-  if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | call id | last>');
+  if (!text) throw new ContrailError('Usage: contrail why <path | path:line | "command text" | call id | last>');
   if (text === 'last') return { kind: 'last' };
   const abs = resolve(cwd, text);
   const short = SHORT_CALL.exec(text);
   if (short && !existsSync(abs)) return { kind: 'call', prefix: short[1]!, suffix: short[2]!, shown: text };
   if (FULL_CALL.test(text) && !existsSync(abs)) return { kind: 'call', prefix: text, suffix: '', shown: text };
-  if (!/\s/.test(text) && (existsSync(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) return { kind: 'path', path: abs, shown: text };
+  const line = LINE_SUFFIX.exec(text);
+  if (line && !existsSync(abs) && (existsSync(resolve(cwd, line[1]!)) || PATH_LIKE.test(line[1]!))) {
+    const start = Number(line[2]);
+    const end = line[3] ? Number(line[3]) : start;
+    if (start < 1 || end < start) throw new ContrailError(`"${text}" is not a line range: lines start at 1, and a range runs low to high.`);
+    return { kind: 'line', path: resolve(cwd, line[1]!), shown: line[1]!, start, end };
+  }
+  if (!/\s/.test(text) && (existsSync(abs) || PATH_LIKE.test(text))) return { kind: 'path', path: abs, shown: text };
   return { kind: 'command', text };
 }
 
@@ -48,7 +64,7 @@ const WRITE_OR_EXTERNAL = `(tool_name IN ('Edit', 'MultiEdit', 'Write', 'Noteboo
 const COMMAND = `COALESCE(json_extract(payload, '$.tool_input.command'), '')`;
 const NOT_CONTRAIL = `NOT (${COMMAND} LIKE '%bin/contrail%' OR ${COMMAND} LIKE 'contrail %')`;
 
-export function findTarget(db: Db, target: Target, repoKey: string): Hit {
+export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, repoKey: string): Hit {
   let rows: Array<{ sessionId: string; toolUseId: string }>;
 
   if (target.kind === 'path') {

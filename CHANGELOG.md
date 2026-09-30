@@ -14,6 +14,7 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ### Added
 
+- `contrail import`: brings in sessions from before Contrail was installed, rebuilt from Claude Code's own transcripts through the same redaction path. Every report marks them as reconstructed, not recorded live, and lists what a transcript lacks. Sessions recorded live are never touched, running it again stores nothing new, and first-run messages point to it.
 - `contrail watch`: a live feed for a second terminal. Each tool call appears as it starts, with where its values came from and `▲` when they came from external content, followed by a line if it fails or is denied.
 - A new sensitive kind, `persistence`: a write to something that runs again later, such as shell startup files, git hooks, a crontab, `~/.ssh/authorized_keys`, and Claude Code's own settings, hooks, MCP config and `CLAUDE.md`. `risks` lists it and the tripwire watches for it, so an injected instruction that plants itself for later is flagged. Reading these files does not count.
 - Calls that auto mode denies are recorded. Auto mode skips PreToolUse for a call it refuses, so until now the attempt left no trace. `why` shows it as denied with Claude Code's reason and traces its values like any other call, and `risks`, `trace`, `review` and the HTML report list it. On a Claude Code version without the `PermissionDenied` event, that one hook entry is ignored and nothing else changes.

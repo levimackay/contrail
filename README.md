@@ -40,7 +40,7 @@ Inside Claude Code:
 /plugin install contrail@contrail
 ```
 
-Pick "Install for you (user scope)" when asked. Contrail is active at once and records from the next tool call. From a terminal, the same is `claude plugin marketplace add levimackay/contrail` then `claude plugin install contrail@contrail`.
+Pick "Install for you (user scope)" when asked. Contrail is active at once and records from the next tool call. Had sessions before you installed it? Run `contrail import` in the repository: it rebuilds them from Claude Code's own transcripts, and every report marks them as reconstructed. From a terminal, the same is `claude plugin marketplace add levimackay/contrail` then `claude plugin install contrail@contrail`.
 
 That is all the setup there is. From then on:
 
@@ -116,6 +116,7 @@ What it gives you instead:
 | [`contrail sessions`](#contrail-sessions) | Recent sessions at a glance |
 | [`contrail export [<session> \| last] [--otel]`](#export-to-opentelemetry) | A session's recorded (redacted) events as JSON, or as OpenTelemetry traces |
 | [`contrail report [<session>] [-o file.html]`](#contrail-report) | A session as one self-contained HTML page |
+| [`contrail import`](#contrail-import) | Sessions from before Contrail was installed, rebuilt from Claude Code's transcripts |
 | [`contrail watch`](#contrail-watch) | A live feed in a second terminal: each tool call as it starts, with where its values came from |
 | [`contrail statusline`](#status-line) | One line for Claude Code's status bar |
 | `contrail doctor` | Checks the install, prints the launcher path, and times the capture hook |
@@ -193,6 +194,20 @@ You never named `jwt-decode`. The only place it appeared in the agent's context 
 Every line names the rule that produced it (`[R3]`), so a grade can always be traced to a stated condition.
 
 </details>
+
+### `contrail import`
+
+Brings in sessions from before Contrail was installed, rebuilt from Claude Code's own transcripts (`~/.claude/projects`, or `$CLAUDE_CONFIG_DIR/projects`).
+
+```text
+contrail import [--since <2026-09-01 | 30d>] [--project <dir> | --all] [--dry-run] [--json]
+```
+
+- **Whose sessions.** By default this repository's, in any of its worktrees or subdirectories. `--project <dir>` takes another repository or one transcripts folder; `--all` takes every project.
+- **Same path as recording.** Events are redacted, capped and (with `store_content: false`) hashed exactly as the hooks' events are.
+- **Never mixed, never duplicated.** A session Contrail recorded live is never touched, and running import again stores nothing new. `--dry-run` writes nothing.
+- **Honest about its source.** Every report marks an imported session as reconstructed from Claude Code's transcript, not recorded live. It also lists what a transcript lacks among its blind spots: instruction files loaded after the session started, and the order the calls of one batch ran in. A subagent's transcript keeps no `bashEditDiff`, so its shell effects are "expected, not observed".
+- **Same grades.** A call's turn is DIRECT only through the prompt id recorded on its result, joined by the call's id; a call with no result has no turn. Text matches still top out at LIKELY. In live checks, sessions recorded both ways got the same grades, sources and quotes.
 
 ### `contrail watch`
 
@@ -520,7 +535,7 @@ A **conduit** is text the agent wrote. It is never an origin: Contrail follows t
 - **Raw web pages.** WebFetch hands the model a smaller model's extraction of the page. Contrail records that text and the URL, and labels it as such.
 - **`@`-mentioned files, AGENTS.md, and the text a slash command or skill expands to**, including a skill's `!` shell output. No hook carries these. Contrail lists `@`-mentions and slash commands in your prompts as blind spots.
 - **The system prompt**, and content other hooks rewrote.
-- **Anything before Contrail was installed.**
+- **Sessions before Contrail was installed**, except through Claude Code's transcripts: `contrail import` rebuilds them with fewer links than a live record, and every report says so.
 
 Reports say so themselves: every one ends with its blind spots, and UNKNOWN results print how many inputs were searched.
 
@@ -632,7 +647,7 @@ The trade-offs:
 - Queries need Node 22.13+ or Bun. With an older Node, or neither, Contrail keeps recording and each query says which runtime it found and what to install.
 - If you set `CLAUDE_CONFIG_DIR`, Contrail looks for its data there.
 
-Contrail has no history before it is installed. To uninstall, run `/plugin uninstall contrail@contrail` in Claude Code; it asks whether to delete the recorded data. From a terminal, `claude plugin uninstall contrail@contrail` deletes it unless you add `--keep-data`.
+Contrail records from the moment it is installed; `contrail import` brings in earlier sessions from Claude Code's transcripts. To uninstall, run `/plugin uninstall contrail@contrail` in Claude Code; it asks whether to delete the recorded data. From a terminal, `claude plugin uninstall contrail@contrail` deletes it unless you add `--keep-data`.
 
 ## FAQ
 

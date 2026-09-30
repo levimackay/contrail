@@ -1644,17 +1644,23 @@ function redactPrivateKeys(s) {
 var RULES = [
   { id: "aws-access-key", re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
   { id: "github-token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g },
-  { id: "gitlab-token", re: /\bglpat-[A-Za-z0-9_-]{20,64}/g },
+  { id: "gitlab-token", re: /\bgl(?:pat|dt|ptt|rt|cbt|imt|agent|soat|ffct|oas)-[A-Za-z0-9_.-]{20,128}/g },
   { id: "npm-token", re: /\bnpm_[A-Za-z0-9]{36}\b/g },
+  { id: "pypi-token", re: /\bpypi-AgE[A-Za-z0-9_-]{50,1024}/g },
+  { id: "rubygems-token", re: /\brubygems_[a-f0-9]{48}\b/g },
   { id: "huggingface-token", re: /\bhf_[A-Za-z0-9]{30,64}\b/g },
   { id: "anthropic-key", re: /\bsk-ant-[A-Za-z0-9_-]{20,256}/g },
   {
     id: "openai-key",
     re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,256}/g,
-    // Real keys mix digits and capitals; a kebab-case CSS class does not.
-    replace: (m) => /\d/.test(m) && /[A-Z]/.test(m) ? tag("openai-key") : m
+    // A project, service or admin key is always one; a bare sk- key mixes digits and capitals, and a kebab-case CSS class does not.
+    replace: (m) => /^sk-(?:proj|svcacct|admin)-/.test(m) || /\d/.test(m) && /[A-Z]/.test(m) ? tag("openai-key") : m
   },
-  { id: "slack-token", re: /\bxox[abposr]-[A-Za-z0-9-]{10,256}/g },
+  { id: "xai-key", re: /\bxai-[A-Za-z0-9]{40,128}\b/g },
+  { id: "groq-key", re: /\bgsk_[A-Za-z0-9]{48,64}\b/g },
+  { id: "perplexity-key", re: /\bpplx-[A-Za-z0-9]{40,64}\b/g },
+  { id: "replicate-token", re: /\br8_[A-Za-z0-9]{30,64}\b/g },
+  { id: "slack-token", re: /\b(?:xox(?:[abposre]|e\.xox[bp])-|xapp-\d-)[A-Za-z0-9-]{10,256}/g },
   {
     id: "webhook-url",
     re: /https:\/\/(?:hooks\.slack\.com\/services|(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks)\/[A-Za-z0-9/_-]{8,256}/g
@@ -1663,6 +1669,26 @@ var RULES = [
   { id: "stripe-webhook-secret", re: /\bwhsec_[A-Za-z0-9]{24,256}/g },
   { id: "sendgrid-key", re: /\bSG\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{16,128}/g },
   { id: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{35}/g },
+  { id: "google-oauth-token", re: /\bya29\.[A-Za-z0-9_-]{20,4096}/g },
+  { id: "google-oauth-secret", re: /\bGOCSPX-[A-Za-z0-9_-]{20,64}/g },
+  {
+    id: "vault-token",
+    re: /\bhv[sbr]\.[A-Za-z0-9_-]{20,1024}/g,
+    replace: (m) => /\d/.test(m) && /[A-Z]/.test(m) ? tag("vault-token") : m
+  },
+  { id: "digitalocean-token", re: /\bdo[opr]_v1_[a-f0-9]{64}\b/g },
+  { id: "shopify-token", re: /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/g },
+  { id: "linear-key", re: /\blin_api_[A-Za-z0-9]{40}\b/g },
+  { id: "postman-key", re: /\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}\b/g },
+  { id: "sentry-token", re: /\bsntry[su]_[A-Za-z0-9+/=_-]{40,1024}/g },
+  { id: "databricks-token", re: /\bdapi[a-f0-9]{32}(?:-\d)?\b/g },
+  { id: "doppler-token", re: /\bdp\.(?:st|sa|ct|pt|scim|audit)\.[A-Za-z0-9_.-]{40,128}/g },
+  { id: "supabase-key", re: /\b(?:sbp_[a-f0-9]{40}\b|sb_secret_[A-Za-z0-9_-]{20,128})/g },
+  { id: "tailscale-key", re: /\btskey-[a-z]{1,16}-[A-Za-z0-9]{8,64}-[A-Za-z0-9]{16,128}/g },
+  { id: "age-secret-key", re: /\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b/g },
+  { id: "terraform-token", re: /\b[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_=-]{60,128}/g },
+  { id: "onepassword-token", re: /\bops_eyJ[A-Za-z0-9+/=_-]{50,8192}/g },
+  { id: "azure-client-secret", re: /(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.-]{3}\dQ~[A-Za-z0-9_~.-]{31,34}(?![A-Za-z0-9_~.-])/g },
   { id: "jwt", re: /\beyJ[A-Za-z0-9_-]{8,8192}\.eyJ[A-Za-z0-9_-]{8,8192}\.[A-Za-z0-9_-]{8,8192}/g },
   { id: "azure-sas", re: /([?&]sig=)[A-Za-z0-9%+/=]{16,512}/g, replace: (_m, prefix) => `${prefix}${tag("azure-sas")}` },
   {

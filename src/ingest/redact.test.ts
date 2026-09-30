@@ -183,3 +183,49 @@ test('an unterminated private key inside JSON text, with escaped newlines, loses
   assert.match(out, /\[REDACTED:private-key\]/);
   for (const line of body) assert.ok(!out.includes(line), line);
 });
+
+// Token formats with a distinctive prefix. Built at runtime; no literal token appears here.
+const TOKENS: Array<[string, string]> = [
+  ['slack-token', `xapp-1-A${repeat('0', 10)}-${repeat('1', 13)}-${repeat('ab', 20)}`],
+  ['slack-token', `xoxe-1-${repeat('My0x', 8)}`],
+  ['slack-token', `xoxe.xoxp-1-${repeat('My0x', 8)}`],
+  ['google-oauth-token', `ya29.a0Af${repeat('H6sM', 10)}`],
+  ['google-oauth-secret', `GOCSPX-${repeat('aB3d', 7)}`],
+  ['vault-token', `hvs.CAESI${repeat('Jl9U', 20)}`],
+  ['vault-token', `hvb.AAAAAQ${repeat('Jx9Y', 20)}`],
+  ['openai-key', `sk-proj-${repeat('abc0', 12)}`],
+  ['pypi-token', `pypi-AgEIcHlwaS5vcmc${repeat('Ab9_', 16)}`],
+  ['rubygems-token', `rubygems_${repeat('a1b2', 12)}`],
+  ['xai-key', `xai-${repeat('Ab9x', 20)}`],
+  ['groq-key', `gsk_${repeat('Ab9x', 13)}`],
+  ['perplexity-key', `pplx-${repeat('Ab9x', 12)}`],
+  ['replicate-token', `r8_${repeat('Ab9', 12)}x`],
+  ['digitalocean-token', `dop_v1_${repeat('a1', 32)}`],
+  ['shopify-token', `shpat_${repeat('a1', 16)}`],
+  ['linear-key', `lin_api_${repeat('Ab9x', 10)}`],
+  ['postman-key', `PMAK-${repeat('a1', 12)}-${repeat('b2', 17)}`],
+  ['sentry-token', `sntrys_eyJ${repeat('pYXQ', 12)}`],
+  ['databricks-token', `dapi${repeat('a1', 16)}`],
+  ['doppler-token', `dp.st.prd.${repeat('Ab9x', 11)}`],
+  ['supabase-key', `sbp_${repeat('a1', 20)}`],
+  ['tailscale-key', `tskey-auth-k${repeat('Ab9', 4)}-${repeat('Ab9x', 8)}`],
+  ['age-secret-key', `AGE-SECRET-KEY-1${repeat('QZ9', 19)}Q`],
+  ['terraform-token', `${repeat('Ab9x', 3)}Ab.atlasv1.${repeat('Ab9x', 16)}`],
+  ['onepassword-token', `ops_eyJ${repeat('hbGc', 16)}`],
+  ['azure-client-secret', `abc1Q~${repeat('Ab9x', 8)}`],
+  ['gitlab-token', `glrt-${repeat('Ab9x', 6)}`],
+];
+for (const [rule, text] of TOKENS) {
+  test(`redacts ${rule}: ${text.slice(0, 10)}`, () => assert.equal(redactString(`key ${text} end`), `key [REDACTED:${rule}] end`));
+}
+
+test('token patterns redact hostile 256 KB input in linear time', () => {
+  const inputs = [
+    fill('xoxb-'), fill('xapp-1-'), fill('ya29.'), fill('hvs.a'), fill('pypi-AgE'), fill('GOCSPX-'), fill('aaaQ~'), fill('aaa1Q~b'),
+    fill('sntrys_'), fill('dp.st.'), fill('tskey-a-'), fill('ops_eyJ'), fill('AAAAAAAAAAAAAA.atlasv1.'), fill('PMAK-a-'), fill('sk-proj-'),
+  ];
+  for (const s of inputs) {
+    const ms = fastest(() => redactString(s));
+    assert.ok(ms < 200, `${s.slice(0, 12)}: ${Math.round(ms)} ms`);
+  }
+});

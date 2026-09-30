@@ -2769,7 +2769,7 @@ function renderTrace(g, explanations, filter, s = PLAIN) {
   out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(
     s.dim(
-      `${g.prompts.length} turn${g.prompts.length === 1 ? "" : "s"} \xB7 ${g.actions.length} tool calls \xB7 ${g.effects.filter((e) => e.kind === "file").length} file effects` + (filter ? ` \xB7 showing --${filter}` : "")
+      `${counted(g.prompts.length, "turn")} \xB7 ${counted(g.actions.length, "tool call")} \xB7 ${counted(g.effects.filter((e) => e.kind === "file").length, "file effect")}` + (filter ? ` \xB7 showing --${filter}` : "")
     )
   );
   const items = [];
@@ -2936,7 +2936,7 @@ function highlightFlag(row, s) {
 function renderRisks(findings, scanned, g, s = PLAIN) {
   const out = [];
   out.push(
-    `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${scanned.actions} tool calls in ${scanned.sessions} session${scanned.sessions === 1 ? "" : "s"})`)}`
+    `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${counted(scanned.actions, "tool call")} in ${counted(scanned.sessions, "session")})`)}`
   );
   if (!scanned.actions) {
     out.push("", "  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.");
@@ -3021,6 +3021,7 @@ function renderCommit(r, g, s = PLAIN) {
 `;
 }
 var pad2 = (text, width) => text.padEnd(width);
+var counted = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 function localTime(us) {
   const d = new Date(Math.floor(us / 1e3));
   const two = (n) => String(n).padStart(2, "0");

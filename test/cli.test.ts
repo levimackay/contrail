@@ -160,6 +160,12 @@ test('a session with prompts and no tool calls is labeled with its own id, not a
   assert.equal(JSON.parse((await run(['trace', '--json', '--data', data])).out).session, 'abcdef12-session');
 });
 
+test('counts read as English: one tool call, two turns', async () => {
+  const data = spoolFrom(session([d.prompt('read it', 'p1'), ...call('toolu_01One', 'Read', { file_path: '/r/a.txt' }, 'a')]));
+  assert.match((await run(['trace', '--data', data])).out, /\n1 turn · 1 tool call · 0 file effects\n/);
+  assert.match((await run(['risks', '--data', data])).out, /^Sensitive actions \(0 of 1 tool call in 1 session\)\n/);
+});
+
 test('from a skill, an error is the output and the exit is 0, so Claude Code shows it as the report', async () => {
   const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
   const plain = await run(['why', 'last', '--data', data]);

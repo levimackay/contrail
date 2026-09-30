@@ -52,7 +52,7 @@ export function renderTrace(
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(
     s.dim(
-      `${g.prompts.length} turn${g.prompts.length === 1 ? '' : 's'} · ${g.actions.length} tool calls · ${g.effects.filter(e => e.kind === 'file').length} file effects` +
+      `${counted(g.prompts.length, 'turn')} · ${counted(g.actions.length, 'tool call')} · ${counted(g.effects.filter(e => e.kind === 'file').length, 'file effect')}` +
         (filter ? ` · showing --${filter}` : ''),
     ),
   );
@@ -241,7 +241,7 @@ function highlightFlag(row: string, s: Style): string {
 export function renderRisks(findings: Finding[], scanned: { actions: number; sessions: number }, g: Map<string, Graph>, s: Style = PLAIN): string {
   const out: string[] = [];
   out.push(
-    `${s.bold('Sensitive actions')} ${s.dim(`(${findings.length} of ${scanned.actions} tool calls in ${scanned.sessions} session${scanned.sessions === 1 ? '' : 's'})`)}`,
+    `${s.bold('Sensitive actions')} ${s.dim(`(${findings.length} of ${counted(scanned.actions, 'tool call')} in ${counted(scanned.sessions, 'session')})`)}`,
   );
   if (!scanned.actions) {
     out.push('', '  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.');
@@ -336,6 +336,9 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
 }
 
 const pad = (text: string, width: number) => text.padEnd(width);
+
+/** "1 tool call", "2 tool calls" */
+const counted = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 function localTime(us: number): string {
   const d = new Date(Math.floor(us / 1000));

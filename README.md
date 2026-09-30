@@ -700,7 +700,7 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 - [x] `contrail why` on anything: nothing, a file, `file:line`, a command, a commit, a call id or a value; every report leads with an In short answer
 - [x] `contrail blame` and `/contrail:blame`: each line of a file with the recorded agent call that last wrote it
 - [x] `contrail review` and `/contrail:review`: the recorded agent work behind a branch, as terminal output or pull request markdown
-- [x] Hardening from a pre-launch audit: linear name matching, unread spool FIFOs and symlinks, sanitized control and bidi characters, spoof-proof commit joins, safe report writes
+- [x] Hardening from a pre-launch audit: much broader secret redaction, linear name matching, unread spool FIFOs and symlinks, sanitized control and bidi characters, commit joins that an echo cannot spoof, safe report writes
 
 **Planned**
 

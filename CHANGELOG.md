@@ -23,8 +23,25 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 - The capture hook starts one process fewer per event.
 - Report wording no longer says "the agent chose this", which claimed more than is observable.
 
+### Security
+
+- Redaction covers far more before anything is stored:
+  - credential file contents: `.netrc` and `.pgpass` passwords, Docker `auth`, kubeconfig client keys and certificates, Azure `AccountKey` and npm `_auth`
+  - secrets passed as separate command-line arguments (`--token X`, `--api-key X`, `aws configure set …`, `docker login -p`, `sshpass -p`, `twine -p`, `redis-cli -a`)
+  - environment names judged by their words (ENCRYPTION_KEY, SIGNING_KEY, APP_KEY, RAILS_MASTER_KEY, TWILIO_AUTH)
+  - quoted, comma-holding, typed and name/value-pair notations
+  - URL passwords containing `/`
+  - many more token formats (Slack, Google, Vault, OpenAI, GitLab, PyPI and others)
+- Values are no longer excused as code just for containing a dot, brackets or only digits.
+- There are fewer false positives on ordinary code (`PWD=`, `password: string`, type annotations).
+- A secret straddling the 256 KB storage cap is redacted whole before the string is cut.
+- An event nested thousands of levels deep is stored with its session and call, redacted, instead of as an unparsed failure.
+- Parse errors no longer quote the start of the payload they could not parse.
+- 256 KB of repeated private-key headers is redacted in milliseconds instead of over a second, and every redaction pattern is now bounded, which a test enforces.
+
 ### Fixed
 
+- Two processes creating a new database at the same moment no longer fail one of them with "database is locked".
 - Skills work when the plugin's path contains a space, such as a macOS home folder named after a person.
 - A commit line printed by a command counts only if that command was running when git dated the commit, so echoing someone else's commit line is no longer DIRECT.
 - A FIFO or symlink in the spool is removed unread. A FIFO made every command wait, and a symlink would have been read and stored.

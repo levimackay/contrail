@@ -7,11 +7,12 @@
 payload=$(cat) || exit 0
 
 # Start a runtime only for calls that could be sensitive; contrail tripwire decides the rest.
+# Each pattern is a substring, so *env* also covers .env and printenv, and *ncat* covers truncate.
 case $payload in
-  *curl* | *wget* | *ssh* | *scp* | *rsync* | *" nc "* | *ncat* | *sftp* | *ftp* | *"git push"* | *"gh api"*) ;;
+  *curl* | *wget* | *ssh* | *scp* | *rsync* | *" nc "* | *ncat* | *ftp* | *"git push"* | *"gh api"*) ;;
   *.aws* | *.netrc* | *.npmrc* | *.pypirc* | *.docker* | *.kube* | *.gnupg* | *id_rsa* | *id_ed25519* | *id_ecdsa*) ;;
-  *.env* | *printenv* | *env* | *keychain* | *credentials* | *secret* | *.git-credentials* | *gcloud* | *.azure* | *.pgpass* | *.my.cnf* | *.vault-token* | *.boto*) ;;
-  *install* | *" add "* | *npx* | *"go get"* | *"rm -"* | *"git reset"* | *"git clean"* | *chmod* | *eval* | *" dd "* | *mkfs* | *drop* | *truncate*) ;;
+  *env* | *keychain* | *credentials* | *secret* | *gcloud* | *.azure* | *.pgpass* | *.my.cnf* | *.vault-token* | *.boto*) ;;
+  *install* | *" add "* | *npx* | *"go get"* | *"rm -"* | *"git reset"* | *"git clean"* | *chmod* | *eval* | *" dd "* | *mkfs* | *drop*) ;;
   *) exit 0 ;;
 esac
 

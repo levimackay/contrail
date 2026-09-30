@@ -543,13 +543,24 @@ function findNormalized(hay, needle) {
   }
   return -1;
 }
+var QUOTE_FROM_START = 60;
+var QUOTE_LEAD = 30;
 function lineOf(text, index) {
-  const lineIndex = normalize(text).slice(0, Math.max(0, index)).split("\n").length - 1;
+  const before = normalize(text).slice(0, Math.max(0, index));
+  const lineIndex = before.split("\n").length - 1;
+  const column = before.length - (before.lastIndexOf("\n") + 1);
   const lines = text.split("\n");
   const raw = lines[lineIndex] ?? "";
   const prefixed = READ_PREFIX.exec(raw);
-  if (prefixed) return { line: Number(prefixed[1]), text: prefixed[2].trim() };
-  return { line: lines.length > 1 ? lineIndex + 1 : null, text: raw.trim() };
+  const body = prefixed ? prefixed[2] : raw;
+  const line = prefixed ? Number(prefixed[1]) : lines.length > 1 ? lineIndex + 1 : null;
+  return { line, text: around(body, column - (raw.length - body.length)) };
+}
+function around(body, column) {
+  const text = body.trim();
+  const at = column - (body.length - body.trimStart().length);
+  if (at <= QUOTE_FROM_START) return text;
+  return `\u2026${text.slice(at - QUOTE_LEAD).trimStart()}`;
 }
 
 // src/engine/tokens.ts

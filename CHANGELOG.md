@@ -4,6 +4,14 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+### Fixed
+
+- Quotes show the value on long lines. A value found far into a long line, such as WebSearch's one-line list of links or a one-line JSON tool result, is now quoted from just before it. Before, the quote started at the beginning of the line and clipping hid the value.
+
+### Changed
+
+- MCP and WebSearch tracing is verified in real sessions. It is also tested against the payload shapes Claude Code 2.1.285 records: bare content-block lists, `structuredContent` results as text, error results as `PostToolUseFailure`, embedded resources, and WebSearch's results-and-summary shape.
+
 ### Added
 
 - A new sensitive kind, `persistence`: a write to something that runs again later, such as shell startup files, git hooks, a crontab, `~/.ssh/authorized_keys`, and Claude Code's own settings, hooks, MCP config and `CLAUDE.md`. `risks` lists it and the tripwire watches for it, so an injected instruction that plants itself for later is flagged. Reading these files does not count.

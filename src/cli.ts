@@ -1,31 +1,38 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { commitContains } from './engine/effects.ts';
 import { explain } from './engine/explain.ts';
-import { assess, rankFindings, sensitivity, type Finding } from './engine/risks.ts';
+import { assess, findingsFor, rankFindings, sensitivity, type Finding } from './engine/risks.ts';
 import { findValue } from './engine/find.ts';
 import { trailForest, type TreeNode, type TreeRoot } from './engine/tree.ts';
 import type { Explanation, Graph } from './engine/types.ts';
 import { ContrailError } from './errors.ts';
+import { buildGraph } from './graph/build.ts';
 import { contentHmac } from './ingest/content.ts';
-import { ingest } from './ingest/ingest.ts';
+import { redactString } from './ingest/redact.ts';
+import { ingest, stored } from './ingest/ingest.ts';
 import { makeRepoKeyOf } from './ingest/repo.ts';
 import { resolveDataDir } from './paths.ts';
-import { commitFiles, findCommit } from './query/commit.ts';
+import { blameFile, explainCalls } from './query/blame.ts';
+import { commitFiles, findCommit, isCommit } from './query/commit.ts';
+import { reviewBranch } from './query/review.ts';
 import { loadGraph, loadRows, pickSession, recentSessions } from './query/sessions.ts';
-import { findTarget, parseTarget } from './query/target.ts';
-import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, type TraceFilter } from './render/session.ts';
+import { findTarget, parseTarget, unquote, type Target } from './query/target.ts';
+import { blameJson, noLineWriter, renderBlame, renderLineNote } from './render/blame.ts';
+import { EXPLAINED, matchesFilter, renderCommit, renderFind, renderRisks, renderSessions, renderStatusline, renderTrace, renderTree, renderTripwire, type TraceFilter } from './render/session.ts';
 import { COLOR, PLAIN, styleFor, type Style } from './render/style.ts';
 import { renderReport } from './render/html.ts';
 import { toOtlp } from './render/otel.ts';
+import { renderReview, renderReviewMarkdown, reviewJson } from './render/review.ts';
 import { renderWhy } from './render/why.ts';
 import { loadConfig, prune } from './store/retention.ts';
 import { migrate, SCHEMA_VERSION } from './store/schema.ts';
 import { openDb, type Db } from './store/sqlite.ts';
+import { displayPath, realPath } from './util.ts';
 import { VERSION } from './version.ts';
 
 export interface Io {
@@ -52,8 +59,10 @@ const OPTIONS = {
   all: { type: 'boolean' },
   tree: { type: 'boolean' },
   otel: { type: 'boolean' },
+  markdown: { type: 'boolean' },
   output: { type: 'string', short: 'o' },
   'from-hook': { type: 'boolean' },
+  'from-skill': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
   ...Object.fromEntries(FILTERS.map(f => [f, { type: 'boolean' }])),
@@ -64,11 +73,17 @@ type Flags = Partial<Record<keyof typeof OPTIONS | TraceFilter, string | boolean
 export const USAGE = `contrail ${VERSION}: the observable trail behind Claude Code actions
 
 Usage:
-  contrail why <path>               the trail behind the latest agent change to a file
-  contrail why "<command text>"     the trail behind the latest shell command containing the text
-  contrail why <call id>            the trail behind one tool call, as reports print its id
-  contrail why last                 the latest side-effecting action in this repository
-  contrail why commit <sha>         what a commit contains, joined to the agent changes behind it
+  contrail why [<anything>]         the trail behind whatever you point at:
+                                      nothing          the last thing the agent did
+                                      src/app.ts       the latest agent change to that file
+                                      src/app.ts:42    the call that last wrote that line (or 40-48)
+                                      "npm install x"  the latest shell command containing it
+                                      <commit sha>     what the commit holds, joined to agent changes
+                                      toolu…ALhq1      one tool call, by the id reports print
+                                      jwt-decode       the latest call that used that value
+  contrail blame <file> [--session <id>]
+                                    each line of a file as it is now, with the recorded agent call
+                                    that last wrote it, its turn and its trail
   contrail trace [--session <id>]   a session as a timeline, each side effect with its source
         [--writes | --shell | --network | --mcp | --subagents | --instructions | --tree]
                                     --tree: each action under the call whose output held its value
@@ -81,17 +96,22 @@ Usage:
   contrail report [<session> | last] [-o file.html]
                                     a session as one self-contained HTML page
   contrail find "<value>" [--all]   every recorded input that held a value, and every call that used it
+  contrail review [<base>] [--markdown] [-o review.md]
+                                    this branch's commits and uncommitted changes, joined to the agent
+                                    calls behind them (base: the first of origin/HEAD, origin/main,
+                                    origin/master, main, master); --markdown for a pull request,
+                                    -o to save that markdown and print this view
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          machine-readable output (why, trace, risks, sessions)
+  --json          machine-readable output (why, blame, trace, risks, sessions, find, review)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
-  --stdin         read the why target from standard input (used by the /contrail:why skill)
+  --stdin         read the why, find, blame or review argument from standard input (the skills use it)
   -h, --help      show this help
   -v, --version   show the version
 `;
@@ -121,13 +141,16 @@ export async function main(argv: string[], io: Io): Promise<number> {
   const style = flags.json ? PLAIN : styleFor(io.env, io.isTTY ?? false);
   const commands: Record<string, (args: string[]) => Promise<number>> = {
     why: args => why(args, flags, io, style),
+    blame: args => blame(args, flags, io, style),
     trace: () => trace(flags, io, style),
     risks: () => risks(flags, io, style),
     sessions: () => sessions(flags, io, style),
     export: args => exportSession(args, flags, io),
     report: args => report(args, flags, io),
     statusline: () => statusline(flags, io),
+    tripwire: () => tripwire(flags, io),
     find: args => find(args, flags, io, style),
+    review: args => review(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io),
@@ -142,12 +165,15 @@ export async function main(argv: string[], io: Io): Promise<number> {
     return await run(rest);
   } catch (e) {
     if (flags['from-hook']) return 0; // a hook must never fail loudly
+    // A skill's command that exits non-zero is shown as a failed shell block, not as its output,
+    // so from a skill the message is the output.
+    const say = flags['from-skill'] ? io.out : io.err;
     if (e instanceof ContrailError) {
-      io.err(`contrail: ${e.message}\n`);
-      return 1;
+      say(`contrail: ${e.message}\n`);
+      return flags['from-skill'] ? 0 : 1;
     }
-    io.err(`contrail: unexpected error. Please report it with this output.\n${(e as Error).stack ?? String(e)}\n`);
-    return 3;
+    say(`contrail: unexpected error. Please report it with this output.\n${(e as Error).stack ?? String(e)}\n`);
+    return flags['from-skill'] ? 0 : 3;
   }
 }
 
@@ -159,11 +185,24 @@ interface Store {
   hashToken?: (span: string) => string;
 }
 
+/**
+ * The spool exists and the directory is private. Claude Code creates the data directory with the
+ * user's umask, and the health hook that tightens it only runs when a session starts.
+ */
+function prepareDataDir(dataDir: string): void {
+  mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(dataDir, 0o700);
+  } catch {
+    // not ours to change (another owner); it still works
+  }
+}
+
 async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Promise<T>): Promise<T> {
   const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
   let db: Db;
   try {
-    mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+    prepareDataDir(dataDir);
     db = await openDb(join(dataDir, 'contrail.db'));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
@@ -185,14 +224,47 @@ async function why(args: string[], flags: Flags, io: Io, s: Style): Promise<numb
   if (args[0] === 'commit') return whyCommit(args.slice(1), flags, io, s);
   const target = parseTarget(flags.stdin ? [readStdin(io)] : args, io.cwd);
   if (target.kind === 'command' && /^commit [0-9a-f]{7,40}$/i.test(target.text)) return whyCommit(target.text.split(' ').slice(1), flags, io, s);
+  if (target.kind === 'command' && isCommit(io.cwd, target.text)) return whyCommit([target.text], flags, io, s);
+  if (target.kind === 'line') return whyLine(target, flags, io, s);
   return withStore(flags, io, ({ db, repoKey, hashToken }) => {
-    const hit = findTarget(db, target, repoKey);
+    let hit: { sessionId: string; toolUseId: string };
+    let note: string | undefined;
+    try {
+      const found = findTarget(db, target, repoKey);
+      hit = found;
+      note = found.total > 1 ? `the latest of ${found.total} recorded matches` : undefined;
+    } catch (e) {
+      // Not a changed file or a shell command: it may be a value (a package, a URL, a name),
+      // so answer for the latest call whose arguments used it.
+      if (!(e instanceof ContrailError) || (target.kind !== 'command' && target.kind !== 'path')) throw e;
+      const value = target.kind === 'path' ? target.shown : target.text;
+      const use = latestUse(db, value, repoKey, io.home, hashToken);
+      if (!use) {
+        throw new ContrailError(
+          `Nothing recorded matches "${value}": no agent change to that file, no shell command containing it, and no call that used it. ` +
+            'Contrail only sees sessions recorded since it was installed. Run /contrail:why with no argument for the last action.',
+        );
+      }
+      hit = use;
+      note = `the latest recorded call that used "${value}"${use.total > 1 ? ` (${use.total} calls in that session used it; contrail find lists them all)` : ''}`;
+    }
     const graph = loadGraph(db, hit.sessionId, io.home, hashToken);
     const explanation = explain(hit.toolUseId, graph);
     if (flags.json) io.out(`${JSON.stringify(explanation, null, 2)}\n`);
-    else io.out(renderWhy(explanation, graph, hit.total > 1 ? `the latest of ${hit.total} recorded matches` : undefined, s));
+    else io.out(renderWhy(explanation, graph, note, s));
     return 0;
   });
+}
+
+/** The latest call, in the newest recent session that has one, whose arguments contain the value. */
+function latestUse(db: Db, value: string, repoKey: string, home: string, hashToken?: (span: string) => string) {
+  for (const row of recentSessions(db, repoKey, 50)) {
+    const graph = loadGraph(db, row.id, home, hashToken);
+    const uses = findValue(graph, value).filter(x => x.use);
+    const last = uses.at(-1)?.use;
+    if (last) return { sessionId: row.id, toolUseId: last.action.id, total: uses.length };
+  }
+  return null;
 }
 
 async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
@@ -244,17 +316,41 @@ async function whyCommit(args: string[], flags: Flags, io: Io, s: Style): Promis
   });
 }
 
-/** The path with symlinks resolved; for a file that no longer exists, its directory's real path. */
-function realPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    try {
-      return join(realpathSync(dirname(path)), basename(path));
-    } catch {
-      return path;
+/** why file.ts:42: the recorded call that last wrote that line, found as blame finds it, then that call's report. */
+async function whyLine(target: Extract<Target, { kind: 'line' }>, flags: Flags, io: Io, s: Style): Promise<number> {
+  return withStore(flags, io, ({ db, hashToken }) => {
+    const b = blameFile(db, target.path, target.shown);
+    if (target.start > b.lines.length) {
+      throw new ContrailError(`${target.shown} has ${b.lines.length} line${b.lines.length === 1 ? '' : 's'} now; there is no line ${target.start}.`);
     }
-  }
+    const hit = b.lines.slice(target.start - 1, target.end).find(l => l.call);
+    if (!hit) throw new ContrailError(noLineWriter(target));
+    const call = b.calls.find(c => c.id === hit.call)!;
+    const graph = loadGraph(db, call.sessionId, io.home, hashToken);
+    const explanation = explain(call.id, graph);
+    if (flags.json) {
+      const line = { file: b.path, line: hit.line, call: call.id, grade: hit.grade, rule: 'R10', match: hit.match, unambiguous: hit.unambiguous, writers: hit.writers, inFile: hit.inFile, byCall: hit.byCall };
+      io.out(`${JSON.stringify({ line, ...explanation }, null, 2)}\n`);
+    } else {
+      io.out(`${renderLineNote(target, hit, call, s)}\n${renderWhy(explanation, graph, undefined, s)}`);
+    }
+    return 0;
+  });
+}
+
+async function blame(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
+  const arg = unquote((flags.stdin ? readStdin(io) : args.join(' ')).trim());
+  if (!arg) throw new ContrailError('Usage: contrail blame <file> [--session <id>] [--json]');
+  const path = resolve(io.cwd, arg);
+  const shown = displayPath(path, io.cwd, io.home);
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const session = flags.session ? pickSession(db, flags.session as string, repoKey) : null;
+    const b = blameFile(db, path, shown, session);
+    explainCalls(db, b, io.home, hashToken);
+    if (flags.json) io.out(`${JSON.stringify(blameJson(b), null, 2)}\n`);
+    else io.out(renderBlame(b, shown, s));
+    return 0;
+  });
 }
 
 async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
@@ -269,7 +365,7 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
       const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map(a => [a.id, explain(a.id, graph)]));
       const forest = trailForest(graph, explanations);
       const omitted = graph.actions.length - explanations.size;
-      if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
       else io.out(renderTree(graph, forest, omitted, s));
       return 0;
     }
@@ -279,7 +375,7 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
       if (!matchesFilter(a, graph, filter) || !EXPLAINED.has(kindForExplain(a.tool))) continue;
       explanations.set(a.id, explain(a.id, graph));
     }
-    if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
+    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
   });
@@ -293,13 +389,6 @@ function treeJson(root: TreeRoot): unknown {
 function kindForExplain(tool: string): string {
   if (tool.startsWith('mcp__')) return 'MCP';
   return ({ Edit: 'EDIT', MultiEdit: 'EDIT', NotebookEdit: 'EDIT', Write: 'WRITE', Bash: 'SHELL', WebFetch: 'WEB', WebSearch: 'WEB', Agent: 'AGENT', Task: 'AGENT' } as Record<string, string>)[tool] ?? '';
-}
-
-function findingsFor(graph: Graph): Finding[] {
-  return graph.actions
-    .filter(a => sensitivity(a).length)
-    .map(a => assess(explain(a.id, graph), graph))
-    .filter((f): f is Finding => f !== null);
 }
 
 async function risks(flags: Flags, io: Io, s: Style): Promise<number> {
@@ -379,8 +468,7 @@ async function report(args: string[], flags: Flags, io: Io): Promise<number> {
       io.out(html);
       return 0;
     }
-    // The report holds what the agent read (redacted), so it gets the same 0600 as the database.
-    writeFileSync(path, html, { mode: 0o600 });
+    writePrivate(path, html);
     io.out(`Wrote ${path}\n`);
     return 0;
   });
@@ -401,7 +489,7 @@ async function find(args: string[], flags: Flags, io: Io, s: Style): Promise<num
       const json = hits
         .filter(h => h.sightings.length)
         .map(h => ({
-          session: h.graph.actions[0]?.scope.sessionId ?? null,
+          session: h.graph.sessionId,
           sightings: h.sightings.map(x =>
             x.source
               ? { seq: x.seq, held: { source: x.source.input.label, trust: x.source.input.trust, origin: x.source.input.origin, line: x.source.line } }
@@ -414,6 +502,82 @@ async function find(args: string[], flags: Flags, io: Io, s: Style): Promise<num
     }
     return 0;
   });
+}
+
+/**
+ * The PreToolUse tripwire. Before a sensitive call runs (and before Claude Code asks for
+ * permission), tell the person when values in it first appeared in external content. The
+ * notice is a systemMessage: Claude Code shows it to the person and does not give it to the
+ * model. It never blocks, never makes a permission decision, and on any failure prints nothing.
+ */
+async function tripwire(flags: Flags, io: Io): Promise<number> {
+  try {
+    const raw = readStdin(io);
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    const sessionId = typeof payload.session_id === 'string' ? payload.session_id : '';
+    const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : '';
+    if (payload.hook_event_name !== 'PreToolUse' || !sessionId || !toolUseId) return 0;
+    const notice = await withStore(flags, io, ({ db, dataDir, hashToken }) => {
+      if (!loadConfig(dataDir).config.tripwire) return null;
+      const rows = loadRows(db, sessionId);
+      // The capture hook stores this same event in parallel; it may not be ingested yet.
+      if (!rows.some(r => r.hook_event === 'PreToolUse' && r.tool_use_id === toolUseId)) {
+        rows.push({
+          id: 0, spool_name: 'tripwire', captured_us: Date.now() * 1000, session_id: sessionId,
+          prompt_id: typeof payload.prompt_id === 'string' ? payload.prompt_id : null,
+          agent_id: typeof payload.agent_id === 'string' ? payload.agent_id : null,
+          hook_event: 'PreToolUse', tool_name: typeof payload.tool_name === 'string' ? payload.tool_name : null,
+          tool_use_id: toolUseId, cwd: typeof payload.cwd === 'string' ? payload.cwd : null,
+          // Capped and redacted exactly as ingest stores it, so a huge write costs no more here.
+          payload: JSON.stringify(stored(payload, 'PreToolUse')), parse_error: null,
+        });
+      }
+      const graph = buildGraph(rows, { home: io.home, user: basename(io.home) }, hashToken);
+      const action = graph.actions.find(a => a.id === toolUseId);
+      if (!action || !sensitivity(action).length) return null;
+      const explanation = explain(action.id, graph);
+      const finding = assess(explanation, graph);
+      return finding?.externalUpstream ? renderTripwire(finding, explanation) : null;
+    });
+    if (notice) io.out(`${JSON.stringify({ systemMessage: redactString(notice) })}\n`);
+  } catch {
+    // A notice that cannot be computed is simply not shown.
+  }
+  return 0;
+}
+
+async function review(args: string[], flags: Flags, io: Io, s: Style): Promise<number> {
+  const base = (flags.stdin ? readStdin(io) : (args[0] ?? '')).trim() || undefined;
+  if (args.length > 1) throw new ContrailError('Usage: contrail review [<base>] [--markdown | --json] [-o review.md]');
+  if (flags.json && flags.markdown) throw new ContrailError('Pick one of --json and --markdown.');
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const r = reviewBranch(db, { cwd: io.cwd, base, repoKey, home: io.home, ...(hashToken ? { hashToken } : {}) });
+    const path = flags.output as string | undefined;
+    if (path) {
+      writePrivate(path, renderReviewMarkdown(r, VERSION));
+    }
+    if (flags.json) io.out(`${JSON.stringify(reviewJson(r), null, 2)}\n`);
+    else if (flags.markdown && !path) io.out(renderReviewMarkdown(r, VERSION));
+    else io.out(renderReview(r, s));
+    if (path) io.out(`\nWrote the markdown for a pull request description to ${path}\n`);
+    return 0;
+  });
+}
+
+/**
+ * A report holds what the agent read (redacted), so it gets the database's 0600: written beside
+ * the target and renamed over it, so an existing file's mode or a symlink at that path is
+ * replaced, never followed.
+ */
+function writePrivate(path: string, text: string): void {
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  try {
+    writeFileSync(tmp, text, { mode: 0o600, flag: 'wx' });
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw new ContrailError(`Cannot write ${path}: ${(e as Error).message}`);
+  }
 }
 
 const readStdin = (io: Io) => (io.stdin ? io.stdin() : readFileSync(0, 'utf8'));
@@ -442,7 +606,7 @@ async function statusline(flags: Flags, io: Io): Promise<number> {
 
 async function ingestCommand(flags: Flags, io: Io): Promise<number> {
   const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
-  mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+  prepareDataDir(dataDir);
   const db = await openDb(join(dataDir, 'contrail.db'));
   try {
     migrate(db);

@@ -53,8 +53,16 @@ export function unwrapCommand(words: string[]): string[] {
   }
   return argv;
 }
-const URL_RE = /https?:\/\/[^\s'"<>)\]]+/g;
-const WORD_RE = /[A-Za-z0-9_@][A-Za-z0-9_\-./@:]*[A-Za-z0-9_]/g;
+const URL_RE = /https?:\/\/[^\s'"<>)\]]{1,2048}/g;
+/**
+ * A word: a run of name characters, then trimmed back to its last letter, digit or underscore.
+ * Matching the run and trimming in code keeps this linear; a pattern that must end on a word
+ * character backtracks across every start of a long run of '@' or '.'.
+ */
+const WORD_RUN = /[A-Za-z0-9_@][A-Za-z0-9_\-./@:]{0,4096}/g;
+const WORD_END = /[^A-Za-z0-9_]{1,4096}$/;
+/** Only the start of a very long text is searched for names. */
+const WORDS_SCAN = 64 * 1024;
 const MAX_HINTS = 20;
 const MAX_TARGETS = 40;
 
@@ -172,11 +180,14 @@ function collector(env: Env) {
 
 function words(text: string): string[] {
   const found: string[] = [];
-  const rest = text.replace(URL_RE, url => {
+  const rest = text.slice(0, WORDS_SCAN).replace(URL_RE, url => {
     found.push(hostPath(url));
     return ' ';
   });
-  for (const m of rest.matchAll(WORD_RE)) found.push(m[0]);
+  for (const m of rest.matchAll(WORD_RUN)) {
+    const word = m[0].replace(WORD_END, '');
+    if (word.length >= 2) found.push(word);
+  }
   return found;
 }
 

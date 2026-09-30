@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Db } from '../store/sqlite.ts';
 import { changedFiles, obj, str } from '../util.ts';
 import { expectedShellEffects } from '../engine/effects.ts';
 import { hashContent, type Hmac } from './content.ts';
-import { redactString, redactValue } from './redact.ts';
+import { jsonText, MAX_DEPTH, redactCapped, redactString, redactValue } from './redact.ts';
 
 /** Longest string kept per field. Long enough to hold most files an agent reads, so lineage can match. */
 export const STRING_CAP = 256 * 1024;
@@ -50,10 +50,16 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
     let raw: string;
     let mtimeNs: bigint;
     try {
-      mtimeNs = statSync(file, { bigint: true }).mtimeNs;
-      raw = readFileSync(file, 'utf8');
-    } catch {
-      continue; // a concurrent ingest already took it
+      const read = readSpoolFile(file);
+      if (!read) {
+        // Not a regular file (a FIFO would hang every reader; a symlink could point anywhere): drop it.
+        rmSync(file, { force: true });
+        continue;
+      }
+      ({ raw, mtimeNs } = read);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ELOOP') rmSync(file, { force: true }); // a symlink
+      continue; // otherwise a concurrent ingest already took it
     }
 
     const capturedUs = Number(mtimeNs / 1000n);
@@ -62,7 +68,7 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
       row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
     } catch (e) {
       // Never let one bad payload block every later event: store the failure and move on.
-      row = failedRow(capturedUs, `${name}: ${(e as Error).message}`);
+      row = failedRow(capturedUs, errorText(name, e));
     }
     if (row.parseError) report.parseErrors++;
 
@@ -117,16 +123,13 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return { ...failedRow(capturedUs, `${name}: ${(e as Error).message}`), payload: JSON.stringify({ raw: redactString(capString(raw)) }) };
+    return { ...failedRow(capturedUs, errorText(name, e)), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
   }
 
   const p = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { value: parsed }) as Record<string, unknown>;
   const hookEvent = str(p, 'hook_event_name') ?? 'unknown';
-  if (hookEvent === 'InstructionsLoaded') attachInstructionText(p, capturedUs);
-  if (hookEvent === 'PostToolUse' && str(p, 'tool_name') === 'Skill') attachSkillText(p, capturedUs);
   const cwd = str(p, 'cwd') ?? null;
-
-  return {
+  const meta = {
     capturedUs,
     sessionId: str(p, 'session_id') ?? null,
     promptId: str(p, 'prompt_id') ?? null,
@@ -136,15 +139,30 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
     toolUseId: str(p, 'tool_use_id') ?? null,
     cwd,
     repoKey: cwd ? repoKeyOf(cwd) : null,
-    payload: JSON.stringify(stored(p, hookEvent, hmac)),
-    parseError: null,
-    touches: hookEvent === 'PostToolUse' ? touchesOf(p, cwd ?? '') : [],
   };
+
+  try {
+    if (hookEvent === 'InstructionsLoaded') attachInstructionText(p, capturedUs);
+    if (hookEvent === 'PostToolUse' && str(p, 'tool_name') === 'Skill') attachSkillText(p, capturedUs);
+    return {
+      ...meta,
+      payload: JSON.stringify(stored(p, hookEvent, hmac)),
+      parseError: null,
+      touches: hookEvent === 'PostToolUse' ? touchesOf(p, cwd ?? '') : [],
+    };
+  } catch (e) {
+    // The event parsed but its body could not be stored: keep which session, call and tool it was,
+    // so it still joins, and store no body rather than an unredacted one.
+    return { ...meta, payload: '{}', parseError: errorText(name, e), touches: [] };
+  }
 }
 
-/** Cap before redacting, so no pattern ever scans more than STRING_CAP characters; hash last, when asked. */
-function stored(p: Record<string, unknown>, hookEvent: string, hmac?: Hmac): unknown {
-  const clean = redactValue(capValue(dropBulky(p))) as Record<string, unknown>;
+/**
+ * Redacts every string, a little past the cap so a secret straddling the cut goes whole, then cuts
+ * it to STRING_CAP; hashes last, when asked.
+ */
+export function stored(p: Record<string, unknown>, hookEvent: string, hmac?: Hmac): unknown {
+  const clean = redactValue(dropBulky(p), { cap: STRING_CAP }) as Record<string, unknown>;
   if (!hmac) return clean;
   hashContent(clean, hookEvent, hmac);
   return capValue(clean);
@@ -155,6 +173,14 @@ function failedRow(capturedUs: number, parseError: string): Row {
     capturedUs, sessionId: null, promptId: null, agentId: null, hookEvent: 'unparsed', toolName: null,
     toolUseId: null, cwd: null, repoKey: null, touches: [], payload: '{}', parseError,
   };
+}
+
+/** V8 quotes the start of the bad input in a JSON.parse error; that is payload, so it is left out. */
+const QUOTED_INPUT = /(?:\.{3})?"[\s\S]{0,1024}"(?:\.{3})?(?= is not valid JSON$)/;
+
+function errorText(name: string, e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e);
+  return redactString(`${name}: ${message.replace(QUOTED_INPUT, '"…"')}`);
 }
 
 /** Only the files InstructionsLoaded can name: CLAUDE.md, CLAUDE.local.md and .claude/rules/*.md. */
@@ -235,24 +261,27 @@ function touchesOf(p: Record<string, unknown>, cwd: string): Touch[] {
   return [];
 }
 
-/** Drops content that is large and useless for provenance: Edit's copy of the whole old file, and base64 images. */
-function dropBulky(value: unknown, key = ''): unknown {
+/**
+ * Drops content that is large and useless for provenance: Edit's copy of the whole old file, and base64 images.
+ * Anything nested deeper than MAX_DEPTH becomes its JSON text, so no walker after this one recurses past it.
+ */
+function dropBulky(value: unknown, key = '', depth = 0): unknown {
   if (typeof value === 'string') {
     if (key === 'originalFile' || key === 'base64') {
       return `[contrail: dropped ${key}, ${value.length} bytes, sha256 ${sha256(value).slice(0, 16)}]`;
     }
     return value;
   }
-  if (Array.isArray(value)) return value.map(v => dropBulky(v));
-  if (value && typeof value === 'object') {
-    const isBase64Block = (value as Record<string, unknown>).type === 'base64';
-    return Object.fromEntries(
-      Object.entries(value).map(([k, v]) => [k, dropBulky(v, isBase64Block && k === 'data' ? 'base64' : k)]),
-    );
-  }
-  return value;
+  if (!value || typeof value !== 'object') return value;
+  if (depth >= MAX_DEPTH) return jsonText(value);
+  if (Array.isArray(value)) return value.map(v => dropBulky(v, '', depth + 1));
+  const isBase64Block = (value as Record<string, unknown>).type === 'base64';
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [k, dropBulky(v, isBase64Block && k === 'data' ? 'base64' : k, depth + 1)]),
+  );
 }
 
+/** Only after dropBulky, which bounds the depth. */
 function capValue(value: unknown): unknown {
   if (typeof value === 'string') return capString(value);
   if (Array.isArray(value)) return value.map(capValue);
@@ -278,4 +307,20 @@ function removeIfStale(file: string, now: number): boolean {
 
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
+}
+
+/**
+ * One spool file's text and time, or null when it is not a regular file. Opened without
+ * following symlinks and without blocking, then checked on the open descriptor, so nothing
+ * swapped in between can make a reader hang or read outside the spool.
+ */
+function readSpoolFile(file: string): { raw: string; mtimeNs: bigint } | null {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const st = fstatSync(fd, { bigint: true });
+    if (!st.isFile()) return null;
+    return { raw: readFileSync(fd, 'utf8'), mtimeNs: st.mtimeNs };
+  } finally {
+    closeSync(fd);
+  }
 }

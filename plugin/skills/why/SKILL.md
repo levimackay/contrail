@@ -1,13 +1,13 @@
 ---
 name: why
-description: Show the recorded trail behind a Claude Code action (a file change, a shell command, a tool call by its id, or the last action), with every link graded by evidence. Runs only when you invoke it.
+description: Point at anything Claude Code did (a file, a line as path:line, a command, a commit, a package or URL it used, or nothing for its last action) and see the recorded trail behind it, with every link graded by evidence. Runs only when you invoke it.
 disable-model-invocation: true
-argument-hint: <path | "command text" | call id | last>
-allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/bin/contrail *)
+argument-hint: [file | file:line | "command" | commit | package or URL | nothing for the last action]
+allowed-tools: Bash(sh "${CLAUDE_PLUGIN_ROOT}/bin/contrail" *)
 ---
 
 ```!
-sh ${CLAUDE_PLUGIN_ROOT}/bin/contrail why --plugin-data "${CLAUDE_PLUGIN_DATA}" --stdin 2>&1 <<'CONTRAIL_TARGET'
+sh "${CLAUDE_PLUGIN_ROOT}/bin/contrail" why --from-skill --plugin-data "${CLAUDE_PLUGIN_DATA}" --stdin 2>&1 <<'CONTRAIL_TARGET'
 $ARGUMENTS
 CONTRAIL_TARGET
 ```

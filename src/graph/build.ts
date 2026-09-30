@@ -208,6 +208,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
   for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
   return {
+    sessionId: mainScope.sessionId,
     actions: actionList,
     inputs,
     effects,
@@ -236,7 +237,8 @@ function newAction(id: string, scope: Scope, row: EventRow, p: Record<string, un
     id,
     scope,
     promptId: row.prompt_id,
-    tool: row.tool_name ?? str(p, 'tool_name') ?? 'unknown',
+    // Tool names are identifiers; anything else in one is not printed as-is.
+    tool: (row.tool_name ?? str(p, 'tool_name') ?? 'unknown').replace(/[^\w.:-]/g, '?').slice(0, 128),
     input: obj(p, 'tool_input') ?? {},
     response: null,
     preSeq: seq,

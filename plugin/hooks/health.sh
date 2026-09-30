@@ -11,6 +11,9 @@ if [ -z "$data" ]; then
 elif ! mkdir -p "$data/spool" 2>/dev/null || [ ! -w "$data/spool" ]; then
   msg="Contrail is not recording: $data/spool is not writable."
 else
+  # Claude Code creates the data directory with the user's umask, often 0755; it holds what the
+  # agent read, so keep it private.
+  chmod 700 "$data" 2>/dev/null
   # A stable path to the CLI, for a shell alias or a statusLine command: the plugin's own
   # directory changes with every version, the data directory does not.
   if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && mkdir -p "$data/bin" 2>/dev/null; then
@@ -18,11 +21,12 @@ else
     dir=$(printf '%s' "$data" | sed "s/'/'\\\\''/g")
     tmp="$data/bin/.contrail.$$"
     {
-      echo '#!/bin/sh'
-      echo "# Written by Contrail's SessionStart hook: a stable path to the installed CLI."
-      echo "[ -n \"\${CONTRAIL_HOME:-}\" ] || CONTRAIL_HOME='$dir'"
-      echo 'export CONTRAIL_HOME'
-      echo "exec sh '$root/bin/contrail' \"\$@\""
+      # printf, not echo: some shells' echo turns \047 into a quote and would undo the quoting.
+      printf '%s\n' '#!/bin/sh'
+      printf '%s\n' "# Written by Contrail's SessionStart hook: a stable path to the installed CLI."
+      printf '%s\n' "[ -n \"\${CONTRAIL_HOME:-}\" ] || CONTRAIL_HOME='$dir'"
+      printf '%s\n' 'export CONTRAIL_HOME'
+      printf '%s\n' "exec sh '$root/bin/contrail' \"\$@\""
     } >"$tmp" 2>/dev/null
     if ! { chmod 700 "$tmp" && mv -f "$tmp" "$data/bin/contrail"; } 2>/dev/null; then
       rm -f "$tmp"

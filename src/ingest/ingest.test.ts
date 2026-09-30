@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -57,6 +58,18 @@ test('keeps malformed JSON instead of dropping it', async () => {
   assert.match(row.parse_error, /1-1-a\.json/);
 });
 
+test('a parse error does not quote the payload it could not parse', async () => {
+  const { db, spool } = await setup();
+  drop(spool, '1-1-a.json', `x ghp_${'a1B2'.repeat(9)}`);
+  drop(spool, '1-2-b.json', `{"a": ghp_${'a1B2'.repeat(9)}}`);
+  ingest(db, spool, repoKey);
+  for (const row of db.all<{ parse_error: string; payload: string }>('SELECT parse_error, payload FROM events')) {
+    assert.match(row.parse_error, /\.json: .*is not valid JSON/);
+    assert.ok(!row.parse_error.includes('ghp_'), row.parse_error);
+    assert.ok(!row.payload.includes('ghp_'), row.payload);
+  }
+});
+
 test('records file touches for writes, reads and shell-changed files', async () => {
   const { db, spool } = await setup();
   const base = { hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/r' };
@@ -103,7 +116,7 @@ test('a missing spool directory is not an error', async () => {
   assert.deepEqual(ingest(db, '/nonexistent/spool', repoKey), { ingested: 0, duplicates: 0, parseErrors: 0, staleTmpRemoved: 0 });
 });
 
-test('one pathological payload is stored as a failure and never blocks later events', async () => {
+test('one pathological payload is stored and never blocks later events', async () => {
   const { db, spool } = await setup();
   const deep = '['.repeat(20000) + ']'.repeat(20000);
   drop(spool, '1-1-a.json', `{"hook_event_name":"PreToolUse","x":${deep}}`);
@@ -113,8 +126,47 @@ test('one pathological payload is stored as a failure and never blocks later eve
   assert.deepEqual(readdirSync(spool), []);
   assert.deepEqual(
     db.all<{ hook_event: string }>('SELECT hook_event FROM events ORDER BY spool_name').map(e => e.hook_event),
-    ['unparsed', 'UserPromptSubmit'],
+    ['PreToolUse', 'UserPromptSubmit'],
   );
+});
+
+test('a tool result nested thousands deep is stored, redacted, under its session and call', async () => {
+  const { db, spool } = await setup();
+  let deep: unknown = `GITHUB_TOKEN=ghp_${'a1B2'.repeat(9)}`;
+  for (let i = 0; i < 3000; i++) deep = { a: deep };
+  drop(spool, '1-1-a.json', { hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/r', tool_name: 'mcp__srv__get', tool_use_id: 't1', tool_input: { q: 'x' }, tool_response: deep });
+  const r = ingest(db, spool, repoKey);
+  assert.equal(r.parseErrors, 0);
+  const row = db.get<{ session_id: string; tool_use_id: string; payload: string; parse_error: string | null }>('SELECT * FROM events')!;
+  assert.deepEqual([row.session_id, row.tool_use_id, row.parse_error], ['s1', 't1', null]);
+  assert.ok(!row.payload.includes('ghp_'));
+  assert.match(row.payload, /REDACTED/);
+});
+
+test('a token straddling the storage cap is redacted whole, not cut so most of it survives', async () => {
+  const { db, spool } = await setup();
+  const token = `ghp_${'a1B2'.repeat(9)}`;
+  const stdout = `${' '.repeat(STRING_CAP - 35)}${token}\nmore`; // 35 of its 40 characters fall before the cap
+  drop(spool, '1-1-a.json', { hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/r', tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'cat big.log' }, tool_response: { stdout, stderr: '' } });
+  ingest(db, spool, repoKey);
+  const p = JSON.parse(db.get<{ payload: string }>('SELECT payload FROM events')!.payload);
+  assert.ok(!p.tool_response.stdout.includes('ghp_'), p.tool_response.stdout.slice(-80));
+  assert.ok(!p.tool_response.stdout.includes('a1B2a1B2'));
+  assert.match(p.tool_response.stdout, /\[contrail: truncated \d+ bytes\]$/);
+});
+
+test('an event that parsed but could not be stored keeps its session, call and tool', async () => {
+  const { db, spool } = await setup();
+  drop(spool, '1-1-a.json', { hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/r', tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'ls' }, tool_response: { stdout: 'a' } });
+  const failingHmac = () => {
+    throw new Error('no key');
+  };
+  const r = ingest(db, spool, repoKey, Date.now(), failingHmac);
+  assert.equal(r.parseErrors, 1);
+  const row = db.get<Record<string, string | null>>('SELECT session_id, tool_use_id, hook_event, tool_name, cwd, repo_key, payload, parse_error FROM events')!;
+  assert.deepEqual({ ...row, parse_error: typeof row.parse_error }, {
+    session_id: 's1', tool_use_id: 't1', hook_event: 'PostToolUse', tool_name: 'Bash', cwd: '/r', repo_key: 'repo:/r', payload: '{}', parse_error: 'string',
+  });
 });
 
 test('only real instruction files are read, and not one that changed after it loaded', async () => {
@@ -169,4 +221,17 @@ test('a skill name found both in your skills and the project is ambiguous, so ne
     process.env.HOME = saved;
   }
   assert.equal(JSON.parse(db.get<{ payload: string }>('SELECT payload FROM events')!.payload)._contrail, undefined);
+});
+
+test('a FIFO or a symlink in the spool is dropped, never read: nothing hangs and nothing outside is stored', async () => {
+  const { db, spool } = await setup();
+  const outside = join(spool, '..', 'secret.txt');
+  writeFileSync(outside, 'machine example.org password hunter2hunter2');
+  symlinkSync(outside, join(spool, '1-1-link.json'));
+  execFileSync('mkfifo', [join(spool, '1-2-fifo.json')]);
+  drop(spool, '1-3-ok.json', { hook_event_name: 'Stop', session_id: 's1' });
+  const r = ingest(db, spool, repoKey);
+  assert.equal(r.ingested, 1);
+  assert.deepEqual(readdirSync(spool), []);
+  assert.ok(!db.all<{ payload: string }>('SELECT payload FROM events').some(x => x.payload.includes('hunter2')));
 });

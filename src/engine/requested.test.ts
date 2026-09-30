@@ -71,3 +71,15 @@ test('the quoted sentence is your latest words about the action', () => {
   assert.equal(r.verdict, 'PARTLY_NAMED');
   assert.equal(r.sentence?.text, 'looks good, commit it');
 });
+
+test('a negation counts only before the mention, in the same clause', () => {
+  const edit = mkAction({ id: 't8', preSeq: 20, input: { file_path: '/r/app.py' } });
+  const app = [mkToken('app.py')];
+  const verdict = (text: string) => requested(edit, app, [say('p1', 3, text)]).verdict;
+  assert.equal(verdict('edit app.py so main() prints the greeting instead of "hi"'), 'NAMED');
+  assert.equal(verdict("don't touch the tests, just fix app.py"), 'NAMED');
+  assert.equal(verdict('fix app.py, not the tests'), 'NAMED');
+  assert.equal(verdict("don't edit app.py"), 'NAMED_NEGATED');
+  assert.equal(verdict('change main.py instead of app.py'), 'NAMED_NEGATED');
+  assert.equal(verdict('never touch app.py again'), 'NAMED_NEGATED');
+});

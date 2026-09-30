@@ -4,6 +4,57 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-30
+
+### Added
+
+- A tripwire before sensitive tool calls. When a call touches credentials, the network or the shell, installs something, or touches Contrail's own records, and a value in it first appeared in external content (a web page or search, an MCP result, a dependency's files), you see one line before Claude Code asks for permission. It is a `systemMessage`: shown to you, not given to the model. It never blocks or makes a permission decision, and `"tripwire": false` in `config.json` turns it off.
+- `contrail why` answers whatever it is pointed at: nothing (the last action), a file, `file:line` or `file:start-end`, a command, a bare commit sha, a call id, or any value the agent used, such as a package name or a URL.
+- Every `why` report starts with an In short block: whether your words named the action, what is sensitive about it, and each value's chain of sources with their grades.
+- `contrail blame <file>` and `/contrail:blame`: each line of a file as it is now, credited to the recorded agent call that last wrote that text (R10, LIKELY at best), with its session, turn, call id and trail, across sessions.
+- `contrail review [<base>]` and `/contrail:review`: the recorded agent work behind a branch for its reviewer. Commits are joined to the calls that made them and changed files to the calls that wrote them, committed or not. It lists values from external content, sensitive actions and changes you did not name, as terminal output, JSON, or escaped GitHub markdown for a pull request.
+- A new sensitive kind, `touches Contrail's records`, for calls that name Contrail's data directory or database. Contrail's own queries are not counted.
+- `scripts/bench-hooks.sh`, which measures hook overhead on your machine.
+
+### Changed
+
+- Clearer messages before anything is recorded, and when Node is too old (the message names the version found) or no runtime is installed. A skill whose command fails, such as `/contrail:why` before anything is recorded, now shows Contrail's message instead of Claude Code's "Shell command failed" block.
+- The CLI finds the data directory under `$CLAUDE_CONFIG_DIR` when that is set.
+- The capture hook starts one process fewer per event.
+- Report wording no longer says "the agent chose this", which claimed more than is observable.
+
+### Security
+
+- Redaction covers far more before anything is stored:
+  - credential file contents: `.netrc` and `.pgpass` passwords, Docker `auth`, kubeconfig client keys and certificates, Azure `AccountKey` and npm `_auth`
+  - secrets passed as separate command-line arguments (`--token X`, `--api-key X`, `aws configure set …`, `docker login -p`, `sshpass -p`, `twine -p`, `redis-cli -a`)
+  - environment names judged by their words (ENCRYPTION_KEY, SIGNING_KEY, APP_KEY, RAILS_MASTER_KEY, TWILIO_AUTH)
+  - quoted, comma-holding, typed and name/value-pair notations
+  - URL passwords containing `/`
+  - many more token formats (Slack, Google, Vault, OpenAI, GitLab, PyPI and others)
+- Values are no longer excused as code just for containing a dot, brackets or only digits.
+- There are fewer false positives on ordinary code (`PWD=`, `password: string`, type annotations).
+- A secret straddling the 256 KB storage cap is redacted whole before the string is cut.
+- An event nested thousands of levels deep is stored with its session and call, redacted, instead of as an unparsed failure.
+- Parse errors no longer quote the start of the payload they could not parse.
+- 256 KB of repeated private-key headers is redacted in milliseconds instead of over a second, and every redaction pattern is now bounded, which a test enforces.
+
+### Fixed
+
+- Two processes creating a new database at the same moment no longer fail one of them with "database is locked".
+- Skills work when the plugin's path contains a space, such as a macOS home folder named after a person.
+- A commit line printed by a command counts only if that command was running when git dated the commit, so echoing someone else's commit line is no longer DIRECT.
+- A FIFO or symlink in the spool is removed unread. A FIFO made every command wait, and a symlink would have been read and stored.
+- Recorded file names, branches and ids can no longer put terminal escapes, 8-bit controls, bidi overrides or zero-width marks into a report.
+- A long run of `@` or `.` in a written file no longer stalls the status line: name matching is linear.
+- The launcher is written with `printf`, so a path holding an octal escape cannot break its quoting.
+- `report -o` and `review -o` replace what is at the path with a 0600 file instead of following a symlink or keeping an existing file's mode.
+- The data directory is made 0700; Claude Code creates it with your umask.
+- trace, find, report and `export --otel` label a session with no tool calls by its session id.
+- "1 tool call", not "1 tool calls".
+- A negation counts against a request only when it comes before the mention in the same clause, so "edit app.py so it prints hi instead of hello" is no longer reported as a negated request for app.py.
+- A call with no recorded result (denied, stopped, or still running) says so in words instead of PENDING.
+
 ## [0.3.0] - 2026-09-29
 
 ### Added

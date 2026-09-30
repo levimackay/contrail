@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="949" height="550" viewBox="0 0 949 550" role="img" aria-label="contrail blame auth-service/src/session.ts">
+  <rect x="0.5" y="0.5" width="948" height="549" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <path d="M0.5 36 V10.5 A10 10 0 0 1 10.5 0.5 H938.5 A10 10 0 0 1 948.5 10.5 V36 Z" fill="#161b22"/>
+  <line x1="0.5" y1="36" x2="948.5" y2="36" stroke="#30363d"/>
+  <circle cx="20" cy="18" r="6" fill="#ff5f57"/><circle cx="40" cy="18" r="6" fill="#febc2e"/><circle cx="60" cy="18" r="6" fill="#28c840"/>
+  <text x="474.5" y="22" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#7d8590">contrail blame auth-service/src/session.ts</text>
+  <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#c9d1d9" style="white-space: pre" xml:space="preserve">
+    <text y="61" style="white-space: pre"><tspan x="18.0" fill="#7d8590">$</tspan><tspan x="25.8"> </tspan><tspan x="33.6" font-weight="bold">contrail blame auth-service/src/session.ts</tspan></text>
+    <text y="79" style="white-space: pre"><tspan x="18.0" font-weight="bold">Blame</tspan><tspan x="57.0"> </tspan><tspan x="64.8" font-weight="bold">auth-service/src/session.ts</tspan><tspan x="275.4">  </tspan><tspan x="291.0" fill="#7d8590">(the file as it is now)</tspan></text>
+    <text y="97" style="white-space: pre"><tspan x="18.0" fill="#7d8590">6 of 7 lines attributed to 1 recorded agent call in 1 session · 1 recorded write to this file</tspan></text>
+    <text y="133" style="white-space: pre"><tspan x="18.0" fill="#56d4dd" font-weight="bold">LIKELY</tspan><tspan x="64.8">   </tspan><tspan x="88.2" font-weight="bold">Edit t5</tspan><tspan x="142.8" fill="#7d8590"> · session 4f2a91c7 · 2026-09-29 21:31</tspan></text>
+    <text y="151" style="white-space: pre"><tspan x="18.0">         p1 </tspan><tspan x="111.6" fill="#7d8590">your words:</tspan><tspan x="197.4"> &quot;Users are getting logged out after 30 minutes. Figure out why and fix it.&quot;</tspan></text>
+    <text y="169" style="white-space: pre"><tspan x="18.0">         </tspan><tspan x="88.2" fill="#7d8590">↳</tspan><tspan x="96.0"> </tspan><tspan x="103.8" fill="#56d4dd" font-weight="bold">LIKELY</tspan><tspan x="150.6"> auth-service/src/session.ts ← the output of Grep &quot;shouldRefresh&quot; </tspan><tspan x="665.4" fill="#7d8590">(local)</tspan><tspan x="720.0">   </tspan><tspan x="743.4" fill="#d2a8ff" font-weight="bold">not named by you</tspan></text>
+    <text y="187" style="white-space: pre"><tspan x="18.0">         </tspan><tspan x="88.2" fill="#7d8590">↳ in these lines:</tspan><tspan x="220.8"> </tspan><tspan x="228.6" fill="#56d4dd" font-weight="bold">LIKELY</tspan><tspan x="275.4"> jwt-decode ← auth-service/README.md:13 </tspan><tspan x="587.4" fill="#7d8590">(local)</tspan></text>
+    <text y="205" style="white-space: pre"><tspan x="18.0" fill="#7d8590">   1 │</tspan><tspan x="64.8"> import { jwtDecode } from 'jwt-decode';</tspan></text>
+    <text y="223" style="white-space: pre"><tspan x="18.0" fill="#7d8590">   2 │</tspan></text>
+    <text y="241" style="white-space: pre"><tspan x="18.0" fill="#7d8590">   3 │</tspan><tspan x="64.8"> export function shouldRefresh(raw: string, now = Date.now()) {</tspan></text>
+    <text y="259" style="white-space: pre"><tspan x="18.0" fill="#7d8590">   4 │</tspan><tspan x="64.8">   const { exp = 0 } = jwtDecode(raw);</tspan></text>
+    <text y="295" style="white-space: pre"><tspan x="18.0" fill="#6e7681">UNKNOWN</tspan><tspan x="72.6">  </tspan><tspan x="88.2" fill="#7d8590">no recorded agent write holds these lines (they may be yours, pre-existing, or changed since)</tspan></text>
+    <text y="313" style="white-space: pre"><tspan x="18.0" fill="#7d8590">   5 │</tspan><tspan x="64.8"> </tspan><tspan x="72.6" fill="#7d8590">  // exp is in seconds; Date.now() is in milliseconds.</tspan></text>
+    <text y="349" style="white-space: pre"><tspan x="18.0" fill="#56d4dd" font-weight="bold">LIKELY</tspan><tspan x="64.8">   Edit t5 </tspan><tspan x="150.6" fill="#7d8590">(shown above)</tspan></text>
+    <text y="367" style="white-space: pre"><tspan x="18.0" fill="#7d8590">   6 │</tspan><tspan x="64.8">   return exp * 1000 - now &lt; 5 * 60 * 1000;</tspan></text>
+    <text y="385" style="white-space: pre"><tspan x="18.0" fill="#7d8590">   7 │</tspan><tspan x="64.8"> }</tspan></text>
+    <text y="421" style="white-space: pre"><tspan x="18.0" fill="#7d8590">Run contrail why &lt;call id&gt;, as in </tspan><tspan x="283.2" fill="#7d8590" font-weight="bold">contrail why t5</tspan><tspan x="400.2">, or contrail why &lt;file&gt;:&lt;line&gt;, for the full trail behind a call.</tspan></text>
+    <text y="439" style="white-space: pre"><tspan x="18.0" fill="#7d8590">LIKELY: this call wrote this text to this file, and no later recorded write did [R10]. A text match, so never DIRECT.</tspan></text>
+    <text y="457" style="white-space: pre"><tspan x="18.0" fill="#7d8590">POSSIBLE: the file holds the text more often than this call wrote it, or the shell write was expected, not reported.</tspan></text>
+    <text y="475" style="white-space: pre"><tspan x="18.0" fill="#7d8590">UNKNOWN: no recorded agent write holds the text. Blank and bracket-only lines join a block only if both sides agree.</tspan></text>
+    <text y="493" style="white-space: pre"><tspan x="18.0" fill="#7d8590">Which call last wrote a line is data provenance, not the agent's reasons.</tspan></text>
+    <text y="511" style="white-space: pre"><tspan x="18.0" fill="#7d8590">Blind spots: edits outside Claude Code's tools or before Contrail was installed; text redacted or cut when stored.</tspan></text>
+    <text y="529" style="white-space: pre"><tspan x="18.0" fill="#7d8590">A Write counts every line it wrote, even unchanged ones. No match is not the same as not written by the agent.</tspan></text>
+  </g>
+</svg>

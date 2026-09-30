@@ -52,7 +52,7 @@ export const SCHEMA_VERSION = MIGRATIONS.length;
 /** Brings a database up to SCHEMA_VERSION. Safe to call from many processes at once. */
 export function migrate(db: Db): void {
   db.exec('PRAGMA busy_timeout = 5000');
-  db.exec('PRAGMA journal_mode = WAL');
+  useWal(db);
   db.exec('PRAGMA synchronous = NORMAL');
   db.exec('PRAGMA foreign_keys = ON');
 
@@ -74,5 +74,23 @@ export function migrate(db: Db): void {
   } catch (e) {
     db.exec('ROLLBACK');
     throw e;
+  }
+}
+
+/**
+ * Switches a database to WAL once. On a new database, two processes switching at the same
+ * moment each hold a read lock and need the write lock, which SQLite resolves by failing one of
+ * them at once, without the busy timeout. So the switch is skipped when already done, and
+ * otherwise retried for up to about five seconds.
+ */
+function useWal(db: Db, attempts = 100): void {
+  for (let i = 1; ; i++) {
+    try {
+      if (db.get<{ journal_mode: string }>('PRAGMA journal_mode')?.journal_mode.toLowerCase() !== 'wal') db.exec('PRAGMA journal_mode = WAL');
+      return;
+    } catch (e) {
+      if (i >= attempts || !/locked|busy/i.test((e as Error).message)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 + Math.floor(Math.random() * 30));
+    }
   }
 }

@@ -1,3 +1,4 @@
+import { clip } from '../util.ts';
 import { basename } from 'node:path';
 import { ContrailError } from '../errors.ts';
 import { buildGraph, type EventRow } from '../graph/build.ts';
@@ -37,8 +38,8 @@ export function pickSession(db: Db, prefix: string | undefined, repoKey: string)
     prefix,
   );
   if (matches.length === 1) return matches[0]!.id;
-  if (!matches.length) throw new ContrailError(`No session starts with "${prefix}". Run contrail sessions to list them.`);
-  throw new ContrailError(`"${prefix}" matches several sessions:\n${matches.map(m => `  ${m.id}`).join('\n')}\nUse more characters.`);
+  if (!matches.length) throw new ContrailError(`No session starts with "${clip(prefix, 60)}". Run contrail sessions to list them.`);
+  throw new ContrailError(`"${clip(prefix, 60)}" matches several sessions:\n${matches.map(m => `  ${clip(m.id, 80)}`).join('\n')}\nUse more characters.`);
 }
 
 export function loadRows(db: Db, sessionId: string): EventRow[] {

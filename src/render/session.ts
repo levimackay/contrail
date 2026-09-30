@@ -2,7 +2,7 @@ import type { CommitFile } from '../engine/effects.ts';
 import type { Finding } from '../engine/risks.ts';
 import type { Sighting } from '../engine/find.ts';
 import { headlineTrace, type TreeNode, type TreeRoot } from '../engine/tree.ts';
-import type { Action, Commit, Explanation, Graph, Grade, Input } from '../engine/types.ts';
+import type { Action, Commit, Explanation, Graph, Grade, Input, TokenTrace } from '../engine/types.ts';
 import { clip, displayPath } from '../util.ts';
 import { callId, PLAIN, type Style } from './style.ts';
 import { describe, originWording } from './why.ts';
@@ -47,12 +47,12 @@ export function renderTrace(
   s: Style = PLAIN,
 ): string {
   const out: string[] = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? '';
+  const sessionId = g.sessionId;
   const inputs = new Map(g.inputs.map(i => [i.id, i]));
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(
     s.dim(
-      `${g.prompts.length} turn${g.prompts.length === 1 ? '' : 's'} · ${g.actions.length} tool calls · ${g.effects.filter(e => e.kind === 'file').length} file effects` +
+      `${counted(g.prompts.length, 'turn')} · ${counted(g.actions.length, 'tool call')} · ${counted(g.effects.filter(e => e.kind === 'file').length, 'file effect')}` +
         (filter ? ` · showing --${filter}` : ''),
     ),
   );
@@ -94,31 +94,40 @@ function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Ma
   const lines = [`  ${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kind, 7)} ${summary(a, g)}${who}${failed}`];
   if (!e) return lines;
 
-  const head = headline(e);
-  const link = head?.links.find(l => l.grade !== 'UNKNOWN');
-  const src = link?.to ? inputs.get(link.to) : undefined;
-  const from = src && link
-    ? `${s.grade(link.grade, 0).trim()} ${clip(head!.token.text, 80)} ← ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ''} ${src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`)}`
-    : e.traces.length ? `${s.grade('UNKNOWN', 0).trim()} ${s.dim('no observed source')}` : '';
-  const asked = e.requested.verdict === 'NAMED' ? s.dim('named by you') : e.requested.verdict === 'NOT_NAMED' ? s.flag('not named by you') : '';
-  const detail = [from, asked].filter(Boolean).join('   ');
+  const detail = trailDetail(e, inputs, s);
   if (detail) lines.push(`         ${s.dim('↳')} ${detail}`);
 
   const effects = g.effects.filter(x => x.actionId === a.id && x.kind !== 'network');
   if (effects.length && kind === 'SHELL') {
-    const shown = effects.slice(0, 4).map(x => x.target).join(', ') + (effects.length > 4 ? `, +${effects.length - 4} more` : '');
+    const shown = effects.slice(0, 4).map(x => clip(x.target, 80)).join(', ') + (effects.length > 4 ? `, +${effects.length - 4} more` : '');
     const how = effects.every(x => x.evidence === 'expected') ? s.dim(' (expected, not observed)') : '';
     lines.push(`         ${s.dim('→')} ${shown}${how}`);
   }
   return lines;
 }
 
-const headline = headlineTrace;
+/** An action's headline value and where it first came from, then whether you named it: one line. */
+export function trailDetail(e: Explanation, inputs: Map<string, Input>, s: Style): string {
+  const head = headlineTrace(e);
+  const from = head ? traceSource(head, inputs, s) : '';
+  const found = from || (e.traces.length ? `${s.grade('UNKNOWN', 0).trim()} ${s.dim('no observed source')}` : '');
+  const asked = e.requested.verdict === 'NAMED' ? s.dim('named by you') : e.requested.verdict === 'NOT_NAMED' ? s.flag('not named by you') : '';
+  return [found, asked].filter(Boolean).join('   ');
+}
+
+/** A traced value and the source first credited with it: `LIKELY jwt-decode ← README.md:13 (local)`; empty when none was found. */
+export function traceSource(t: TokenTrace, inputs: Map<string, Input>, s: Style): string {
+  const link = t.links.find(l => l.grade !== 'UNKNOWN');
+  const src = link?.to ? inputs.get(link.to) : undefined;
+  if (!src || !link) return '';
+  const trust = src.trust === 'external' ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+  return `${s.grade(link.grade, 0).trim()} ${clip(t.token.text, 80)} ← ${clip(src.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ''} ${trust}`;
+}
 
 /** trace --tree: each action under the call whose output first held its headline value. */
 export function renderTree(g: Graph, forest: TreeRoot[], omitted: number, s: Style = PLAIN): string {
   const out: string[] = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? '';
+  const sessionId = g.sessionId;
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(s.dim('Each action sits under the call whose output first held its headline value. Data flow, not the agent\'s reasons.'));
   for (const root of forest) {
@@ -177,7 +186,7 @@ export function renderFind(value: string, hits: Array<{ graph: Graph; sightings:
     return `${out.join('\n')}\n`;
   }
   for (const { graph: g, sightings } of found) {
-    const sessionId = g.actions[0]?.scope.sessionId ?? '';
+    const sessionId = g.sessionId;
     const first = g.prompts.find(p => p.from === 'you');
     out.push('', `${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : '')}`);
     let seenSource = false;
@@ -241,8 +250,12 @@ function highlightFlag(row: string, s: Style): string {
 export function renderRisks(findings: Finding[], scanned: { actions: number; sessions: number }, g: Map<string, Graph>, s: Style = PLAIN): string {
   const out: string[] = [];
   out.push(
-    `${s.bold('Sensitive actions')} ${s.dim(`(${findings.length} of ${scanned.actions} tool calls in ${scanned.sessions} session${scanned.sessions === 1 ? '' : 's'})`)}`,
+    `${s.bold('Sensitive actions')} ${s.dim(`(${findings.length} of ${counted(scanned.actions, 'tool call')} in ${counted(scanned.sessions, 'session')})`)}`,
   );
+  if (!scanned.actions) {
+    out.push('', '  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.');
+    return `${out.join('\n')}\n`;
+  }
   if (!findings.length) out.push('', '  None found.');
   for (const f of findings) {
     const graph = g.get(f.action.scope.sessionId)!;
@@ -288,7 +301,7 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
   const out: string[] = [];
   const { commit, action, explanation: e } = r;
   const prompt = g.prompts.find(p => p.promptId === action.promptId);
-  out.push(`${s.bold('Commit')} ${s.accent(commit.sha)} on ${commit.branch}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
+  out.push(`${s.bold('Commit')} ${s.accent(commit.sha)} on ${clip(commit.branch, 60)}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
   if (r.via === 'time') {
     const at = r.commitSec ? new Date(r.commitSec * 1000).toISOString().slice(11, 19) : 'that second';
     out.push(
@@ -296,7 +309,7 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
       `           ${s.dim('git printed no commit line for this command, so the join is on time, not on git\'s output')}`,
     );
   } else {
-    out.push(`  ${s.grade('DIRECT')}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim('[R1]')}`);
+    out.push(`  ${s.grade('DIRECT')}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${clip(commit.branch, 60)} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim('[R1]')}`);
   }
   const verdict = e.requested.verdict;
   const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : '';
@@ -333,8 +346,35 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
 
 const pad = (text: string, width: number) => text.padEnd(width);
 
-function localTime(us: number): string {
+/** "1 tool call", "2 tool calls" */
+const counted = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+export function localTime(us: number): string {
   const d = new Date(Math.floor(us / 1000));
   const two = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+const TRIPWIRE_ASKED: Record<Finding['requested'], string> = {
+  NAMED: 'named in your words',
+  NAMED_NEGATED: 'named, but your latest mention is negated',
+  PARTLY_NAMED: 'partly named in your words',
+  NOT_NAMED: 'not named in your words',
+  NOTHING_TO_MATCH: 'nothing in it to match against your words',
+};
+
+/**
+ * The tripwire notice, shown to the person before a sensitive call runs: what is sensitive,
+ * whether your words named it, and the nearest external source its values first appeared in.
+ * Plain text on one line; it describes where values came from and never judges the call.
+ */
+export function renderTripwire(f: Finding, e: Explanation): string {
+  const external = f.sources.find(x => x.input.trust === 'external')!;
+  const values = [...new Set(f.sources.filter(x => x.input.id === external.input.id).map(x => x.link.token).filter((v): v is string => !!v))];
+  const where = external.link.quote?.line != null ? `${clip(external.input.label, 80)}:${external.link.quote.line}` : clip(external.input.label, 80);
+  const shown = values.length ? clip(values.map(v => clip(v, 60)).join(', '), 120) : 'a value in it';
+  return (
+    `Contrail ▲ ${f.kinds.join(' · ')} · ${TRIPWIRE_ASKED[f.requested]}: ${shown} first appeared in ${where} ` +
+    `(external, ${external.link.grade}). Trail: /contrail:why ${callId(e.action.id)}`
+  );
 }

@@ -1,7 +1,8 @@
 /**
  * npm run svg: renders Contrail's colored terminal output as SVG "terminal windows" for the README.
  *
- *   node scripts/svg.ts                      build the demo and write every docs/*.svg
+ *   node scripts/svg.ts                      build the demo and write every docs/*.svg and docs/*.md view
+ *   node scripts/svg.ts review.svg ...       only the named views
  *   cmd | node scripts/svg.ts --title T      convert ANSI text on stdin to one SVG on stdout
  *
  * The palette maps the SGR codes that src/render/style.ts emits. Nothing else is interpreted:
@@ -68,19 +69,27 @@ ${body}
 }
 
 /** The demo views shown in the README, as `contrail <args>`. `{sha}` is the demo commit. */
-const VIEWS: Array<{ file: string; args: string[]; cols?: number }> = [
+const VIEWS: Array<{ file: string; args: string[]; cols?: number; lines?: number }> = [
+  // The README's first image: the answer at the top of a report, cut before the evidence.
+  { file: 'hero.svg', args: ['why', 'cat ~/.aws/credentials'], lines: 13, cols: 132 },
   { file: 'why.svg', args: ['why', 'npm install jwt-decode'] },
   { file: 'risks.svg', args: ['risks'] },
   { file: 'trace.svg', args: ['trace', '--session', '4f2a'] },
   { file: 'trace-tree.svg', args: ['trace', '--session', '9c1e', '--tree'], cols: 146 },
   { file: 'why-commit.svg', args: ['why', 'commit', '{sha}'] },
+  { file: 'blame.svg', args: ['blame', 'auth-service/src/session.ts'] },
   { file: 'find.svg', args: ['find', 'collect.telemetry.example'], cols: 146 },
   { file: 'sessions.svg', args: ['sessions'], cols: 150 },
+  { file: 'review.svg', args: ['review'] },
+  // Not a picture: the markdown a reviewer would paste into a pull request, kept as is.
+  { file: 'review-example.md', args: ['review', '--markdown'] },
 ];
 
 const shellQuote = (a: string) => (/^[\w./@:-]+$/.test(a) ? a : `"${a}"`);
 
-async function renderDocs(): Promise<void> {
+async function renderDocs(only: string[]): Promise<void> {
+  const unknown = only.filter(f => !VIEWS.some(v => v.file === f));
+  if (unknown.length) throw new Error(`No view named ${unknown.join(', ')}. Views: ${VIEWS.map(v => v.file).join(', ')}`);
   const { buildDemo } = await import('../test/fixtures/demo.ts');
   const { main } = await import('../src/cli.ts');
   const root = join(realpathSync(tmpdir()), 'contrail-demo');
@@ -88,20 +97,22 @@ async function renderDocs(): Promise<void> {
   const { repo, data, sha } = buildDemo(root);
   const docs = join(import.meta.dirname, '..', 'docs');
   mkdirSync(docs, { recursive: true });
-  for (const view of VIEWS) {
+  for (const view of VIEWS.filter(v => !only.length || only.includes(v.file))) {
     const args = view.args.map(a => a.replace('{sha}', sha.slice(0, 7)));
     let out = '';
     let err = '';
     const code = await main([...args, '--data', data], { out: s => (out += s), err: s => (err += s), cwd: repo, env: { FORCE_COLOR: '1' }, home: '/Users/dev' });
     if (code !== 0) throw new Error(`contrail ${args.join(' ')} exited ${code}: ${err}`);
+    if (view.lines) out = `${out.split('\n').slice(0, view.lines).join('\n')}\n\x1b[2m…  the full evidence follows: every value, its quoted source line, and the blind spots\x1b[0m\n`;
     const command = `contrail ${args.map(shellQuote).join(' ')}`;
-    writeFileSync(join(docs, view.file), ansiToSvg(`\x1b[2m$\x1b[0m \x1b[1m${command}\x1b[0m\n${out}`, command, view.cols));
+    if (view.file.endsWith('.md')) writeFileSync(join(docs, view.file), out);
+    else writeFileSync(join(docs, view.file), ansiToSvg(`\x1b[2m$\x1b[0m \x1b[1m${command}\x1b[0m\n${out}`, command, view.cols));
     console.log(`docs/${view.file}  ${command}`);
   }
 }
 
 if (import.meta.main) {
-  const { values } = parseArgs({ options: { title: { type: 'string' } } });
+  const { values, positionals } = parseArgs({ options: { title: { type: 'string' } }, allowPositionals: true });
   if (values.title !== undefined) process.stdout.write(ansiToSvg(readFileSync(0, 'utf8'), values.title));
-  else await renderDocs();
+  else await renderDocs(positionals);
 }

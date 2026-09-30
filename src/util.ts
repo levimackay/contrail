@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 /** Every string inside a JSON value, depth-first, with its JSONPath. */
 export function stringLeaves(value: unknown, path = '$'): Array<{ path: string; value: string }> {
@@ -66,12 +67,15 @@ export function changedFiles(response: unknown, cwd: string): string[] {
 
 /**
  * One line, at most `max` characters, safe to print: control characters (terminal escapes)
- * become spaces and backticks become quotes, so recorded text can't restyle a terminal or
+ * become spaces, invisible direction and zero-width marks become a visible �, and backticks become quotes, so recorded text can't restyle a terminal or
  * turn into a command when a report is shown inside Claude Code.
  */
 export function clip(s: string, max: number): string {
   const one = s
-    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    // C0 and C1 controls (ESC and its 8-bit form CSI, U+009B) would restyle a terminal.
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    // Bidi overrides and zero-width characters would make text read as something else: show them.
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '\ufffd')
     .replace(/`/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
@@ -83,5 +87,23 @@ export function clip(s: string, max: number): string {
  * Within one session the tail is distinct in practice, and the seq beside it is exact. JSON keeps the full id.
  */
 export function callId(id: string): string {
-  return id.length > 12 ? `${id.slice(0, 5)}…${id.slice(-5)}` : id;
+  const safe = id.replace(/[^\w-]/g, '?');
+  return safe.length > 12 ? `${safe.slice(0, 5)}…${safe.slice(-5)}` : safe;
+}
+
+/**
+ * The path with symlinks resolved; for a file that no longer exists, its directory's real path.
+ * Hooks may record a symlinked path (/var/... on macOS) where the shell reports the real one
+ * (/private/var/...), so paths are joined on this.
+ */
+export function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    try {
+      return join(realpathSync(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
 }

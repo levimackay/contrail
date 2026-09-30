@@ -1,5 +1,5 @@
 {
-  "description": "Contrail: record hook events so `contrail why` can reconstruct what led to an action.",
+  "description": "Contrail: record hook events so `contrail why` can show the observable trail behind an action.",
   "hooks": {
     "SessionStart": [
       {
@@ -19,7 +19,15 @@
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 }] }
     ],
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 }] },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tripwire.sh\" shell", "timeout": 10 }]
+      },
+      {
+        "matcher": "Read|Edit|MultiEdit|Write",
+        "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tripwire.sh\" path", "timeout": 10 }]
+      }
     ],
     "PostToolUse": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/capture.sh\"", "timeout": 10 }] }

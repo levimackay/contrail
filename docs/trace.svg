@@ -22,7 +22,7 @@
     <text y="349" style="white-space: pre"><tspan x="18.0" font-weight="bold">p2</tspan><tspan x="33.6">  </tspan><tspan x="49.2" font-weight="bold">&quot;looks good, commit it&quot;</tspan></text>
     <text y="367" style="white-space: pre"><tspan x="18.0">  </tspan><tspan x="33.6" fill="#7d8590">23  </tspan><tspan x="64.8"> SHELL   git add -A &amp;&amp; git commit -m &quot;fix(auth): refresh tokens before they expire&quot;</tspan></text>
     <text y="385" style="white-space: pre"><tspan x="18.0">         </tspan><tspan x="88.2" fill="#7d8590">↳</tspan><tspan x="96.0"> </tspan><tspan x="103.8" fill="#d29922">POSSIBLE</tspan><tspan x="166.2"> commit ← your prompt p2 </tspan><tspan x="361.2" fill="#7d8590">(principal)</tspan><tspan x="447.0">   </tspan><tspan x="470.4" fill="#7d8590">named by you</tspan></text>
-    <text y="403" style="white-space: pre"><tspan x="18.0">         </tspan><tspan x="88.2" fill="#7d8590">→</tspan><tspan x="96.0"> 5c7338b on main</tspan></text>
+    <text y="403" style="white-space: pre"><tspan x="18.0">         </tspan><tspan x="88.2" fill="#7d8590">→</tspan><tspan x="96.0"> e075478 on main</tspan></text>
     <text y="439" style="white-space: pre"><tspan x="18.0" fill="#7d8590">Run </tspan><tspan x="49.2" fill="#7d8590" font-weight="bold">contrail why &lt;path | &quot;command&quot;&gt;</tspan><tspan x="291.0"> for the full trail behind any line.</tspan></text>
   </g>
 </svg>

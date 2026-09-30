@@ -50,3 +50,23 @@ test('sixteen processes migrating the same new database at once all succeed', as
   assert.equal(db.get<{ user_version: number }>('PRAGMA user_version')?.user_version, SCHEMA_VERSION);
   db.close();
 });
+
+test('switching a new database to WAL is retried when SQLite fails it at once as a lock conflict', async () => {
+  const db = await openDb(tempDb());
+  let failures = 2;
+  const flaky: typeof db = {
+    ...db,
+    exec: (sql: string) => {
+      if (/journal_mode = WAL/.test(sql) && failures-- > 0) throw new Error('database is locked');
+      db.exec(sql);
+    },
+    get: db.get.bind(db),
+    run: db.run.bind(db),
+    all: db.all.bind(db),
+    close: db.close.bind(db),
+  };
+  migrate(flaky);
+  assert.equal(failures, -1);
+  assert.equal(db.get<{ journal_mode: string }>('PRAGMA journal_mode')?.journal_mode, 'wal');
+  db.close();
+});

@@ -7,9 +7,11 @@ export interface Config {
   maxDbMb: number;
   /** false: store what the agent read as keyed hashes, never as text */
   storeContent: boolean;
+  /** false: no tripwire notices before sensitive tool calls */
+  tripwire: boolean;
 }
 
-export const DEFAULTS: Config = { retentionDays: 90, maxDbMb: 1024, storeContent: true };
+export const DEFAULTS: Config = { retentionDays: 90, maxDbMb: 1024, storeContent: true, tripwire: true };
 
 /** config.json in the data directory, e.g. {"retention_days": 30, "max_db_mb": 512}. Missing or invalid values fall back to defaults. */
 export function loadConfig(dataDir: string): { config: Config; problem: string | null } {
@@ -27,6 +29,7 @@ export function loadConfig(dataDir: string): { config: Config; problem: string |
         retentionDays: positive(c.retention_days, DEFAULTS.retentionDays),
         maxDbMb: positive(c.max_db_mb, DEFAULTS.maxDbMb),
         storeContent: c.store_content !== false,
+        tripwire: c.tripwire !== false,
       },
       problem: null,
     };

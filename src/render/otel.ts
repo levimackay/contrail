@@ -41,7 +41,7 @@ const hexId = (kind: string, value: string, length: 16 | 32) => {
 const nanos = (us: number) => (BigInt(Math.round(us)) * 1000n).toString();
 
 export function toOtlp(g: Graph, explanations: Map<string, Explanation>, findings: Finding[], version: string): unknown {
-  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? 'unknown';
+  const sessionId = g.sessionId || 'unknown';
   const traceId = hexId('trace', sessionId, 32);
   const rootId = hexId('session', sessionId, 16);
   const actionSpan = (id: string) => hexId('action', `${sessionId}:${id}`, 16);

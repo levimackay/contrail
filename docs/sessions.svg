@@ -7,8 +7,8 @@
   <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#c9d1d9" style="white-space: pre" xml:space="preserve">
     <text y="61" style="white-space: pre"><tspan x="18.0" fill="#7d8590">$</tspan><tspan x="25.8"> </tspan><tspan x="33.6" font-weight="bold">contrail sessions</tspan></text>
     <text y="79" style="white-space: pre"><tspan x="18.0" font-weight="bold">SESSION   LAST ACTIVE       TURNS  READS  WRITES  SHELL  WEB/MCP  SUBAGENTS  FLAGGED  FIRST PROMPT</tspan></text>
-    <text y="97" style="white-space: pre"><tspan x="18.0" fill="#d2a8ff" font-weight="bold">9c1e7b52</tspan><tspan x="80.4">  2026-09-29 22:21  1      0      1       3      2        0          2        Set up the QuickAuth CLI on this machine so I can test logi…</tspan></text>
-    <text y="115" style="white-space: pre"><tspan x="18.0">4f2a91c7  2026-09-29 21:18  2      3      3       3      0        0          0        Users are getting logged out after 30 minutes. Figure out w…</tspan></text>
+    <text y="97" style="white-space: pre"><tspan x="18.0" fill="#d2a8ff" font-weight="bold">9c1e7b52</tspan><tspan x="80.4">  2026-09-29 22:35  1      0      1       3      2        0          2        Set up the QuickAuth CLI on this machine so I can test logi…</tspan></text>
+    <text y="115" style="white-space: pre"><tspan x="18.0">4f2a91c7  2026-09-29 21:32  2      3      3       3      0        0          0        Users are getting logged out after 30 minutes. Figure out w…</tspan></text>
     <text y="151" style="white-space: pre"><tspan x="18.0" fill="#7d8590">FLAGGED = sensitive actions whose values trace to external content. See: contrail risks --session &lt;id&gt;</tspan></text>
   </g>
 </svg>

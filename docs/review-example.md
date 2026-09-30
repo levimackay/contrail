@@ -5,7 +5,7 @@
 
 **1 commit · 5 changed files (1 not committed) · 4 with recorded agent changes · 2 sessions · 1 of 1 commits joined to the call that made them**
 
-<sub>Merge-base `d12cffc`, base chosen by default (the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists). Agent changes: recorded writes to these paths in sessions active in this repository since 2026-09-29 19:15 UTC, joined by path.</sub>
+<sub>Merge-base `8742ef6`, base chosen by default (the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists). Agent changes: recorded writes to these paths in sessions active in this repository since 2026-09-29 19:29 UTC, joined by path.</sub>
 
 #### Values from external content in this change
 
@@ -32,14 +32,14 @@ Marks: ▲ a value traces to web, MCP or dependency content; △ not named by yo
 
 #### Commits
 
-- `ca556d3` `fix(auth): refresh tokens before they expire` · **DIRECT** [R1] made by Bash `t7` in session `4f2a91c7` · turn p2: `looks good, commit it` · named by you
+- `e075478` `fix(auth): refresh tokens before they expire` · **DIRECT** [R1] made by Bash `t7` in session `4f2a91c7` · turn p2: `looks good, commit it` · named by you
 
 #### Files with recorded agent changes (4)
 
 <details>
 <summary><code>auth-service/src/session.ts</code> · LIKELY · Edit <code>t5</code> · not named by you</summary>
 
-- committed in ca556d3
+- committed in e075478
 - **LIKELY** [R7] Edit `t5` in session `4f2a91c7`, seq 15 · not named by you
   - Turn p1: `Users are getting logged out after 30 minutes. Figure out why and fix it.`
   - Trail: **LIKELY** [R3] `auth-service/src/session.ts` from `the output of Grep "shouldRefresh"`, search output (local)
@@ -49,7 +49,7 @@ Marks: ▲ a value traces to web, MCP or dependency content; △ not named by yo
 <details>
 <summary><code>package-lock.json</code> · POSSIBLE · Bash <code>t4</code> · not named by you</summary>
 
-- committed in ca556d3
+- committed in e075478
 - **POSSIBLE** [R7] Bash `t4` `npm install jwt-decode` in session `4f2a91c7`, seq 12, expected, not observed · not named by you
   - Turn p1: `Users are getting logged out after 30 minutes. Figure out why and fix it.`
   - Trail: **LIKELY** [R3] `jwt-decode` from `auth-service/README.md:13`, repo file (local)
@@ -59,7 +59,7 @@ Marks: ▲ a value traces to web, MCP or dependency content; △ not named by yo
 <details>
 <summary><code>package.json</code> · POSSIBLE · Bash <code>t4</code> · not named by you</summary>
 
-- committed in ca556d3
+- committed in e075478
 - **POSSIBLE** [R7] Bash `t4` `npm install jwt-decode` in session `4f2a91c7`, seq 12, expected, not observed · not named by you
   - Turn p1: `Users are getting logged out after 30 minutes. Figure out why and fix it.`
   - Trail: **LIKELY** [R3] `jwt-decode` from `auth-service/README.md:13`, repo file (local)
@@ -80,11 +80,11 @@ Marks: ▲ a value traces to web, MCP or dependency content; △ not named by yo
 
 You, another process, or a session Contrail did not record.
 
-- `docs/CHANGELOG.md` · committed in ca556d3
+- `docs/CHANGELOG.md` · committed in e075478
 
 ---
 <sub>LIKELY, not DIRECT: the agent wrote that path while this branch was in progress; whether that exact change is what the diff holds is not observed. DIRECT is used only for joins Claude Code recorded, such as git's own commit line in a command's output. Text matches are LIKELY at best. The agent's own words are never evidence.</sub>
 
 <sub>Blind spots: model knowledge and reasoning; system prompt; AGENTS.md; context injected by other hooks; changes made outside recorded Claude Code sessions (by you, another tool, or before Contrail was installed); which part of a recorded write the diff holds (files are joined by path and time, not content); commits rebased, amended or squashed after they were recorded (their new shas match no recorded commit line); sessions removed by retention. No observed source is not the same as no source.</sub>
 
-<sub>Written by `contrail review` 0.3.0 from the local record on the author's machine; nothing was sent anywhere. Run `contrail why <path>` there for the full trail behind any file.</sub>
+<sub>Written by `contrail review` 0.4.0 from the local record on the author's machine; nothing was sent anywhere. Run `contrail why <path>` there for the full trail behind any file.</sub>

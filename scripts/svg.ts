@@ -71,7 +71,7 @@ ${body}
 /** The demo views shown in the README, as `contrail <args>`. `{sha}` is the demo commit. */
 const VIEWS: Array<{ file: string; args: string[]; cols?: number; lines?: number }> = [
   // The README's first image: the answer at the top of a report, cut before the evidence.
-  { file: 'hero.svg', args: ['why', 'cat ~/.aws/credentials'], lines: 13 },
+  { file: 'hero.svg', args: ['why', 'cat ~/.aws/credentials'], lines: 13, cols: 132 },
   { file: 'why.svg', args: ['why', 'npm install jwt-decode'] },
   { file: 'risks.svg', args: ['risks'] },
   { file: 'trace.svg', args: ['trace', '--session', '4f2a'] },

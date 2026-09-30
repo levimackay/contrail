@@ -1911,6 +1911,35 @@ var RULES = [
     replace: (_m, prefix) => `${prefix}${tag("cli-password")}`
   },
   {
+    // {"Name": "DB_PASSWORD", "Value": "…"} as text: ECS task definitions, CloudFormation parameters.
+    id: "secret-pair",
+    re: /("(?:name|key|parametername|parameterkey)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}"([A-Za-z0-9_./:-]{1,128})"[ \t\r\n]{0,64},[ \t\r\n]{0,64}"(?:value|parametervalue)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}")((?:[^"\\\n]|\\.){1,16384})"/gi,
+    replace: (m, prefix, name, value) => secretValue(name, value, true) ? `${prefix}${tag("secret-pair")}"` : m
+  },
+  {
+    id: "secret-pair",
+    re: /("(?:value|parametervalue)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}")((?:[^"\\\n]|\\.){1,16384})("[ \t\r\n]{0,64},[ \t\r\n]{0,64}"(?:name|key|parametername|parameterkey)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}"([A-Za-z0-9_./:-]{1,128})")/gi,
+    replace: (m, prefix, value, suffix, name) => secretValue(name, value, true) ? `${prefix}${tag("secret-pair")}${suffix}` : m
+  },
+  {
+    // - name: DB_PASSWORD
+    //   value: hunter2        (Kubernetes env, GitHub Actions inputs)
+    id: "secret-pair",
+    re: /(\bname:[ \t]{1,4}["']?([A-Za-z0-9_.-]{1,128})["']?[ \t]{0,4}\r?\n[ \t]{0,64}value:[ \t]{1,4})(?:"((?:[^"\\\n]|\\.){1,16384})"|'([^'\n]{1,16384})'|([^\s#'"][^\r\n]{0,16383}))/g,
+    replace: (m, prefix, name, dq, sq, bare) => {
+      const value = dq ?? sq ?? bare?.trimEnd() ?? "";
+      const quote2 = dq !== void 0 ? '"' : sq !== void 0 ? "'" : "";
+      if (!secretValue(name, value, quote2 !== "")) return m;
+      return `${prefix}${quote2}${tag("secret-pair")}${quote2}`;
+    }
+  },
+  {
+    // define('DB_PASSWORD', 'x'), os.environ.setdefault("SECRET_KEY", "x"), headers.set("Authorization", "x").
+    id: "secret-pair",
+    re: /(\b(?:define|setdefault|setenv|putenv|set|env|getenv|get|fetch|header|setHeader|append|add|put)\([ \t]{0,4}(["'])([A-Za-z0-9_.-]{1,128})\2[ \t]{0,4},[ \t]{0,4})(["'])((?:(?!\4)[^\n\\]|\\.){1,4096})\4/g,
+    replace: (m, prefix, _q, name, vq, value) => secretValue(name, value, true) ? `${prefix}${vq}${tag("secret-pair")}${vq}` : m
+  },
+  {
     id: "env-secret",
     re: new RegExp(`${NAME}${SEP}((?:bearer|basic|token)[ \\t]{1,4})?(?:${QUOTED}|${BARE})`, "gi"),
     replace: (m, name, sep, scheme, dq, sq, bare) => {
@@ -1942,15 +1971,16 @@ function redactValue(value, key = "") {
   }
   if (Array.isArray(value)) return value.map((v) => redactValue(v));
   if (value && typeof value === "object") {
-    const o = value;
-    const pairName = typeof o.key === "string" ? o.key : typeof o.name === "string" ? o.name : "";
-    const secretPair = pairName !== "" && isSecretName(pairName);
-    return Object.fromEntries(
-      Object.entries(o).map(([k, v]) => [k, redactValue(v, secretPair && k === "value" ? "secret" : k)])
-    );
+    const entries = Object.entries(value);
+    const pair = entries.find(([k, v]) => PAIR_NAME.has(k.toLowerCase()) && typeof v === "string");
+    const pairName = pair && isSecretName(pair[1]) ? pair[1] : "";
+    const keyOf = (k) => PAIR_NAME.has(k.toLowerCase()) ? "" : pairName && PAIR_VALUE.has(k.toLowerCase()) ? pairName : k;
+    return Object.fromEntries(entries.map(([k, v]) => [k, redactValue(v, keyOf(k))]));
   }
   return value;
 }
+var PAIR_NAME = /* @__PURE__ */ new Set(["key", "name", "parameterkey", "parametername"]);
+var PAIR_VALUE = /* @__PURE__ */ new Set(["value", "parametervalue"]);
 var PATTERNS = [
   ...RULES.map((r) => r.re),
   PLACEHOLDER,

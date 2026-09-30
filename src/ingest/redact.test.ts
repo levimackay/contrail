@@ -267,6 +267,12 @@ const LEAKS: Array<[string, string, string]> = [
   ['a typed python assignment', `API_KEY: str = "${PW}"`, PW],
   ['an escaped JSON string under a secret name', `"SecretString": "{\\"password\\":\\"${PW}\\"}"`, PW],
   ['a long value, whole', `client-key-data: ${repeat(B64, 200)}`, B64],
+  // Name/value pairs
+  ['JSON name/value pair', `{"Name":"DB_PASSWORD","Value":"${PW}"}`, PW],
+  ['JSON name/value pair, pretty and lower case', `{\n  "name": "API_TOKEN",\n  "value": "${PW}"\n}`, PW],
+  ['JSON value/name pair', `{"value":"${PW}","name":"DB_PASSWORD"}`, PW],
+  ['kubernetes env pair', `- name: DB_PASSWORD\n  value: ${PW}\n`, PW],
+  ['php define()', `define( 'DB_PASSWORD', '${PW}' );`, PW],
 ];
 for (const [what, text, secret] of LEAKS) {
   test(`redacts ${what}`, () => {
@@ -325,6 +331,27 @@ for (const text of CODE) {
   test(`leaves alone: ${text.slice(0, 40)}`, () => assert.equal(redactString(text), text));
 }
 
+test('only the value of a name/value pair goes, whatever the key casing', () => {
+  const out = redactValue({
+    a: { Name: 'DB_PASSWORD', Value: PW },
+    b: { KEY: 'API_TOKEN', VALUE: PW },
+    c: { ParameterKey: 'DbPassword', ParameterValue: PW },
+    d: { name: 'LOG_LEVEL', value: 'debug' },
+  });
+  assert.deepEqual(out, {
+    a: { Name: 'DB_PASSWORD', Value: '[REDACTED:secret-field]' },
+    b: { KEY: 'API_TOKEN', VALUE: '[REDACTED:secret-field]' },
+    c: { ParameterKey: 'DbPassword', ParameterValue: '[REDACTED:secret-field]' },
+    d: { name: 'LOG_LEVEL', value: 'debug' },
+  });
+});
+
+test('a pair naming something else is left alone', () => {
+  for (const text of ['{"name":"LOG_LEVEL","value":"debug"}', '- name: TOKEN_URL\n  value: https://example.com/token', "headers.set('Accept', 'application/json')"]) {
+    assert.equal(redactString(text), text);
+  }
+});
+
 test('punctuation after a bare value is kept outside the redaction', () => {
   assert.equal(redactString(`f(password=${PW}), then`), 'f(password=[REDACTED:env-secret]), then');
   assert.equal(redactString(`{password: ${PW}, user: bob}`), '{password: [REDACTED:env-secret], user: bob}');
@@ -341,6 +368,8 @@ test('name patterns redact hostile 256 KB input in linear time', () => {
   const inputs = [
     fill('a_token='), fill('password="'), fill("key: '"), fill('secret:'), fill('a.b.password.'), fill('x-key-'), fill('KEY=,'),
     fill('password=a,'), fill('password=a, b'), fill('PASSWORD=x&y'), fill('token: str ='), fill('token=bearer '), fill('password=\\"'),
+    fill('"name":"PASSWORD","value":"'), fill('"value":"x","name":"'), fill('name: A\nvalue: '), fill("define('A',"),
+    fill("set('PASSWORD', 'x"),
     fill('x', 'PASSWORD='), fill('(', 'PASSWORD=ab'), fill('a.', 'PASSWORD=ab'), fill('{"auth":"a","token":"b","key":1},'),
     fill('const password = getPassword(a, b);\n'),
   ];

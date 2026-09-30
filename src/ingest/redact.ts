@@ -275,6 +275,35 @@ const RULES: Rule[] = [
     replace: (_m, prefix) => `${prefix}${tag('cli-password')}`,
   },
   {
+    // {"Name": "DB_PASSWORD", "Value": "…"} as text: ECS task definitions, CloudFormation parameters.
+    id: 'secret-pair',
+    re: /("(?:name|key|parametername|parameterkey)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}"([A-Za-z0-9_./:-]{1,128})"[ \t\r\n]{0,64},[ \t\r\n]{0,64}"(?:value|parametervalue)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}")((?:[^"\\\n]|\\.){1,16384})"/gi,
+    replace: (m, prefix, name, value) => (secretValue(name!, value!, true) ? `${prefix}${tag('secret-pair')}"` : m),
+  },
+  {
+    id: 'secret-pair',
+    re: /("(?:value|parametervalue)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}")((?:[^"\\\n]|\\.){1,16384})("[ \t\r\n]{0,64},[ \t\r\n]{0,64}"(?:name|key|parametername|parameterkey)"[ \t\r\n]{0,64}:[ \t\r\n]{0,64}"([A-Za-z0-9_./:-]{1,128})")/gi,
+    replace: (m, prefix, value, suffix, name) => (secretValue(name!, value!, true) ? `${prefix}${tag('secret-pair')}${suffix}` : m),
+  },
+  {
+    // - name: DB_PASSWORD
+    //   value: hunter2        (Kubernetes env, GitHub Actions inputs)
+    id: 'secret-pair',
+    re: /(\bname:[ \t]{1,4}["']?([A-Za-z0-9_.-]{1,128})["']?[ \t]{0,4}\r?\n[ \t]{0,64}value:[ \t]{1,4})(?:"((?:[^"\\\n]|\\.){1,16384})"|'([^'\n]{1,16384})'|([^\s#'"][^\r\n]{0,16383}))/g,
+    replace: (m, prefix, name, dq, sq, bare) => {
+      const value = dq ?? sq ?? bare?.trimEnd() ?? '';
+      const quote = dq !== undefined ? '"' : sq !== undefined ? "'" : '';
+      if (!secretValue(name!, value, quote !== '')) return m;
+      return `${prefix}${quote}${tag('secret-pair')}${quote}`;
+    },
+  },
+  {
+    // define('DB_PASSWORD', 'x'), os.environ.setdefault("SECRET_KEY", "x"), headers.set("Authorization", "x").
+    id: 'secret-pair',
+    re: /(\b(?:define|setdefault|setenv|putenv|set|env|getenv|get|fetch|header|setHeader|append|add|put)\([ \t]{0,4}(["'])([A-Za-z0-9_.-]{1,128})\2[ \t]{0,4},[ \t]{0,4})(["'])((?:(?!\4)[^\n\\]|\\.){1,4096})\4/g,
+    replace: (m, prefix, _q, name, vq, value) => (secretValue(name!, value!, true) ? `${prefix}${vq}${tag('secret-pair')}${vq}` : m),
+  },
+  {
     id: 'env-secret',
     re: new RegExp(`${NAME}${SEP}((?:bearer|basic|token)[ \\t]{1,4})?(?:${QUOTED}|${BARE})`, 'gi'),
     replace: (m, name, sep, scheme, dq, sq, bare) => {
@@ -304,7 +333,7 @@ export function redactString(s: string): string {
 /**
  * Redacts every string in a JSON value. Walks decoded strings rather than the serialized
  * JSON, because \n escapes break pattern boundaries. A string stored under a secret-named
- * key ({"password": "…"}, or {"key": "DB_PASSWORD", "value": "…"}) is redacted whole.
+ * key ({"password": "…"}, or {"Name": "DB_PASSWORD", "Value": "…"} in any casing) is redacted whole.
  */
 export function redactValue(value: unknown, key = ''): unknown {
   if (typeof value === 'string') {
@@ -313,15 +342,18 @@ export function redactValue(value: unknown, key = ''): unknown {
   }
   if (Array.isArray(value)) return value.map(v => redactValue(v));
   if (value && typeof value === 'object') {
-    const o = value as Record<string, unknown>;
-    const pairName = typeof o.key === 'string' ? o.key : typeof o.name === 'string' ? o.name : '';
-    const secretPair = pairName !== '' && isSecretName(pairName);
-    return Object.fromEntries(
-      Object.entries(o).map(([k, v]) => [k, redactValue(v, secretPair && k === 'value' ? 'secret' : k)]),
-    );
+    const entries = Object.entries(value as Record<string, unknown>);
+    const pair = entries.find(([k, v]) => PAIR_NAME.has(k.toLowerCase()) && typeof v === 'string');
+    const pairName = pair && isSecretName(pair[1] as string) ? (pair[1] as string) : '';
+    // In a pair, "key"/"name" holds the name, not a secret; "value" holds a secret if the name is one.
+    const keyOf = (k: string) => (PAIR_NAME.has(k.toLowerCase()) ? '' : pairName && PAIR_VALUE.has(k.toLowerCase()) ? pairName : k);
+    return Object.fromEntries(entries.map(([k, v]) => [k, redactValue(v, keyOf(k))]));
   }
   return value;
 }
+
+const PAIR_NAME = new Set(['key', 'name', 'parameterkey', 'parametername']);
+const PAIR_VALUE = new Set(['value', 'parametervalue']);
 
 /** Every pattern this module runs, for the test that checks each quantifier is bounded. */
 export const PATTERNS: RegExp[] = [

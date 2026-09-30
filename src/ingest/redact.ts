@@ -257,9 +257,11 @@ const RULES: Rule[] = [
   },
   {
     id: 'url-password',
-    // Greedy up to the last @ so a password containing @ is fully removed; container digests are not credentials.
-    re: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/]{0,256}:)([^\s/]{1,256})@(?!sha256:)/gi,
-    replace: (m, prefix, password) => (PLACEHOLDER.test(password!) ? m : `${prefix}${tag('url-password')}@`),
+    // A password may hold a / (then no @), or an @ (then no /): greedy up to the last @ so it is removed whole.
+    // A port (host:443/path/@scope) is not a password, and container digests are not credentials.
+    re: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/]{0,256}:)([^\s/@]{1,256}(?:\/[^\s/@]{0,256}){1,8}|[^\s/]{1,256})@(?!sha256:)/gi,
+    replace: (m, prefix, password) =>
+      PLACEHOLDER.test(password!) || /^\d{1,5}(?:\/|$)/.test(password!) ? m : `${prefix}${tag('url-password')}@`,
   },
   {
     id: 'netrc',

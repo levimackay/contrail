@@ -369,6 +369,12 @@ for (const text of CODE) {
   test(`leaves alone: ${text.slice(0, 40)}`, () => assert.equal(redactString(text), text));
 }
 
+test('a URL password with a / is removed and the host kept', () => {
+  assert.equal(redactString('https://user:pa/ss0rd123@example.com/x'), 'https://user:[REDACTED:url-password]@example.com/x');
+  assert.equal(redactString(`https://user:${PW}@host/path/@scope`), 'https://user:[REDACTED:url-password]@host/path/@scope');
+  for (const text of ['https://registry.npmjs.org:443/package/@scope/name', 'https://host:8080/users/@me']) assert.equal(redactString(text), text);
+});
+
 test('only the value of a name/value pair goes, whatever the key casing', () => {
   const out = redactValue({
     a: { Name: 'DB_PASSWORD', Value: PW },
@@ -410,6 +416,7 @@ test('name patterns redact hostile 256 KB input in linear time', () => {
     fill("set('PASSWORD', 'x"), fill('password ', 'machine x login y\n'), fill('machine a password b '), fill('a:1:b:c:d\n'),
     fill('a:1:b:c:'), fill(' --password'), fill(' --token x'), fill(' -storepass'), fill(' --a=--b='), fill('sshpass '),
     fill(' -x', 'sshpass'), fill('docker login '), fill('redis-cli -'), fill('config set a '), fill('mysql -p'), fill(' -u a:'),
+    fill('a://b:c/'), fill('a://b:c@'), fill('c/', 'a://b:'), fill('http://x:y'),
     fill('x', 'PASSWORD='), fill('(', 'PASSWORD=ab'), fill('a.', 'PASSWORD=ab'), fill('{"auth":"a","token":"b","key":1},'),
     fill('const password = getPassword(a, b);\n'),
   ];

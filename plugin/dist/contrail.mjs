@@ -4716,7 +4716,7 @@ var MIGRATIONS = [
 var SCHEMA_VERSION = MIGRATIONS.length;
 function migrate(db) {
   db.exec("PRAGMA busy_timeout = 5000");
-  db.exec("PRAGMA journal_mode = WAL");
+  useWal(db);
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("BEGIN IMMEDIATE");
@@ -4735,6 +4735,17 @@ function migrate(db) {
   } catch (e) {
     db.exec("ROLLBACK");
     throw e;
+  }
+}
+function useWal(db, attempts = 100) {
+  for (let i = 1; ; i++) {
+    try {
+      if (db.get("PRAGMA journal_mode")?.journal_mode.toLowerCase() !== "wal") db.exec("PRAGMA journal_mode = WAL");
+      return;
+    } catch (e) {
+      if (i >= attempts || !/locked|busy/i.test(e.message)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 + Math.floor(Math.random() * 30));
+    }
   }
 }
 

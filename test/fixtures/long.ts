@@ -92,7 +92,8 @@ export function longDrafts(cwd = LONG_CWD, { seed = 7, scale = 1 } = {}): Draft[
   const file = () => `${cwd}/src/${pick(PARTS)}/${pick(PARTS)}-${pick(PARTS)}.ts`;
 
   const read = (path: string, bytes: number, planted: string[] = [], agentId?: string) => {
-    const raw = source(Math.round(bytes * scale), planted);
+    // The read with a planted line is over the storage cap at any scale, so one input is always truncated.
+    const raw = source(planted.length ? Math.max(bytes, 300_000) : Math.round(bytes * scale), planted);
     const tid = id();
     const input = { file_path: path };
     const lines = raw.split('\n').length;

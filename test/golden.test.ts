@@ -39,7 +39,7 @@ before(() => {
   const cwd = join(root, 'long', 'ledger');
   mkdirSync(cwd, { recursive: true });
   const data = join(root, 'long', 'data');
-  writeSpool(data, [{ id: LONG_SESSION, drafts: longDrafts(cwd, { scale: 0.3 }), cwd }], Math.floor(NOW_MS / 1000) - 3 * 3600);
+  writeSpool(data, [{ id: LONG_SESSION, drafts: longDrafts(cwd, { scale: 0.1 }), cwd }], Math.floor(NOW_MS / 1000) - 3 * 3600);
   long = { cwd, data };
 });
 

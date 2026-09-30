@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { PATTERNS, redactString, redactValue } from './redact.ts';
+import { PATTERNS, redactCapped, redactString, redactValue } from './redact.ts';
 
 // Fake credentials assembled at runtime so this file never contains a literal secret.
 const repeat = (s: string, n: number) => s.repeat(n);
@@ -394,6 +394,21 @@ test('a pair naming something else is left alone', () => {
   for (const text of ['{"name":"LOG_LEVEL","value":"debug"}', '- name: TOKEN_URL\n  value: https://example.com/token', "headers.set('Accept', 'application/json')"]) {
     assert.equal(redactString(text), text);
   }
+});
+
+test('a token straddling the cap is redacted whole, not cut so its head survives', () => {
+  const token = `ghp_${repeat('a1B2', 9)}`;
+  const cap = 1000 + 20; // the cut falls 20 characters into the token
+  const out = redactCapped(`${'x '.repeat(500)}${token}\nmore`, cap);
+  assert.ok(!out.includes(token.slice(0, 12)), out.slice(-80));
+  assert.match(out, /\[REDACTED:github-token\]\n…\[contrail: truncated \d+ bytes\]$/);
+});
+
+test('an unrecognised token-like run the cap would split is dropped, not kept in part', () => {
+  const run = repeat('Zq9', 30);
+  const out = redactCapped(`${'word '.repeat(200)}${run} tail`, 1000 + 45);
+  assert.ok(!out.includes('Zq9'), out.slice(-80));
+  assert.match(out, /word \n…\[contrail: truncated \d+ bytes\]$/);
 });
 
 test('JSON nested thousands deep is redacted without overflowing the stack', () => {

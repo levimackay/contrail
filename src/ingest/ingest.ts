@@ -6,7 +6,7 @@ import type { Db } from '../store/sqlite.ts';
 import { changedFiles, obj, str } from '../util.ts';
 import { expectedShellEffects } from '../engine/effects.ts';
 import { hashContent, type Hmac } from './content.ts';
-import { jsonText, MAX_DEPTH, redactString, redactValue } from './redact.ts';
+import { jsonText, MAX_DEPTH, redactCapped, redactValue } from './redact.ts';
 
 /** Longest string kept per field. Long enough to hold most files an agent reads, so lineage can match. */
 export const STRING_CAP = 256 * 1024;
@@ -117,7 +117,7 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return { ...failedRow(capturedUs, `${name}: ${(e as Error).message}`), payload: JSON.stringify({ raw: redactString(capString(raw)) }) };
+    return { ...failedRow(capturedUs, `${name}: ${(e as Error).message}`), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
   }
 
   const p = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { value: parsed }) as Record<string, unknown>;
@@ -151,9 +151,12 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
   }
 }
 
-/** Cap before redacting, so no pattern ever scans more than STRING_CAP characters; hash last, when asked. */
+/**
+ * Redacts every string, a little past the cap so a secret straddling the cut goes whole, then cuts
+ * it to STRING_CAP; hashes last, when asked.
+ */
 function stored(p: Record<string, unknown>, hookEvent: string, hmac?: Hmac): unknown {
-  const clean = redactValue(capValue(dropBulky(p))) as Record<string, unknown>;
+  const clean = redactValue(dropBulky(p), { cap: STRING_CAP }) as Record<string, unknown>;
   if (!hmac) return clean;
   hashContent(clean, hookEvent, hmac);
   return capValue(clean);

@@ -2001,6 +2001,23 @@ function redactString(s) {
   }
   return out;
 }
+var CAP_OVERSCAN = 8 * 1024;
+var TOKEN_CHAR = /[A-Za-z0-9_+/=.~-]/;
+function redactCapped(s, cap) {
+  if (s.length <= cap) return redactString(s);
+  const clean = redactString(s.slice(0, cap + CAP_OVERSCAN));
+  let cut = Math.min(cap, clean.length);
+  const open = clean.lastIndexOf("[REDACTED:", cut);
+  const close = open === -1 ? -1 : clean.indexOf("]", open);
+  if (open !== -1 && close >= cut) {
+    cut = close + 1;
+  } else if (cut < clean.length && TOKEN_CHAR.test(clean[cut])) {
+    const floor = Math.max(0, cut - 4096);
+    while (cut > floor && TOKEN_CHAR.test(clean[cut - 1])) cut--;
+  }
+  return `${clean.slice(0, cut)}
+\u2026[contrail: truncated ${s.length - cap} bytes]`;
+}
 var MAX_DEPTH2 = 64;
 function jsonText(root) {
   const parts = [];
@@ -2036,11 +2053,12 @@ function jsonText(root) {
 }
 var PAIR_NAME = /* @__PURE__ */ new Set(["key", "name", "parameterkey", "parametername"]);
 var PAIR_VALUE = /* @__PURE__ */ new Set(["value", "parametervalue"]);
-function redactValue(value) {
+function redactValue(value, options = {}) {
+  const text = (s) => options.cap === void 0 ? redactString(s) : redactCapped(s, options.cap);
   const walk = (v, depth, key) => {
-    if (typeof v === "string") return key && secretValue(key, v, true) ? tag("secret-field") : redactString(v);
+    if (typeof v === "string") return key && secretValue(key, v, true) ? tag("secret-field") : text(v);
     if (!v || typeof v !== "object") return v;
-    if (depth >= MAX_DEPTH2) return redactString(jsonText(v));
+    if (depth >= MAX_DEPTH2) return text(jsonText(v));
     if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1, ""));
     const entries = Object.entries(v);
     const pair = entries.find(([k, x]) => PAIR_NAME.has(k.toLowerCase()) && typeof x === "string");
@@ -2066,7 +2084,8 @@ var PATTERNS = [
   FLAG_SWITCH,
   PEM_BEGIN,
   PEM_END,
-  PEM_BODY
+  PEM_BODY,
+  TOKEN_CHAR
 ];
 
 // src/ingest/ingest.ts
@@ -2148,7 +2167,7 @@ function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return { ...failedRow(capturedUs, `${name}: ${e.message}`), payload: JSON.stringify({ raw: redactString(capString(raw)) }) };
+    return { ...failedRow(capturedUs, `${name}: ${e.message}`), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
   }
   const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
   const hookEvent = str(p, "hook_event_name") ?? "unknown";
@@ -2178,7 +2197,7 @@ function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
   }
 }
 function stored(p, hookEvent, hmac) {
-  const clean = redactValue(capValue(dropBulky(p)));
+  const clean = redactValue(dropBulky(p), { cap: STRING_CAP });
   if (!hmac) return clean;
   hashContent(clean, hookEvent, hmac);
   return capValue(clean);

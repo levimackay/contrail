@@ -373,6 +373,30 @@ export function redactString(s: string): string {
   return out;
 }
 
+/** How far past the cap a string is still redacted, so a secret straddling the cut is recognised whole. */
+const CAP_OVERSCAN = 8 * 1024;
+const TOKEN_CHAR = /[A-Za-z0-9_+/=.~-]/;
+
+/**
+ * Redacts a string and cuts it to `cap` characters. Redacts a little past the cut before cutting,
+ * so a token that straddles it is redacted whole rather than cut so its head no longer matches;
+ * a token-like run that still straddles the cut is dropped, not kept in part.
+ */
+export function redactCapped(s: string, cap: number): string {
+  if (s.length <= cap) return redactString(s);
+  const clean = redactString(s.slice(0, cap + CAP_OVERSCAN));
+  let cut = Math.min(cap, clean.length);
+  const open = clean.lastIndexOf('[REDACTED:', cut);
+  const close = open === -1 ? -1 : clean.indexOf(']', open);
+  if (open !== -1 && close >= cut) {
+    cut = close + 1; // keep a redaction marker whole
+  } else if (cut < clean.length && TOKEN_CHAR.test(clean[cut]!)) {
+    const floor = Math.max(0, cut - 4096);
+    while (cut > floor && TOKEN_CHAR.test(clean[cut - 1]!)) cut--;
+  }
+  return `${clean.slice(0, cut)}\n…[contrail: truncated ${s.length - cap} bytes]`;
+}
+
 /** Deeper than this, a JSON value is stored as its JSON text, redacted as one string. */
 export const MAX_DEPTH = 64;
 
@@ -413,6 +437,11 @@ export function jsonText(root: unknown): string {
 const PAIR_NAME = new Set(['key', 'name', 'parameterkey', 'parametername']);
 const PAIR_VALUE = new Set(['value', 'parametervalue']);
 
+export interface RedactOptions {
+  /** Cut every string to this many characters, redacting a little past the cut first. */
+  cap?: number;
+}
+
 /**
  * Redacts every string in a JSON value. Walks decoded strings rather than the serialized
  * JSON, because \n escapes break pattern boundaries. A string stored under a secret-named
@@ -420,11 +449,12 @@ const PAIR_VALUE = new Set(['value', 'parametervalue']);
  * Nesting deeper than MAX_DEPTH is kept as JSON text, so no walker here or later can
  * overflow the stack on it.
  */
-export function redactValue(value: unknown): unknown {
+export function redactValue(value: unknown, options: RedactOptions = {}): unknown {
+  const text = (s: string) => (options.cap === undefined ? redactString(s) : redactCapped(s, options.cap));
   const walk = (v: unknown, depth: number, key: string): unknown => {
-    if (typeof v === 'string') return key && secretValue(key, v, true) ? tag('secret-field') : redactString(v);
+    if (typeof v === 'string') return key && secretValue(key, v, true) ? tag('secret-field') : text(v);
     if (!v || typeof v !== 'object') return v;
-    if (depth >= MAX_DEPTH) return redactString(jsonText(v));
+    if (depth >= MAX_DEPTH) return text(jsonText(v));
     if (Array.isArray(v)) return v.map(x => walk(x, depth + 1, ''));
     const entries = Object.entries(v as Record<string, unknown>);
     const pair = entries.find(([k, x]) => PAIR_NAME.has(k.toLowerCase()) && typeof x === 'string');
@@ -440,5 +470,5 @@ export function redactValue(value: unknown): unknown {
 export const PATTERNS: RegExp[] = [
   ...RULES.flatMap(r => (r.when ? [r.re, r.when] : [r.re])),
   PLACEHOLDER, KEYWORD, TYPE_NAME, CALL_START, CODE_CHARS, AFTER_BRACKET, MEMBER, CHAIN, EXPRESSION, STRONG, BASE64ISH, FLAG_SWITCH,
-  PEM_BEGIN, PEM_END, PEM_BODY,
+  PEM_BEGIN, PEM_END, PEM_BODY, TOKEN_CHAR,
 ];

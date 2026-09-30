@@ -130,6 +130,18 @@ test('a tool result nested thousands deep is stored, redacted, under its session
   assert.match(row.payload, /REDACTED/);
 });
 
+test('a token straddling the storage cap is redacted whole, not cut so most of it survives', async () => {
+  const { db, spool } = await setup();
+  const token = `ghp_${'a1B2'.repeat(9)}`;
+  const stdout = `${' '.repeat(STRING_CAP - 35)}${token}\nmore`; // 35 of its 40 characters fall before the cap
+  drop(spool, '1-1-a.json', { hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/r', tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'cat big.log' }, tool_response: { stdout, stderr: '' } });
+  ingest(db, spool, repoKey);
+  const p = JSON.parse(db.get<{ payload: string }>('SELECT payload FROM events')!.payload);
+  assert.ok(!p.tool_response.stdout.includes('ghp_'), p.tool_response.stdout.slice(-80));
+  assert.ok(!p.tool_response.stdout.includes('a1B2a1B2'));
+  assert.match(p.tool_response.stdout, /\[contrail: truncated \d+ bytes\]$/);
+});
+
 test('an event that parsed but could not be stored keeps its session, call and tool', async () => {
   const { db, spool } = await setup();
   drop(spool, '1-1-a.json', { hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/r', tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'ls' }, tool_response: { stdout: 'a' } });

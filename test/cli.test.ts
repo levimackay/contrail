@@ -170,6 +170,17 @@ test('from a skill, an error is the output and the exit is 0, so Claude Code sho
   assert.equal(skill.out, plain.err);
 });
 
+test('with no data directory, the error names where it looked, honoring CLAUDE_CONFIG_DIR', async () => {
+  const { resolveDataDir } = await import('../src/paths.ts');
+  const config = mkdtempSync(join(tmpdir(), 'contrail-config-'));
+  const base = join(config, 'plugins', 'data');
+  assert.throws(() => resolveDataDir(undefined, { CLAUDE_CONFIG_DIR: config }, '/nonexistent-home'), {
+    message: `No Contrail data directory in ${base} yet. Install the plugin in Claude Code (/plugin install contrail@contrail) and start a session, or set CONTRAIL_HOME to a data directory.`,
+  });
+  mkdirSync(join(base, 'contrail-contrail'), { recursive: true });
+  assert.equal(resolveDataDir(undefined, { CLAUDE_CONFIG_DIR: config }, '/nonexistent-home'), join(base, 'contrail-contrail'));
+});
+
 test('with no runtime, the launcher says what to install, and the Stop hook stays quiet', () => {
   // A PATH holding only what the launcher itself needs: no node, no bun.
   const bin = mkdtempSync(join(tmpdir(), 'contrail-bin-'));

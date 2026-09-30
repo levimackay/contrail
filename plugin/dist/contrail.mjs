@@ -1961,11 +1961,13 @@ function resolveDataDir(flag, env, home, pluginData) {
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
   if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
-  const base = join3(home, ".claude", "plugins", "data");
+  const base = join3(env.CLAUDE_CONFIG_DIR || join3(home, ".claude"), "plugins", "data");
   const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
   if (hits.length === 1) return join3(base, hits[0]);
   if (hits.length === 0) {
-    throw new ContrailError("No recorded data found. Is the Contrail plugin installed? Set CONTRAIL_HOME to point at a data directory.");
+    throw new ContrailError(
+      `No Contrail data directory in ${base} yet. Install the plugin in Claude Code (/plugin install contrail@contrail) and start a session, or set CONTRAIL_HOME to a data directory.`
+    );
   }
   const list = hits.map((h) => `  ${join3(base, h)}`).join("\n");
   throw new ContrailError(`Found ${hits.length} Contrail data directories:

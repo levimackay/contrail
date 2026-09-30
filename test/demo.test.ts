@@ -77,7 +77,8 @@ test('trace --tree hangs each action under the call whose output held its value'
   assert.match(r.out, /your prompt p2 {2}"looks good, commit it" {2}\(principal\)\n└── 23 +SHELL +git add -A && git commit/);
   assert.match(r.out, /nothing to trace.*\n└── 18 +SHELL +npm test/);
   const injection = await run(['trace', '--session', '9c1e', '--tree']);
-  assert.match(injection.out, /└── 12 +SHELL +cat ~\/\.aws\/credentials .*← LIKELY ~\/\.aws\/credentials \(line 7\) \(external\)/);
+  assert.match(injection.out, /\n {8}└── 18 +WRITE +scripts\/dev-setup\.sh {2}← LIKELY get\.quickauth\.example\/install\.sh \(line 3\) \(external\)\n/);
+  assert.match(injection.out, /├── 12 +SHELL +cat ~\/\.aws\/credentials .*← LIKELY ~\/\.aws\/credentials \(line 7\) \(external\)/);
   const json = JSON.parse((await run(['trace', '--session', '4f2a', '--tree', '--json'])).out);
   assert.equal(json.forest[0].children[0].children[0].action, 't4');
   const both = await run(['trace', '--tree', '--shell']);
@@ -241,7 +242,7 @@ test('statusline prints one line for the session Claude Code names on stdin, and
     assert.equal(code, 0);
     return out;
   };
-  assert.equal(await line('{"session_id":"9c1e7b52-80a4-4d3f-b6e2-71f09d4c8a16"}'), 'contrail ▲ 2 from external content · 5 calls\n');
+  assert.equal(await line('{"session_id":"9c1e7b52-80a4-4d3f-b6e2-71f09d4c8a16"}'), 'contrail ▲ 2 from external content · 6 calls\n');
   assert.equal(await line('{"session_id":"4f2a91c7-3d0e-4b8a-9f61-2c7d0a1e5b33"}'), 'contrail △ 1 not named by you · 7 calls\n');
   assert.equal(await line('{"session_id":"not-recorded-yet"}'), 'contrail recording\n');
   assert.equal(await line('not json'), 'contrail\n');

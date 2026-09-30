@@ -1,5 +1,4 @@
 const INVISIBLE = /[​-‏‪-‮⁠-⁤﻿]/g;
-const WORD_CHAR = /[a-z0-9_-]/;
 const READ_PREFIX = /^\s*(\d+)(?:→|\t)(.*)$/;
 
 /** NFKC, invisible and bidi characters removed, lowercase. Both sides of every match go through this. */
@@ -24,11 +23,15 @@ export function findMention(text: string, token: string): number {
 export function findNormalized(hay: string, needle: string): number {
   if (!needle) return -1;
   for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
-    const before = hay[i - 1];
-    const after = hay[i + needle.length];
-    if ((before === undefined || !WORD_CHAR.test(before)) && (after === undefined || !WORD_CHAR.test(after))) return i;
+    // Outside the text charCodeAt is NaN, which is not a word character: the start and end are boundaries.
+    if (!isWordCode(hay.charCodeAt(i - 1)) && !isWordCode(hay.charCodeAt(i + needle.length))) return i;
   }
   return -1;
+}
+
+/** One UTF-16 code unit of [a-z0-9_-], the word characters of a normalized text. */
+export function isWordCode(c: number): boolean {
+  return (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 95 || c === 45;
 }
 
 /**

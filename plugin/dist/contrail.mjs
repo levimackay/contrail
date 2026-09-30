@@ -523,7 +523,6 @@ import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, 
 
 // src/engine/text.ts
 var INVISIBLE = /[​-‏‪-‮⁠-⁤﻿]/g;
-var WORD_CHAR = /[a-z0-9_-]/;
 var READ_PREFIX = /^\s*(\d+)(?:→|\t)(.*)$/;
 function normalize(s) {
   return s.normalize("NFKC").replace(INVISIBLE, "").toLowerCase();
@@ -537,11 +536,12 @@ function findMention(text, token) {
 function findNormalized(hay, needle) {
   if (!needle) return -1;
   for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
-    const before = hay[i - 1];
-    const after = hay[i + needle.length];
-    if ((before === void 0 || !WORD_CHAR.test(before)) && (after === void 0 || !WORD_CHAR.test(after))) return i;
+    if (!isWordCode(hay.charCodeAt(i - 1)) && !isWordCode(hay.charCodeAt(i + needle.length))) return i;
   }
   return -1;
+}
+function isWordCode(c) {
+  return c >= 97 && c <= 122 || c >= 48 && c <= 57 || c === 95 || c === 45;
 }
 function lineOf(text, index) {
   const lineIndex = normalize(text).slice(0, Math.max(0, index)).split("\n").length - 1;
@@ -1263,23 +1263,87 @@ function normalizedText(i) {
   }
   return n;
 }
-var wordCache = /* @__PURE__ */ new WeakMap();
-var WORD_RUN2 = /[a-z0-9_-]{1,256}/g;
 function findInInput(i, needle, hashToken) {
   if (i.hashed) {
     const hashedNeedle = hashToken ? hashNeedle(needle, hashToken) : null;
     if (hashedNeedle === null) return -1;
     needle = hashedNeedle;
   }
-  let words2 = wordCache.get(i);
-  if (!words2) {
-    words2 = new Set(normalizedText(i).match(WORD_RUN2) ?? []);
-    wordCache.set(i, words2);
+  let bits = wordFilterCache.get(i);
+  if (!bits) {
+    bits = wordFilter(normalizedText(i));
+    wordFilterCache.set(i, bits);
   }
-  for (const w of needle.match(WORD_RUN2) ?? []) {
-    if (w.length < 256 && !words2.has(w)) return -1;
-  }
+  if (!mayHoldWords(bits, needleWords(needle))) return -1;
   return findNormalized(normalizedText(i), needle);
+}
+var wordFilterCache = /* @__PURE__ */ new WeakMap();
+var needleWordCache = /* @__PURE__ */ new Map();
+var MAX_NEEDLES_CACHED = 1e4;
+var FNV_OFFSET = 2166136261;
+var FNV_PRIME = 16777619;
+function rehash(h) {
+  h = Math.imul(h ^ h >>> 16, 2246822507);
+  return h ^ h >>> 13;
+}
+function wordHashes(text) {
+  const out = [];
+  let h = FNV_OFFSET;
+  let inWord = false;
+  for (let k = 0; k < text.length; k++) {
+    const c = text.charCodeAt(k);
+    if (isWordCode(c)) {
+      h = Math.imul(h ^ c, FNV_PRIME);
+      inWord = true;
+    } else if (inWord) {
+      out.push(h);
+      h = FNV_OFFSET;
+      inWord = false;
+    }
+  }
+  if (inWord) out.push(h);
+  return out;
+}
+function wordFilter(text) {
+  let size = 1024;
+  while (size < text.length && size < 1 << 26) size *= 2;
+  const bits = new Uint32Array(size / 32);
+  const mask = size - 1;
+  let h = FNV_OFFSET;
+  let inWord = false;
+  for (let k = 0; k <= text.length; k++) {
+    const c = k < text.length ? text.charCodeAt(k) : -1;
+    if (isWordCode(c)) {
+      h = Math.imul(h ^ c, FNV_PRIME);
+      inWord = true;
+    } else if (inWord) {
+      const a = h & mask;
+      const b = rehash(h) & mask;
+      bits[a >>> 5] |= 1 << (a & 31);
+      bits[b >>> 5] |= 1 << (b & 31);
+      h = FNV_OFFSET;
+      inWord = false;
+    }
+  }
+  return bits;
+}
+function needleWords(needle) {
+  let hashes = needleWordCache.get(needle);
+  if (!hashes) {
+    if (needleWordCache.size >= MAX_NEEDLES_CACHED) needleWordCache.clear();
+    hashes = wordHashes(needle);
+    needleWordCache.set(needle, hashes);
+  }
+  return hashes;
+}
+function mayHoldWords(bits, hashes) {
+  const mask = bits.length * 32 - 1;
+  for (const h of hashes) {
+    const a = h & mask;
+    const b = rehash(h) & mask;
+    if (!(bits[a >>> 5] & 1 << (a & 31)) || !(bits[b >>> 5] & 1 << (b & 31))) return false;
+  }
+  return true;
 }
 
 // src/engine/trace.ts

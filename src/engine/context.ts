@@ -1,7 +1,7 @@
 import { stringLeaves } from '../util.ts';
 import { sameScope } from './scope.ts';
 import { hashNeedle } from './hashed.ts';
-import { findNormalized, normalize } from './text.ts';
+import { findNormalized, isWordCode, normalize } from './text.ts';
 import type { Action, Input, Scope, Token } from './types.ts';
 
 /**
@@ -52,14 +52,11 @@ export function normalizedText(i: Input): string {
   return n;
 }
 
-const wordCache = new WeakMap<Input, Set<string>>();
-const WORD_RUN = /[a-z0-9_-]{1,256}/g;
-
 /**
  * Index of the token in an input's normalized text, as findNormalized, or -1.
  * A whole-token match starts and ends on a word boundary, so every complete word inside the
- * needle is a complete word of the text. Checking a per-input word set first skips the full
- * scan for almost every input that cannot match; the scan still decides every match.
+ * needle is a complete word of the text. Checking a per-input filter of the text's words first
+ * skips the full scan for almost every input that cannot match; the scan still decides every match.
  */
 export function findInInput(i: Input, needle: string, hashToken?: (span: string) => string): number {
   if (i.hashed) {
@@ -68,13 +65,97 @@ export function findInInput(i: Input, needle: string, hashToken?: (span: string)
     if (hashedNeedle === null) return -1;
     needle = hashedNeedle;
   }
-  let words = wordCache.get(i);
-  if (!words) {
-    words = new Set(normalizedText(i).match(WORD_RUN) ?? []);
-    wordCache.set(i, words);
+  let bits = wordFilterCache.get(i);
+  if (!bits) {
+    bits = wordFilter(normalizedText(i));
+    wordFilterCache.set(i, bits);
   }
-  for (const w of needle.match(WORD_RUN) ?? []) {
-    if (w.length < 256 && !words.has(w)) return -1;
-  }
+  if (!mayHoldWords(bits, needleWords(needle))) return -1;
   return findNormalized(normalizedText(i), needle);
+}
+
+/*
+ * The word filter: a bit set with two bits per whole word of a text (a maximal run of the
+ * characters findNormalized treats as word characters), set from a hash of the word. A word
+ * that is in the text always has both bits set, so a clear bit proves a needle's word is not
+ * there; a set bit proves nothing, and the scan decides. Building it is one pass over the
+ * text with no strings made, which is what makes it cheap enough to build for every input.
+ */
+
+const wordFilterCache = new WeakMap<Input, Uint32Array>();
+const needleWordCache = new Map<string, number[]>();
+const MAX_NEEDLES_CACHED = 10_000;
+
+const FNV_OFFSET = 0x811c9dc5;
+const FNV_PRIME = 0x01000193;
+
+/** A second hash from the first, so the two bits of a word are independent. */
+function rehash(h: number): number {
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  return h ^ (h >>> 13);
+}
+
+/** The FNV-1a hash of every whole word in a normalized text, in order. */
+function wordHashes(text: string): number[] {
+  const out: number[] = [];
+  let h = FNV_OFFSET;
+  let inWord = false;
+  for (let k = 0; k < text.length; k++) {
+    const c = text.charCodeAt(k);
+    if (isWordCode(c)) {
+      h = Math.imul(h ^ c, FNV_PRIME);
+      inWord = true;
+    } else if (inWord) {
+      out.push(h);
+      h = FNV_OFFSET;
+      inWord = false;
+    }
+  }
+  if (inWord) out.push(h);
+  return out;
+}
+
+function wordFilter(text: string): Uint32Array {
+  // About one bit per character: a word takes at least two characters with its separator.
+  let size = 1024;
+  while (size < text.length && size < 1 << 26) size *= 2;
+  const bits = new Uint32Array(size / 32);
+  const mask = size - 1;
+  let h = FNV_OFFSET;
+  let inWord = false;
+  for (let k = 0; k <= text.length; k++) {
+    const c = k < text.length ? text.charCodeAt(k) : -1;
+    if (isWordCode(c)) {
+      h = Math.imul(h ^ c, FNV_PRIME);
+      inWord = true;
+    } else if (inWord) {
+      const a = h & mask;
+      const b = rehash(h) & mask;
+      bits[a >>> 5]! |= 1 << (a & 31);
+      bits[b >>> 5]! |= 1 << (b & 31);
+      h = FNV_OFFSET;
+      inWord = false;
+    }
+  }
+  return bits;
+}
+
+function needleWords(needle: string): number[] {
+  let hashes = needleWordCache.get(needle);
+  if (!hashes) {
+    if (needleWordCache.size >= MAX_NEEDLES_CACHED) needleWordCache.clear();
+    hashes = wordHashes(needle);
+    needleWordCache.set(needle, hashes);
+  }
+  return hashes;
+}
+
+function mayHoldWords(bits: Uint32Array, hashes: number[]): boolean {
+  const mask = bits.length * 32 - 1;
+  for (const h of hashes) {
+    const a = h & mask;
+    const b = rehash(h) & mask;
+    if (!(bits[a >>> 5]! & (1 << (a & 31))) || !(bits[b >>> 5]! & (1 << (b & 31)))) return false;
+  }
+  return true;
 }

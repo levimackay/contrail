@@ -10,6 +10,12 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ### Changed
 
+- Queries are much faster in long sessions, and their output is unchanged, which golden-output tests now pin. On a 250-call session with 35 MB recorded:
+  - the status line takes about 250 ms instead of 680 ms
+  - the tripwire takes about 220 ms instead of 390 ms
+  - `why`, `risks` and `find` take 180 to 260 ms instead of 340 to 700 ms
+
+  Large Read, search and web results are now read only when a report prints them, and text search no longer builds a set of every word it has seen.
 - MCP and WebSearch tracing is verified in real sessions. It is also tested against the payload shapes Claude Code 2.1.285 records: bare content-block lists, `structuredContent` results as text, error results as `PostToolUseFailure`, embedded resources, and WebSearch's results-and-summary shape.
 
 ### Added

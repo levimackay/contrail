@@ -154,7 +154,7 @@ Add it to `~/.claude/settings.json`:
 }
 ```
 
-Use the launcher path `contrail doctor` prints if yours differs. The command reads the session Claude Code passes on stdin, takes 70 to 100 ms in a typical session (more in a very long one), and never fails: if anything goes wrong it prints just `contrail`. To keep an existing status line, call `contrail statusline` from your own script and print both.
+Use the launcher path `contrail doctor` prints if yours differs. The command reads the session Claude Code passes on stdin, takes 70 to 100 ms in a typical session and about a quarter of a second in a very long one (250 calls, 35 MB recorded), and never fails: if anything goes wrong it prints just `contrail`. To keep an existing status line, call `contrail statusline` from your own script and print both.
 
 ### Tripwire
 
@@ -652,7 +652,7 @@ Contrail records from the moment it is installed; `contrail import` brings in ea
 ## FAQ
 
 **Does it slow Claude Code down?**
-Barely. Each hook event runs a small shell script that writes one file: about 7 ms per event (p95 under 9 ms), and about 8 ms for an event carrying a 1 MB tool response, measured on a 4-vCPU Linux VM. A tool call fires about three events, so roughly 20 to 25 ms on a call that usually takes seconds. The tripwire adds about 3 ms to a call that looks ordinary and runs the CLI only for one that looks sensitive (about 60 ms in a short session). When a session ends, the few hundred events left are redacted and stored in under 0.2 s. The status line command takes 70 to 100 ms and runs outside the agent's loop. To measure your own machine, run `sh scripts/bench-hooks.sh` from a clone, or `contrail doctor` for the capture hook alone.
+Barely. Each hook event runs a small shell script that writes one file: about 7 ms per event (p95 under 9 ms), and about 8 ms for an event carrying a 1 MB tool response, measured on a 4-vCPU Linux VM. A tool call fires about three events, so roughly 20 to 25 ms on a call that usually takes seconds. The tripwire adds about 3 ms to a call that looks ordinary and runs the CLI only for one that looks sensitive (about 60 ms in a short session, about 220 ms in a 250-call one). When a session ends, the few hundred events left are redacted and stored in under 0.2 s. The status line command takes 70 to 100 ms (about 250 ms in a 250-call session with 35 MB recorded) and runs outside the agent's loop. To measure your own machine, run `sh scripts/bench-hooks.sh` from a clone, or `contrail doctor` for the capture hook alone.
 
 **Does it send my data anywhere?**
 No. There are no network calls and no telemetry. Everything stays in the plugin's data directory on your machine.
@@ -695,7 +695,7 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 - **Web content is an extraction.** For WebFetch, Contrail sees what the model was given, not the page.
 - **Trails stay within a session.** A value is traced through the session it was used in; `why commit` only sees agent changes in the session that made the commit. `blame` and `find` do look across sessions.
 - **Blame is a text match.** It credits the latest recorded write holding a line's text. It cannot tell identical text written earlier, or already there, from the latest writer's, and it needs the written text to have been recorded.
-- **The tripwire runs before the call.** It reads the session so far, so in a very long session with many large reads its notice can take a second or two before a sensitive-looking call. Ordinary calls do not start it.
+- **The tripwire runs before the call.** It reads the session so far, so its notice can take a few hundred milliseconds before a sensitive-looking call: about 0.2 s in a 250-call session with 35 MB recorded, more with many sensitive calls or many large new reads not yet stored. Ordinary calls do not start it.
 - **Sensitive-action patterns are a fixed list.** An unusual command can go unflagged.
 - **Redaction is best effort.** Secrets without a matching rule can be stored.
 - **Hook fields change between Claude Code releases.** Contrail tolerates unknown and missing fields and degrades to fewer links, but a renamed field can quietly reduce what it can explain. `contrail doctor` counts unparseable events.

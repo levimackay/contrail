@@ -35,6 +35,8 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 - The data directory is made 0700; Claude Code creates it with your umask.
 - trace, find, report and `export --otel` label a session with no tool calls by its session id.
 - "1 tool call", not "1 tool calls".
+- A negation counts against a request only when it comes before the mention in the same clause, so "edit app.py so it prints hi instead of hello" is no longer reported as a negated request for app.py.
+- A call with no recorded result (denied, stopped, or still running) says so in words instead of PENDING.
 
 ## [0.3.0] - 2026-09-29
 

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { before, test } from 'node:test';
+import { after, before, test } from 'node:test';
 import { main, type Io } from '../src/cli.ts';
 import { AUTH_SESSION, buildDemo, INJECTION_SESSION, writeSpool } from './fixtures/demo.ts';
 import { LONG_SESSION, longDrafts, longTripwirePayload } from './fixtures/long.ts';
@@ -32,6 +32,10 @@ interface Case {
 let root = '';
 let demo: { repo: string; data: string; sha: string };
 let long: { cwd: string; data: string };
+
+after(() => {
+  if (root) rmSync(root, { recursive: true, force: true });
+});
 
 before(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'contrail-golden-')));

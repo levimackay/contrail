@@ -308,6 +308,7 @@ test("find skips Contrail's own queries: a /contrail: prompt, a contrail run and
       ...call('r1', 'Read', { file_path: '/r/vendor/log/README.md' }, 'use createLogger()'),
       d.prompt('/contrail:find createLogger', 'p2'),
       ...call('c1', 'Bash', { command: 'sh ~/.claude/plugins/data/contrail-x/bin/contrail find createLogger' }, 'createLogger HELD ...'),
+      ...call('c2', 'Bash', { command: 'contrail blame src/log.ts' }, '   1 │ export const log = createLogger();'),
     ]),
     WHO,
   );

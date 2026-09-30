@@ -1491,7 +1491,7 @@ function findValue(g, value) {
 }
 function runsContrail(a) {
   const command = a.tool === "Bash" ? stringLeaves(a.input).find((l) => l.path === "$.command")?.value ?? "" : "";
-  return /(^|[\s;&|(/])(bin\/contrail|contrail)\s+(why|find|trace|risks|sessions|report|export|doctor|statusline)\b/.test(command);
+  return /(^|[\s;&|(/])(bin\/contrail|contrail)\s+(why|blame|find|trace|risks|sessions|report|export|doctor|statusline)\b/.test(command);
 }
 
 // src/engine/tree.ts

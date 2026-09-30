@@ -27,3 +27,20 @@ test('a tool without a kind of its own shows its name in the timeline', async ()
   const g = buildGraph(session([d.prompt('go', 'p1'), ...call('x1', 'ToolSearch', { query: 'select:WebFetch' }, 'ok')]), WHO);
   assert.match(renderTrace(g, new Map(), null), / {2}\d+ +TOOL {4}ToolSearch \{"query":"select:WebFetch"\}/);
 });
+
+test('a large result the model saw is parsed only when read, and reads as it was stored', () => {
+  const big = 'x'.repeat(40_000);
+  const response = { type: 'text', file: { filePath: '/r/big.ts', content: big } };
+  const rows = session([d.prompt('go', 'p1'), ...call('r1', 'Read', { file_path: '/r/big.ts' }, big, response)]);
+  const read = buildGraph(rows, WHO).actions.find(a => a.id === 'r1')!;
+  assert.notEqual(Object.getOwnPropertyDescriptor(read, 'response')?.get, undefined);
+  assert.deepEqual(Object.keys(read), ['id', 'scope', 'promptId', 'tool', 'input', 'response', 'preSeq', 'postSeq', 'status', 'mcpServer']);
+  assert.equal(read.status, 'ok');
+  // Without the model's copy the result is the text, so it is parsed at once.
+  const eager = buildGraph(rows.filter(r => r.hook_event !== 'PostToolBatch'), WHO).actions.find(a => a.id === 'r1')!;
+  assert.equal(Object.getOwnPropertyDescriptor(eager, 'response')?.get, undefined);
+  assert.equal(JSON.stringify(read), JSON.stringify(eager));
+  assert.deepEqual(read.response, response);
+  read.response = null;
+  assert.equal(read.response, null);
+});

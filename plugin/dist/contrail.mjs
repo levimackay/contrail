@@ -1648,10 +1648,25 @@ function buildGraph(rows, who, hashToken) {
   const skillBodies = /* @__PURE__ */ new Map();
   const notifications = [];
   rows.forEach((row, index) => {
+    if (row.hook_event !== "PostToolBatch") return;
+    for (const call of arr(parsePayload(row.payload).tool_calls)) {
+      const useId = str(call, "tool_use_id");
+      if (useId) modelSaw.set(useId, { seq: index + 1, text: toText(field(call, "tool_response")) });
+    }
+  });
+  rows.forEach((row, index) => {
     const seq = index + 1;
+    const id = row.tool_use_id;
+    const known = id ? actions.get(id) : void 0;
+    if (row.hook_event === "PostToolUse" && known && row.payload.length > DEFER_OVER && onlyTextUsed(known.tool) && modelSaw.get(known.id)?.text) {
+      known.postSeq = seq;
+      known.status = "ok";
+      deferResponse(known, row.payload);
+      return;
+    }
+    if (row.hook_event === "PostToolBatch") return;
     const p = parsePayload(row.payload);
     const scope = { sessionId: row.session_id ?? "", agentId: row.agent_id };
-    const id = row.tool_use_id;
     switch (row.hook_event) {
       case "UserPromptSubmit": {
         const promptId = row.prompt_id ?? `seq-${seq}`;
@@ -1695,12 +1710,6 @@ function buildGraph(rows, who, hashToken) {
         }
         break;
       }
-      case "PostToolBatch":
-        for (const call of arr(p.tool_calls)) {
-          const useId = str(call, "tool_use_id");
-          if (useId) modelSaw.set(useId, { seq, text: toText(field(call, "tool_response")) });
-        }
-        break;
       case "PostCompact":
         (compactSeqs[scopeKey(scope)] ??= []).push(seq);
         inputs.push({
@@ -1853,6 +1862,21 @@ function buildGraph(rows, who, hashToken) {
     timeUs: rows.map((r) => r.captured_us),
     ...hashToken ? { hashToken } : {}
   };
+}
+var TEXT_RESULT_TOOLS = /* @__PURE__ */ new Set(["Read", "NotebookRead", "Grep", "Glob", "LS", "WebFetch", "WebSearch"]);
+var onlyTextUsed = (tool) => TEXT_RESULT_TOOLS.has(tool) || tool.startsWith("mcp__");
+var DEFER_OVER = 16 * 1024;
+function deferResponse(a, payload) {
+  const settle = (value) => {
+    Object.defineProperty(a, "response", { value, writable: true, enumerable: true, configurable: true });
+    return value;
+  };
+  Object.defineProperty(a, "response", {
+    enumerable: true,
+    configurable: true,
+    get: () => settle(parsePayload(payload).tool_response ?? null),
+    set: settle
+  });
 }
 function parsePayload(payload) {
   try {

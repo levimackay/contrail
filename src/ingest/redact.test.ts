@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { redactString, redactValue } from './redact.ts';
+import { PATTERNS, redactCapped, redactString, redactValue } from './redact.ts';
 
 // Fake credentials assembled at runtime so this file never contains a literal secret.
 const repeat = (s: string, n: number) => s.repeat(n);
@@ -133,4 +133,318 @@ test('long adversarial text redacts in linear time, not minutes', () => {
   const ms = performance.now() - start;
   // ~0.3 s alone; the quadratic version this guards against took minutes. Loose for busy CI runners.
   assert.ok(ms < 15_000, `took ${Math.round(ms)} ms`);
+});
+
+/** Finds a *, + or {n,} outside a character class: a quantifier with no upper bound. */
+function unboundedQuantifier(source: string): string | undefined {
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '\\') {
+      i++;
+    } else if (inClass) {
+      if (c === ']') inClass = false;
+    } else if (c === '[') {
+      inClass = true;
+    } else if (c === '*' || c === '+' || (c === '{' && /^\{\d+,\}/.test(source.slice(i)))) {
+      return source.slice(Math.max(0, i - 30), i + 1);
+    }
+  }
+  return undefined;
+}
+
+test('every quantifier in every redaction pattern is bounded', () => {
+  for (const re of PATTERNS) assert.equal(unboundedQuantifier(re.source), undefined, re.source.slice(0, 80));
+});
+
+/** Runs fn up to three times and returns the fastest, so one pause on a busy runner does not fail a test. */
+function fastest(fn: () => void): number {
+  let best = Infinity;
+  for (let i = 0; i < 3 && best >= 200; i++) {
+    const start = performance.now();
+    fn();
+    best = Math.min(best, performance.now() - start);
+  }
+  return best;
+}
+const CAP = 256 * 1024;
+const fill = (unit: string, prefix = '') => prefix + unit.repeat(Math.ceil(CAP / unit.length)).slice(0, CAP);
+
+test('a run of private key headers with no END redacts in linear time', () => {
+  for (const s of [fill('-----BEGIN PRIVATE KEY-----'), fill('-----BEGIN PRIVATE KEY-----\n-----END '), fill('\\nAAAA', '-----BEGIN PRIVATE KEY-----')]) {
+    const ms = fastest(() => redactString(s));
+    assert.ok(ms < 200, `took ${Math.round(ms)} ms`);
+  }
+});
+
+test('an unterminated private key inside JSON text, with escaped newlines, loses its body too', () => {
+  const body = [repeat('MIIE', 16), repeat('ABCD', 16), repeat('x9Z+', 4)];
+  const out = redactString(`{"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----\\n${body.join('\\n')}\\n`);
+  assert.match(out, /\[REDACTED:private-key\]/);
+  for (const line of body) assert.ok(!out.includes(line), line);
+});
+
+// Token formats with a distinctive prefix. Built at runtime; no literal token appears here.
+const TOKENS: Array<[string, string]> = [
+  ['slack-token', `xapp-1-A${repeat('0', 10)}-${repeat('1', 13)}-${repeat('ab', 20)}`],
+  ['slack-token', `xoxe-1-${repeat('My0x', 8)}`],
+  ['slack-token', `xoxe.xoxp-1-${repeat('My0x', 8)}`],
+  ['google-oauth-token', `ya29.a0Af${repeat('H6sM', 10)}`],
+  ['google-oauth-secret', `GOCSPX-${repeat('aB3d', 7)}`],
+  ['vault-token', `hvs.CAESI${repeat('Jl9U', 20)}`],
+  ['vault-token', `hvb.AAAAAQ${repeat('Jx9Y', 20)}`],
+  ['openai-key', `sk-proj-${repeat('abc0', 12)}`],
+  ['pypi-token', `pypi-AgEIcHlwaS5vcmc${repeat('Ab9_', 16)}`],
+  ['rubygems-token', `rubygems_${repeat('a1b2', 12)}`],
+  ['xai-key', `xai-${repeat('Ab9x', 20)}`],
+  ['groq-key', `gsk_${repeat('Ab9x', 13)}`],
+  ['perplexity-key', `pplx-${repeat('Ab9x', 12)}`],
+  ['replicate-token', `r8_${repeat('Ab9', 12)}x`],
+  ['digitalocean-token', `dop_v1_${repeat('a1', 32)}`],
+  ['shopify-token', `shpat_${repeat('a1', 16)}`],
+  ['linear-key', `lin_api_${repeat('Ab9x', 10)}`],
+  ['postman-key', `PMAK-${repeat('a1', 12)}-${repeat('b2', 17)}`],
+  ['sentry-token', `sntrys_eyJ${repeat('pYXQ', 12)}`],
+  ['databricks-token', `dapi${repeat('a1', 16)}`],
+  ['doppler-token', `dp.st.prd.${repeat('Ab9x', 11)}`],
+  ['supabase-key', `sbp_${repeat('a1', 20)}`],
+  ['tailscale-key', `tskey-auth-k${repeat('Ab9', 4)}-${repeat('Ab9x', 8)}`],
+  ['age-secret-key', `AGE-SECRET-KEY-1${repeat('QZ9', 19)}Q`],
+  ['terraform-token', `${repeat('Ab9x', 3)}Ab.atlasv1.${repeat('Ab9x', 16)}`],
+  ['onepassword-token', `ops_eyJ${repeat('hbGc', 16)}`],
+  ['azure-client-secret', `abc1Q~${repeat('Ab9x', 8)}`],
+  ['gitlab-token', `glrt-${repeat('Ab9x', 6)}`],
+];
+for (const [rule, text] of TOKENS) {
+  test(`redacts ${rule}: ${text.slice(0, 10)}`, () => assert.equal(redactString(`key ${text} end`), `key [REDACTED:${rule}] end`));
+}
+
+test('token patterns redact hostile 256 KB input in linear time', () => {
+  const inputs = [
+    fill('xoxb-'), fill('xapp-1-'), fill('ya29.'), fill('hvs.a'), fill('pypi-AgE'), fill('GOCSPX-'), fill('aaaQ~'), fill('aaa1Q~b'),
+    fill('sntrys_'), fill('dp.st.'), fill('tskey-a-'), fill('ops_eyJ'), fill('AAAAAAAAAAAAAA.atlasv1.'), fill('PMAK-a-'), fill('sk-proj-'),
+  ];
+  for (const s of inputs) {
+    const ms = fastest(() => redactString(s));
+    assert.ok(ms < 200, `${s.slice(0, 12)}: ${Math.round(ms)} ms`);
+  }
+});
+
+const PW = repeat('Pw9', 4);
+const B64 = Buffer.from(`user:${PW}`).toString('base64');
+
+/** [what, text, the part that must not survive] */
+const LEAKS: Array<[string, string, string]> = [
+  // Credential files
+  ['.netrc on one line', `machine github.com login octocat password ${PW}`, PW],
+  ['.netrc over lines', `machine api.heroku.com\n  login me@example.com\n  password ${PW}\n`, PW],
+  ['.pgpass', `db.example.com:5432:prod:admin:${PW}`, PW],
+  ['.pgpass with wildcards', `*:*:*:postgres:${PW}\r\n`, PW],
+  ['docker config auth', `{"auths":{"https://index.docker.io/v1/":{"auth":"${B64}"}}}`, B64],
+  ['docker config identitytoken', `{"auths":{"r":{"identitytoken":"${PW}"}}}`, PW],
+  ['kubeconfig client-key-data', `    client-key-data: ${B64}`, B64],
+  ['kubeconfig client-certificate-data', `    client-certificate-data: ${B64}`, B64],
+  ['kubeconfig token', `    token: ${PW}`, PW],
+  ['azure AccountKey', `DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=${B64};EndpointSuffix=core.windows.net`, B64],
+  ['azure SharedAccessKey', `Endpoint=sb://x.servicebus.windows.net/;SharedAccessKeyName=Root;SharedAccessKey=${B64}`, B64],
+  ['npm _auth', `_auth=${B64}`, B64],
+  ['npm _authToken', `_authToken=${PW}`, PW],
+  ['npm registry _authToken', `//registry.npmjs.org/:_authToken=${PW}`, PW],
+  // A secret after a secret-named flag or in a command that takes one
+  ['aws configure set', `aws configure set aws_secret_access_key ${PW}`, PW],
+  ['npm config set', `npm config set //registry.npmjs.org/:_authToken ${PW}`, PW],
+  ['--token X', `gh auth login --token ${PW}`, PW],
+  ['--api-key X', `curl https://api.example.com --api-key ${PW}`, PW],
+  ['--password X', `tool --verbose --password ${PW}`, PW],
+  ['--client-secret=X', `tool --client-secret="${PW}"`, PW],
+  ['docker login -p', `docker login -u me -p ${PW} registry.example.com`, PW],
+  ['docker login --password', `docker login -u me --password ${PW} registry.example.com`, PW],
+  ['sshpass -p', `sshpass -p ${PW} ssh host`, PW],
+  ['twine -p', `twine upload -u __token__ -p ${PW}`, PW],
+  ['mysql -pSECRET', `mysql -uroot -p${PW} app`, PW],
+  ['redis-cli -a', `redis-cli -h cache -a ${PW} ping`, PW],
+  ['keytool -storepass', `keytool -list -keystore k.jks -storepass ${PW}`, PW],
+  ['openssl -passin', `openssl pkcs12 -in x.p12 -passin pass:${PW}`, PW],
+  ['httpie --auth', `http --auth admin:${PW} https://api.example.com`, PW],
+  // .env names
+  ['ENCRYPTION_KEY', `ENCRYPTION_KEY=${repeat('9f86', 8)}`, repeat('9f86', 8)],
+  ['SIGNING_KEY', `SIGNING_KEY=${B64}`, B64],
+  ['APP_KEY=base64:', `APP_KEY=base64:${B64}`, B64],
+  ['RAILS_MASTER_KEY', `RAILS_MASTER_KEY=${repeat('0a1b', 8)}`, repeat('0a1b', 8)],
+  ['TWILIO_AUTH', `TWILIO_AUTH=${repeat('0a1b', 8)}`, repeat('0a1b', 8)],
+  ['an all-digit password', 'DB_PASSWORD=123456', '123456'],
+  ['a dotted password', 'PASSWORD=Summer.Winter', 'Summer'],
+  ['a password with brackets', 'PASSWORD=P(ssw0rd!)', 'ssw0rd'],
+  ['a quoted password that reads like code', 'password = "Hello(World).x"', 'World'],
+  ['-Dapp.password=X', `java -Dspring.datasource.password=${PW} -jar app.jar`, PW],
+  // Value shapes
+  ['a quoted value holding the other quote', `PASSWORD="it's-a-${PW}"`, PW],
+  ['a value with a comma', `PASSWORD=ab,${PW}`, PW],
+  ['ruby :password =>', `:password => "${PW}"`, PW],
+  ['yaml password:', `db:\n  password: ${PW}\n`, PW],
+  ['a short yaml password', '  password: abc1\n', 'abc1'],
+  ['go :=', `password := "${PW}"`, PW],
+  ['a typed python assignment', `API_KEY: str = "${PW}"`, PW],
+  ['an escaped JSON string under a secret name', `"SecretString": "{\\"password\\":\\"${PW}\\"}"`, PW],
+  ['a long value, whole', `client-key-data: ${repeat(B64, 200)}`, B64],
+  // Name/value pairs
+  ['JSON name/value pair', `{"Name":"DB_PASSWORD","Value":"${PW}"}`, PW],
+  ['JSON name/value pair, pretty and lower case', `{\n  "name": "API_TOKEN",\n  "value": "${PW}"\n}`, PW],
+  ['JSON value/name pair', `{"value":"${PW}","name":"DB_PASSWORD"}`, PW],
+  ['kubernetes env pair', `- name: DB_PASSWORD\n  value: ${PW}\n`, PW],
+  ['php define()', `define( 'DB_PASSWORD', '${PW}' );`, PW],
+];
+for (const [what, text, secret] of LEAKS) {
+  test(`redacts ${what}`, () => {
+    const out = redactString(text);
+    assert.ok(!out.includes(secret), out);
+    assert.match(out, /\[REDACTED:/);
+  });
+}
+
+// Ordinary code and config that names secrets without holding one.
+const CODE = [
+  'const tokenCount = 5',
+  'const tokenCount = 123456',
+  'password: string',
+  '  password: string;',
+  'password?: string',
+  'privateKey: Uint8Array;',
+  'apiKey: config.apiKey',
+  'apiKey: config.apiKey,',
+  'const apiKey = process.env.API_KEY',
+  'max_tokens: 200000',
+  '"input_tokens": 123456,',
+  'tokenizer: "gpt2"',
+  'PWD=/home/user/project',
+  "credentials: 'include'",
+  'const password = await getPassword()',
+  'token = jwt.sign(payload, secret)',
+  'password = request.form["password"]',
+  'password: z.string().min(8)',
+  'password = Column(String(128))',
+  'this.password = password;',
+  'isPrivate={isPrivate}',
+  'auth: true',
+  "queryKey: ['todos']",
+  'sortKey: "createdAt"',
+  'SECRET_NAME=prod-db-creds',
+  'TOKEN_URL=https://oauth2.googleapis.com/token',
+  'PASSWORD=${DB_PASSWORD}',
+  'PASSWORD=$(cat /run/secrets/db)',
+  'PASSWORD=<your-password>',
+  'PASSWORD=changeme',
+  'PASSWORD=xxxxxxxx',
+  'PASSWORD=********',
+  'PASSWORD=',
+  '"auth": "required"',
+];
+// ...and where a bare value ends: at list or sentence punctuation, a closing bracket it did not open, a backtick.
+CODE.push(
+  'function login(user: string, password: string) {}',
+  'callback: (err: Error | null, secret: NonSharedBuffer) => void,',
+  'Values like `auth: true` and `password: string` are code.',
+  'connect(host=h, password=db_password)',
+  'connect(host=h, password=password)',
+);
+// ...and text that only looks like a credential file.
+CODE.push(
+  'src/app.ts:10:5: error: unexpected',
+  'root:x:0:0:root:/root:/bin/bash',
+  'machine learning is great; the password reset link was sent',
+);
+// ...and flags that mention a secret but do not hold one. A --token-file path is left alone: it is not the token.
+CODE.push(
+  '--token-file /run/secrets/token',
+  'docker login --password-stdin registry.example.com',
+  'mysql --no-password -h db',
+  'ansible-playbook --ask-pass site.yml',
+  'aws s3api get-object --bucket b --key path/to/object.txt out',
+  'docker run -p 8080:80 nginx',
+  'ssh -p 2222 host',
+  'aws configure set region us-east-1',
+  'gh auth login --token $GITHUB_TOKEN',
+);
+for (const text of CODE) {
+  test(`leaves alone: ${text.slice(0, 40)}`, () => assert.equal(redactString(text), text));
+}
+
+test('a URL password with a / is removed and the host kept', () => {
+  assert.equal(redactString('https://user:pa/ss0rd123@example.com/x'), 'https://user:[REDACTED:url-password]@example.com/x');
+  assert.equal(redactString(`https://user:${PW}@host/path/@scope`), 'https://user:[REDACTED:url-password]@host/path/@scope');
+  for (const text of ['https://registry.npmjs.org:443/package/@scope/name', 'https://host:8080/users/@me']) assert.equal(redactString(text), text);
+});
+
+test('only the value of a name/value pair goes, whatever the key casing', () => {
+  const out = redactValue({
+    a: { Name: 'DB_PASSWORD', Value: PW },
+    b: { KEY: 'API_TOKEN', VALUE: PW },
+    c: { ParameterKey: 'DbPassword', ParameterValue: PW },
+    d: { name: 'LOG_LEVEL', value: 'debug' },
+  });
+  assert.deepEqual(out, {
+    a: { Name: 'DB_PASSWORD', Value: '[REDACTED:secret-field]' },
+    b: { KEY: 'API_TOKEN', VALUE: '[REDACTED:secret-field]' },
+    c: { ParameterKey: 'DbPassword', ParameterValue: '[REDACTED:secret-field]' },
+    d: { name: 'LOG_LEVEL', value: 'debug' },
+  });
+});
+
+test('a pair naming something else is left alone', () => {
+  for (const text of ['{"name":"LOG_LEVEL","value":"debug"}', '- name: TOKEN_URL\n  value: https://example.com/token', "headers.set('Accept', 'application/json')"]) {
+    assert.equal(redactString(text), text);
+  }
+});
+
+test('a token straddling the cap is redacted whole, not cut so its head survives', () => {
+  const token = `ghp_${repeat('a1B2', 9)}`;
+  const cap = 1000 + 20; // the cut falls 20 characters into the token
+  const out = redactCapped(`${'x '.repeat(500)}${token}\nmore`, cap);
+  assert.ok(!out.includes(token.slice(0, 12)), out.slice(-80));
+  assert.match(out, /\[REDACTED:github-token\]\n…\[contrail: truncated \d+ bytes\]$/);
+});
+
+test('an unrecognised token-like run the cap would split is dropped, not kept in part', () => {
+  const run = repeat('Zq9', 30);
+  const out = redactCapped(`${'word '.repeat(200)}${run} tail`, 1000 + 45);
+  assert.ok(!out.includes('Zq9'), out.slice(-80));
+  assert.match(out, /word \n…\[contrail: truncated \d+ bytes\]$/);
+});
+
+test('JSON nested thousands deep is redacted without overflowing the stack', () => {
+  let deep: unknown = `DB_PASSWORD=${PW}`;
+  for (let i = 0; i < 3000; i++) deep = { a: [deep] };
+  const out = JSON.stringify(redactValue({ session_id: 's1', tool_response: deep }));
+  assert.ok(!out.includes(PW));
+  assert.match(out, /REDACTED:env-secret/);
+});
+
+test('punctuation after a bare value is kept outside the redaction', () => {
+  assert.equal(redactString(`f(password=${PW}), then`), 'f(password=[REDACTED:env-secret]), then');
+  assert.equal(redactString(`{password: ${PW}, user: bob}`), '{password: [REDACTED:env-secret], user: bob}');
+});
+
+test('values under secret-named JSON keys are redacted whatever they look like', () => {
+  const out = redactValue({ password: '123456', token: 'Summer.Winter', auth: B64, max_tokens: '1024', auths: { auth: 'required' } });
+  assert.deepEqual(out, {
+    password: '[REDACTED:secret-field]', token: '[REDACTED:secret-field]', auth: '[REDACTED:secret-field]', max_tokens: '1024', auths: { auth: 'required' },
+  });
+});
+
+test('name patterns redact hostile 256 KB input in linear time', () => {
+  const inputs = [
+    fill('a_token='), fill('password="'), fill("key: '"), fill('secret:'), fill('a.b.password.'), fill('x-key-'), fill('KEY=,'),
+    fill('password=a,'), fill('password=a, b'), fill('PASSWORD=x&y'), fill('token: str ='), fill('token=bearer '), fill('password=\\"'),
+    fill('"name":"PASSWORD","value":"'), fill('"value":"x","name":"'), fill('name: A\nvalue: '), fill("define('A',"),
+    fill("set('PASSWORD', 'x"), fill('password ', 'machine x login y\n'), fill('machine a password b '), fill('a:1:b:c:d\n'),
+    fill('a:1:b:c:'), fill(' --password'), fill(' --token x'), fill(' -storepass'), fill(' --a=--b='), fill('sshpass '),
+    fill(' -x', 'sshpass'), fill('docker login '), fill('redis-cli -'), fill('config set a '), fill('mysql -p'), fill(' -u a:'),
+    fill('a://b:c/'), fill('a://b:c@'), fill('c/', 'a://b:'), fill('http://x:y'),
+    fill('x', 'PASSWORD='), fill('(', 'PASSWORD=ab'), fill('a.', 'PASSWORD=ab'), fill('{"auth":"a","token":"b","key":1},'),
+    fill('const password = getPassword(a, b);\n'),
+  ];
+  for (const s of inputs) {
+    const ms = fastest(() => redactString(s));
+    assert.ok(ms < 200, `${JSON.stringify(s.slice(0, 16))}: ${Math.round(ms)} ms`);
+  }
 });

@@ -6,7 +6,7 @@ import type { Db } from '../store/sqlite.ts';
 import { changedFiles, obj, str } from '../util.ts';
 import { expectedShellEffects } from '../engine/effects.ts';
 import { hashContent, type Hmac } from './content.ts';
-import { redactString, redactValue } from './redact.ts';
+import { jsonText, MAX_DEPTH, redactCapped, redactString, redactValue } from './redact.ts';
 
 /** Longest string kept per field. Long enough to hold most files an agent reads, so lineage can match. */
 export const STRING_CAP = 256 * 1024;
@@ -68,7 +68,7 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
       row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
     } catch (e) {
       // Never let one bad payload block every later event: store the failure and move on.
-      row = failedRow(capturedUs, `${name}: ${(e as Error).message}`);
+      row = failedRow(capturedUs, errorText(name, e));
     }
     if (row.parseError) report.parseErrors++;
 
@@ -123,16 +123,13 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return { ...failedRow(capturedUs, `${name}: ${(e as Error).message}`), payload: JSON.stringify({ raw: redactString(capString(raw)) }) };
+    return { ...failedRow(capturedUs, errorText(name, e)), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
   }
 
   const p = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { value: parsed }) as Record<string, unknown>;
   const hookEvent = str(p, 'hook_event_name') ?? 'unknown';
-  if (hookEvent === 'InstructionsLoaded') attachInstructionText(p, capturedUs);
-  if (hookEvent === 'PostToolUse' && str(p, 'tool_name') === 'Skill') attachSkillText(p, capturedUs);
   const cwd = str(p, 'cwd') ?? null;
-
-  return {
+  const meta = {
     capturedUs,
     sessionId: str(p, 'session_id') ?? null,
     promptId: str(p, 'prompt_id') ?? null,
@@ -142,15 +139,30 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
     toolUseId: str(p, 'tool_use_id') ?? null,
     cwd,
     repoKey: cwd ? repoKeyOf(cwd) : null,
-    payload: JSON.stringify(stored(p, hookEvent, hmac)),
-    parseError: null,
-    touches: hookEvent === 'PostToolUse' ? touchesOf(p, cwd ?? '') : [],
   };
+
+  try {
+    if (hookEvent === 'InstructionsLoaded') attachInstructionText(p, capturedUs);
+    if (hookEvent === 'PostToolUse' && str(p, 'tool_name') === 'Skill') attachSkillText(p, capturedUs);
+    return {
+      ...meta,
+      payload: JSON.stringify(stored(p, hookEvent, hmac)),
+      parseError: null,
+      touches: hookEvent === 'PostToolUse' ? touchesOf(p, cwd ?? '') : [],
+    };
+  } catch (e) {
+    // The event parsed but its body could not be stored: keep which session, call and tool it was,
+    // so it still joins, and store no body rather than an unredacted one.
+    return { ...meta, payload: '{}', parseError: errorText(name, e), touches: [] };
+  }
 }
 
-/** Cap before redacting, so no pattern ever scans more than STRING_CAP characters; hash last, when asked. */
+/**
+ * Redacts every string, a little past the cap so a secret straddling the cut goes whole, then cuts
+ * it to STRING_CAP; hashes last, when asked.
+ */
 export function stored(p: Record<string, unknown>, hookEvent: string, hmac?: Hmac): unknown {
-  const clean = redactValue(capValue(dropBulky(p))) as Record<string, unknown>;
+  const clean = redactValue(dropBulky(p), { cap: STRING_CAP }) as Record<string, unknown>;
   if (!hmac) return clean;
   hashContent(clean, hookEvent, hmac);
   return capValue(clean);
@@ -161,6 +173,14 @@ function failedRow(capturedUs: number, parseError: string): Row {
     capturedUs, sessionId: null, promptId: null, agentId: null, hookEvent: 'unparsed', toolName: null,
     toolUseId: null, cwd: null, repoKey: null, touches: [], payload: '{}', parseError,
   };
+}
+
+/** V8 quotes the start of the bad input in a JSON.parse error; that is payload, so it is left out. */
+const QUOTED_INPUT = /(?:\.{3})?"[\s\S]{0,1024}"(?:\.{3})?(?= is not valid JSON$)/;
+
+function errorText(name: string, e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e);
+  return redactString(`${name}: ${message.replace(QUOTED_INPUT, '"…"')}`);
 }
 
 /** Only the files InstructionsLoaded can name: CLAUDE.md, CLAUDE.local.md and .claude/rules/*.md. */
@@ -241,24 +261,27 @@ function touchesOf(p: Record<string, unknown>, cwd: string): Touch[] {
   return [];
 }
 
-/** Drops content that is large and useless for provenance: Edit's copy of the whole old file, and base64 images. */
-function dropBulky(value: unknown, key = ''): unknown {
+/**
+ * Drops content that is large and useless for provenance: Edit's copy of the whole old file, and base64 images.
+ * Anything nested deeper than MAX_DEPTH becomes its JSON text, so no walker after this one recurses past it.
+ */
+function dropBulky(value: unknown, key = '', depth = 0): unknown {
   if (typeof value === 'string') {
     if (key === 'originalFile' || key === 'base64') {
       return `[contrail: dropped ${key}, ${value.length} bytes, sha256 ${sha256(value).slice(0, 16)}]`;
     }
     return value;
   }
-  if (Array.isArray(value)) return value.map(v => dropBulky(v));
-  if (value && typeof value === 'object') {
-    const isBase64Block = (value as Record<string, unknown>).type === 'base64';
-    return Object.fromEntries(
-      Object.entries(value).map(([k, v]) => [k, dropBulky(v, isBase64Block && k === 'data' ? 'base64' : k)]),
-    );
-  }
-  return value;
+  if (!value || typeof value !== 'object') return value;
+  if (depth >= MAX_DEPTH) return jsonText(value);
+  if (Array.isArray(value)) return value.map(v => dropBulky(v, '', depth + 1));
+  const isBase64Block = (value as Record<string, unknown>).type === 'base64';
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [k, dropBulky(v, isBase64Block && k === 'data' ? 'base64' : k, depth + 1)]),
+  );
 }
 
+/** Only after dropBulky, which bounds the depth. */
 function capValue(value: unknown): unknown {
   if (typeof value === 'string') return capString(value);
   if (Array.isArray(value)) return value.map(capValue);

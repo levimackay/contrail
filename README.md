@@ -119,6 +119,7 @@ What it gives you instead:
 | [`contrail statusline`](#status-line) | One line for Claude Code's status bar |
 | `contrail doctor` | Checks the install, prints the launcher path, and times the capture hook |
 | `contrail prune` | Applies retention now and compacts the database |
+| `contrail forget <session>` | Deletes one recorded session (or everything, with `--all --yes`), leaving none of its text in the database files |
 | `contrail ingest` | Moves spooled events into the database (it also runs automatically) |
 
 Options: `--json` for machine-readable output (why, trace, risks, sessions), `--session <id>` (a prefix is enough), `--data <dir>` to read another data directory, `-h` and `-v`.
@@ -530,13 +531,14 @@ Live sessions on Claude Code 2.1.284 and 2.1.285 (Linux, default permission mode
 Contrail stores what your agent read. It is built so that it does not become the leak.
 
 - **Local only.** No network calls and no telemetry.
-- **Observe only.** It never blocks a tool call and never prints into the agent's context. A recorder that changes the agent corrupts its own evidence.
+- **Observe only.** It never blocks a tool call and never prints into the agent's context; the tripwire's notice goes to you, not the model. A recorder that changes the agent corrupts its own evidence.
 - **Outside your repo.** Data lives in the plugin's data directory, so it is never part of your repository and it survives deleting a worktree.
 - **Redaction before storage.** Secrets are replaced with `[REDACTED:<rule>]` before anything is written to the database, for example `OPENAI_API_KEY=[REDACTED:env-secret]`.
 - **Optional hash-only storage.** With [`store_content: false`](#storing-no-text-the-agent-read), no text the agent read is stored, and grading still works.
 - **Safe to print.** Reports strip control characters and backticks from recorded text, so a recorded string cannot restyle your terminal or turn into a command when a report is shown inside Claude Code.
 - **Permissions.** The data directory is 0700 and its files are 0600.
 - **Retention.** Sessions older than 90 days are removed, and the oldest go first when the database passes 1024 MB. Both are configurable.
+- **Forget on demand.** `contrail forget <session>` deletes one session, and `contrail forget --all --yes` deletes everything, spool included. Freed pages are zeroed, the database is rewritten and its write-ahead log truncated, so the deleted text does not linger in either file.
 - **Uninstall deletes the data**, unless you pass `--keep-data`.
 
 Redaction is pattern-based, so it misses secrets it has no rule for. Treat `contrail.db` as sensitive, or turn on hash-only storage. To report a security problem, see [SECURITY.md](SECURITY.md).

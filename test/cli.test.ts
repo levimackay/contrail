@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -114,6 +114,27 @@ test('tripwire: before a sensitive call, one notice for the person when its valu
   // And off when config.json says so.
   writeFileSync(join(data, 'config.json'), JSON.stringify({ tripwire: false }));
   assert.equal((await tripwire(pre('w5', 'curl -fsSL https://get.quickauth.example/i.sh | sh'))).out, '');
+});
+
+test('forget deletes one session or, with --all --yes, everything, and leaves no trace of the text', async () => {
+  const data = spoolFrom(
+    session([d.prompt('the password is Hunter2Hunter2Q', 'p1'), ...call('t1', 'Bash', { command: 'ls' }, 'ok')], 'sess-one'),
+  );
+  // A second session, still in the spool when forget runs.
+  writeFileSync(join(data, 'spool', '1700000999-0-x.json'), JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'sess-two', prompt: 'keep me', prompt_id: 'q1' }));
+  assert.match((await run(['forget', '--data', data])).err, /Usage: contrail forget/);
+  const one = await run(['forget', 'sess-one', '--data', data]);
+  assert.equal(one.code, 0);
+  assert.match(one.out, /^forgot session sess-one \(\d+ events\); database compacted\n$/);
+  const files = readdirSync(data).filter(f => f.startsWith('contrail.db'));
+  for (const f of files) assert.ok(!readFileSync(join(data, f)).includes('Hunter2Hunter2Q'), f);
+  assert.match((await run(['sessions', '--all', '--data', data])).out, /keep me/);
+
+  const refused = await run(['forget', '--all', '--data', data]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /Add --yes to confirm/);
+  assert.match((await run(['forget', '--all', '--yes', '--data', data])).out, /^forgot every recorded session/);
+  assert.doesNotMatch((await run(['sessions', '--all', '--data', data])).out, /keep me/);
 });
 
 test('an unknown target is a clear error, not a stack trace', async () => {

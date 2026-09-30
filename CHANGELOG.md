@@ -4,6 +4,10 @@ All notable changes to Contrail. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+### Added
+
+- `contrail forget <session>` and `contrail forget --all --yes`: delete recorded sessions on demand, with freed pages zeroed, the database rewritten and its write-ahead log truncated, so the deleted text is not left in either file.
+
 ## [0.4.0] - 2026-09-30
 
 ### Added

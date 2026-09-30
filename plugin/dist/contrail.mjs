@@ -5187,6 +5187,7 @@ var OPTIONS = {
   session: { type: "string" },
   limit: { type: "string" },
   all: { type: "boolean" },
+  yes: { type: "boolean" },
   tree: { type: "boolean" },
   otel: { type: "boolean" },
   markdown: { type: "boolean" },
@@ -5232,6 +5233,8 @@ Usage:
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
+  contrail forget <session> | --all --yes
+                                    delete one recorded session, or everything, and compact
 
 Options:
   --json          machine-readable output (why, blame, trace, risks, sessions, find, review)
@@ -5280,6 +5283,7 @@ ${USAGE}`);
     review: (args) => review(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
+    forget: (args) => forget(args, flags, io),
     doctor: () => doctor(flags, io)
   };
   const run = commands[command];
@@ -5710,6 +5714,39 @@ async function pruneCommand(flags, io) {
     const { sessionsRemoved } = prune(db, config, Date.now());
     db.exec("VACUUM");
     io.out(`removed ${sessionsRemoved} sessions (keeping ${config.retentionDays} days, up to ${config.maxDbMb} MB); database compacted
+`);
+    return 0;
+  });
+}
+async function forget(args, flags, io) {
+  const target = args[0] ?? flags.session;
+  if (flags.all ? target : !target) throw new ContrailError("Usage: contrail forget <session> | contrail forget --all --yes");
+  if (flags.all && !flags.yes) throw new ContrailError("contrail forget --all deletes every recorded session. Add --yes to confirm.");
+  return withStore(flags, io, ({ db, dataDir, repoKey }) => {
+    db.exec("PRAGMA secure_delete = ON");
+    let what;
+    let events;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (flags.all) {
+        events = db.run("DELETE FROM events");
+        what = "every recorded session";
+      } else {
+        const id = pickSession(db, target, repoKey);
+        events = db.run("DELETE FROM events WHERE session_id = ?", id);
+        what = `session ${id.slice(0, 8)}`;
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+    if (flags.all) {
+      for (const name of readdirSync3(join7(dataDir, "spool"))) rmSync2(join7(dataDir, "spool", name), { force: true, recursive: true });
+    }
+    db.exec("VACUUM");
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    io.out(`forgot ${what} (${events} event${events === 1 ? "" : "s"}); database compacted
 `);
     return 0;
   });

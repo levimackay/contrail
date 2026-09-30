@@ -57,6 +57,7 @@ const OPTIONS = {
   session: { type: 'string' },
   limit: { type: 'string' },
   all: { type: 'boolean' },
+  yes: { type: 'boolean' },
   tree: { type: 'boolean' },
   otel: { type: 'boolean' },
   markdown: { type: 'boolean' },
@@ -105,6 +106,8 @@ Usage:
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
+  contrail forget <session> | --all --yes
+                                    delete one recorded session, or everything, and compact
 
 Options:
   --json          machine-readable output (why, blame, trace, risks, sessions, find, review)
@@ -153,6 +156,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     review: args => review(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
+    forget: args => forget(args, flags, io),
     doctor: () => doctor(flags, io),
   };
   const run = commands[command];
@@ -632,6 +636,45 @@ async function pruneCommand(flags: Flags, io: Io): Promise<number> {
     const { sessionsRemoved } = prune(db, config, Date.now());
     db.exec('VACUUM');
     io.out(`removed ${sessionsRemoved} sessions (keeping ${config.retentionDays} days, up to ${config.maxDbMb} MB); database compacted\n`);
+    return 0;
+  });
+}
+
+/**
+ * Deletes what Contrail recorded: one session, or everything with --all --yes. Freed pages are
+ * zeroed, the database is rewritten and the write-ahead log truncated, so the deleted text is
+ * not left behind in either file.
+ */
+async function forget(args: string[], flags: Flags, io: Io): Promise<number> {
+  const target = args[0] ?? (flags.session as string | undefined);
+  if (flags.all ? target : !target) throw new ContrailError('Usage: contrail forget <session> | contrail forget --all --yes');
+  if (flags.all && !flags.yes) throw new ContrailError('contrail forget --all deletes every recorded session. Add --yes to confirm.');
+  return withStore(flags, io, ({ db, dataDir, repoKey }) => {
+    db.exec('PRAGMA secure_delete = ON');
+    let what: string;
+    let events: number;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (flags.all) {
+        events = db.run('DELETE FROM events');
+        what = 'every recorded session';
+      } else {
+        const id = pickSession(db, target, repoKey);
+        events = db.run('DELETE FROM events WHERE session_id = ?', id);
+        what = `session ${id.slice(0, 8)}`;
+      }
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+    if (flags.all) {
+      // Events not ingested yet are still in the spool: they go too.
+      for (const name of readdirSync(join(dataDir, 'spool'))) rmSync(join(dataDir, 'spool', name), { force: true, recursive: true });
+    }
+    db.exec('VACUUM');
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    io.out(`forgot ${what} (${events} event${events === 1 ? '' : 's'}); database compacted\n`);
     return 0;
   });
 }

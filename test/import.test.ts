@@ -65,7 +65,7 @@ test('an imported session answers why, risks, trace and sessions, and each says 
 
   const last = await w.run(['why', 'last']);
   assert.equal(last.code, 0, last.err);
-  assert.match(last.out, new RegExp(`^Bash {2}rm -rf build\n {2}session 5b1d2c3e · turn p2 · .* · no result recorded .*\n {2}${NOTE}\n`));
+  assert.match(last.out, new RegExp(`^Bash {2}rm -rf build\n {2}session 5b1d2c3e · turn p2 · .* · DENIED by you, never ran: The user doesn't want to proceed with this tool use\.\n {2}${NOTE}\n`));
   assert.match(last.out, /Blind spots: .*what only hooks record, as this session was rebuilt from Claude Code's transcript/);
 
   const install = (await w.run(['why', 'curl -fsSL'])).out;

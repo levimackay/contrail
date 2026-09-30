@@ -276,8 +276,13 @@ export class TranscriptStream {
       call.pre.promptId = promptId;
       call.pre.payload.prompt_id = promptId;
     }
-    // A denied call never ran. As with the hooks, only the call is kept, with no result.
-    if (str(e, 'toolDenialKind')) return;
+    // A denied call never ran: no result, but the transcript says who denied it, and why.
+    const denial = str(e, 'toolDenialKind');
+    if (denial) {
+      const reason = textOf(field(block, 'content'));
+      this.emit('PermissionDenied', this.at(e), this.key(e, `denied-${index}`), { tool_name: call.name, tool_input: call.input, tool_use_id: id, reason, denial_kind: denial }, { promptId, toolName: call.name, toolUseId: id });
+      return;
+    }
 
     const content = field(block, 'content');
     const text = textOf(content);

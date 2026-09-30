@@ -47,6 +47,8 @@ export interface Action {
   /** denied: auto mode refused the call, so it never ran; `denial` holds Claude Code's reason */
   status: 'ok' | 'failed' | 'interrupted' | 'pending' | 'denied';
   denial?: string;
+  /** who denied it, as Claude Code's transcript names it (automode-blocked, user-rejected, permission-rule, …); a live PermissionDenied hook is auto mode */
+  deniedBy?: string;
   mcpServer: { name: string; source: string } | null;
 }
 

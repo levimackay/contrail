@@ -1755,6 +1755,7 @@ function buildGraph(rows, who, hashToken) {
         a.postSeq = seq;
         a.status = "denied";
         a.denial = str(p, "reason") ?? "";
+        a.deniedBy = str(p, "denial_kind") ?? "automode-blocked";
         break;
       }
       case "PostToolUse":
@@ -3168,7 +3169,12 @@ var TranscriptStream = class {
       call.pre.promptId = promptId;
       call.pre.payload.prompt_id = promptId;
     }
-    if (str(e, "toolDenialKind")) return;
+    const denial = str(e, "toolDenialKind");
+    if (denial) {
+      const reason = textOf(field(block, "content"));
+      this.emit("PermissionDenied", this.at(e), this.key(e, `denied-${index}`), { tool_name: call.name, tool_input: call.input, tool_use_id: id, reason, denial_kind: denial }, { promptId, toolName: call.name, toolUseId: id });
+      return;
+    }
     const content = field(block, "content");
     const text = textOf(content);
     const interrupted = INTERRUPTED.test(text);
@@ -3818,7 +3824,7 @@ function renderWhy(e, g, note, s = PLAIN) {
   out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
   out.push(
     s.dim(
-      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : a.status === "denied" ? ` \xB7 DENIED by auto mode, never ran${a.denial ? `: ${clip(a.denial, 100)}` : ""}` : ` \xB7 ${a.status.toUpperCase()}`)
+      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : a.status === "denied" ? ` \xB7 DENIED ${deniedBy(a.deniedBy)}, never ran${a.denial ? `: ${clip(a.denial, 100)}` : ""}` : ` \xB7 ${a.status.toUpperCase()}`)
     )
   );
   const source = sourceNote(g);
@@ -3997,6 +4003,12 @@ function requestedLines(e, s) {
     case "NOTHING_TO_MATCH":
       return [`Requested?  nothing specific in this action to match against your words  ${tag3("R8")}`];
   }
+}
+function deniedBy(kind) {
+  if (kind === "user-rejected") return "by you";
+  if (kind === "permission-rule") return "by a permission rule";
+  if (kind?.startsWith("automode")) return "by auto mode";
+  return kind ? `(${clip(kind, 40)})` : "by auto mode";
 }
 function describe(a, g) {
   const path = str(a.input, "file_path") ?? str(a.input, "notebook_path");
@@ -5609,7 +5621,7 @@ var VERDICT_WORDS = {
   PARTLY_NAMED: "partly named by you",
   NOTHING_TO_MATCH: "nothing in it to match against your words"
 };
-var STATUS_WORDS = { ok: "", failed: "failed", interrupted: "interrupted", pending: "no result recorded", denied: "denied by auto mode" };
+var STATUS_WORDS = { ok: "", failed: "failed", interrupted: "interrupted", pending: "no result recorded", denied: "denied" };
 function headline2(e, g) {
   const head = headlineTrace(e);
   const link = head?.links.find((l) => l.grade !== "UNKNOWN");

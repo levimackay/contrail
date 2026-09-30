@@ -50,7 +50,7 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
           : a.status === 'pending'
             ? ' · no result recorded (denied, stopped, or still running)'
             : a.status === 'denied'
-              ? ` · DENIED by auto mode, never ran${a.denial ? `: ${clip(a.denial, 100)}` : ''}`
+              ? ` · DENIED ${deniedBy(a.deniedBy)}, never ran${a.denial ? `: ${clip(a.denial, 100)}` : ''}`
               : ` · ${a.status.toUpperCase()}`),
     ),
   );
@@ -262,6 +262,14 @@ function requestedLines(e: Explanation, s: Style): string[] {
     case 'NOTHING_TO_MATCH':
       return [`Requested?  nothing specific in this action to match against your words  ${tag('R8')}`];
   }
+}
+
+/** Who denied a call, from the kind Claude Code records. */
+export function deniedBy(kind: string | undefined): string {
+  if (kind === 'user-rejected') return 'by you';
+  if (kind === 'permission-rule') return 'by a permission rule';
+  if (kind?.startsWith('automode')) return 'by auto mode';
+  return kind ? `(${clip(kind, 40)})` : 'by auto mode';
 }
 
 export function describe(a: Action, g: Graph): string {

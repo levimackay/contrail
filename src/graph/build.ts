@@ -113,6 +113,7 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
         a.postSeq = seq;
         a.status = 'denied';
         a.denial = str(p, 'reason') ?? '';
+        a.deniedBy = str(p, 'denial_kind') ?? 'automode-blocked';
         break;
       }
       case 'PostToolUse':

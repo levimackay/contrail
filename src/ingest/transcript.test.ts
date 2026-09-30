@@ -49,7 +49,7 @@ test('prompts, calls and results become the hook events the live capture records
     'PostToolBatch', 'PreToolUse 05', 'PostToolUse 05',
     'PostToolBatch', 'PostCompact', 'Stop', 'UserPromptSubmit',
     'PreToolUse 06', 'PostToolUse 06',
-    'PostToolBatch', 'PreToolUse 07',
+    'PostToolBatch', 'PreToolUse 07', 'PermissionDenied 07',
     'Stop',
   ]);
   const fetch = main.events.find(e => e.hook === 'PostToolUse' && e.toolName === 'WebFetch')!;
@@ -132,12 +132,22 @@ test('grades on a rebuilt session come from the same rules, and it says what it 
   assert.deepEqual(explain('toolu_01Write000000000000006', graph).effects.map(l => [l.grade, l.rule]), [['DIRECT', 'R1']]);
 });
 
-test('a denied call keeps its call and its turn, with no result, as the hooks record it', () => {
+test('a denied call keeps its call and its turn, no result, and who denied it and why', () => {
   const { main, graph } = setup();
   assert.ok(!main.events.some(e => e.hook.startsWith('PostToolUse') && e.toolUseId === 'toolu_01Denied00000000000007'));
   const denied = graph.actions.find(a => a.id === 'toolu_01Denied00000000000007')!;
-  assert.equal(denied.status, 'pending');
+  assert.equal(denied.status, 'denied');
+  assert.equal(denied.deniedBy, 'user-rejected');
+  assert.equal(denied.denial, "The user doesn't want to proceed with this tool use.");
   assert.equal(denied.promptId, 'p-0002');
+});
+
+test('each kind of denial Claude Code records reads as who denied the call', async () => {
+  const { deniedBy } = await import('../render/why.ts');
+  assert.deepEqual(
+    ['user-rejected', 'permission-rule', 'automode-blocked', 'automode-unavailable', 'something-new', undefined].map(deniedBy),
+    ['by you', 'by a permission rule', 'by auto mode', 'by auto mode', '(something-new)', 'by auto mode'],
+  );
 });
 
 test('a call with no result entry keeps no turn, rather than one guessed from its position', () => {

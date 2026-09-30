@@ -373,30 +373,68 @@ export function redactString(s: string): string {
   return out;
 }
 
-/**
- * Redacts every string in a JSON value. Walks decoded strings rather than the serialized
- * JSON, because \n escapes break pattern boundaries. A string stored under a secret-named
- * key ({"password": "…"}, or {"Name": "DB_PASSWORD", "Value": "…"} in any casing) is redacted whole.
- */
-export function redactValue(value: unknown, key = ''): unknown {
-  if (typeof value === 'string') {
-    if (key && secretValue(key, value, true)) return tag('secret-field');
-    return redactString(value);
+/** Deeper than this, a JSON value is stored as its JSON text, redacted as one string. */
+export const MAX_DEPTH = 64;
+
+/** JSON.stringify without recursion, for values nested too deep for it. */
+export function jsonText(root: unknown): string {
+  const parts: string[] = [];
+  const stack: Array<{ raw: string } | { value: unknown }> = [{ value: root }];
+  while (stack.length > 0) {
+    const item = stack.pop()!;
+    if ('raw' in item) {
+      parts.push(item.raw);
+      continue;
+    }
+    const v = item.value;
+    if (Array.isArray(v)) {
+      stack.push({ raw: ']' });
+      for (let i = v.length - 1; i >= 0; i--) {
+        stack.push({ value: v[i] ?? null });
+        if (i > 0) stack.push({ raw: ',' });
+      }
+      stack.push({ raw: '[' });
+    } else if (v && typeof v === 'object') {
+      const entries = Object.entries(v).filter(([, x]) => x !== undefined);
+      stack.push({ raw: '}' });
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const [k, x] = entries[i]!;
+        stack.push({ value: x });
+        stack.push({ raw: `${i > 0 ? ',' : ''}${JSON.stringify(k)}:` });
+      }
+      stack.push({ raw: '{' });
+    } else {
+      parts.push(JSON.stringify(v) ?? 'null');
+    }
   }
-  if (Array.isArray(value)) return value.map(v => redactValue(v));
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>);
-    const pair = entries.find(([k, v]) => PAIR_NAME.has(k.toLowerCase()) && typeof v === 'string');
-    const pairName = pair && isSecretName(pair[1] as string) ? (pair[1] as string) : '';
-    // In a pair, "key"/"name" holds the name, not a secret; "value" holds a secret if the name is one.
-    const keyOf = (k: string) => (PAIR_NAME.has(k.toLowerCase()) ? '' : pairName && PAIR_VALUE.has(k.toLowerCase()) ? pairName : k);
-    return Object.fromEntries(entries.map(([k, v]) => [k, redactValue(v, keyOf(k))]));
-  }
-  return value;
+  return parts.join('');
 }
 
 const PAIR_NAME = new Set(['key', 'name', 'parameterkey', 'parametername']);
 const PAIR_VALUE = new Set(['value', 'parametervalue']);
+
+/**
+ * Redacts every string in a JSON value. Walks decoded strings rather than the serialized
+ * JSON, because \n escapes break pattern boundaries. A string stored under a secret-named
+ * key ({"password": "…"}, or {"Name": "DB_PASSWORD", "Value": "…"} in any casing) is redacted whole.
+ * Nesting deeper than MAX_DEPTH is kept as JSON text, so no walker here or later can
+ * overflow the stack on it.
+ */
+export function redactValue(value: unknown): unknown {
+  const walk = (v: unknown, depth: number, key: string): unknown => {
+    if (typeof v === 'string') return key && secretValue(key, v, true) ? tag('secret-field') : redactString(v);
+    if (!v || typeof v !== 'object') return v;
+    if (depth >= MAX_DEPTH) return redactString(jsonText(v));
+    if (Array.isArray(v)) return v.map(x => walk(x, depth + 1, ''));
+    const entries = Object.entries(v as Record<string, unknown>);
+    const pair = entries.find(([k, x]) => PAIR_NAME.has(k.toLowerCase()) && typeof x === 'string');
+    const pairName = pair && isSecretName(pair[1] as string) ? (pair[1] as string) : '';
+    // In a pair, "key"/"name" holds the name, not a secret; "value" holds a secret if the name is one.
+    const keyOf = (k: string) => (PAIR_NAME.has(k.toLowerCase()) ? '' : pairName && PAIR_VALUE.has(k.toLowerCase()) ? pairName : k);
+    return Object.fromEntries(entries.map(([k, x]) => [k, walk(x, depth + 1, keyOf(k))]));
+  };
+  return walk(value, 0, '');
+}
 
 /** Every pattern this module runs, for the test that checks each quantifier is bounded. */
 export const PATTERNS: RegExp[] = [

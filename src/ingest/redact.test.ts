@@ -396,6 +396,14 @@ test('a pair naming something else is left alone', () => {
   }
 });
 
+test('JSON nested thousands deep is redacted without overflowing the stack', () => {
+  let deep: unknown = `DB_PASSWORD=${PW}`;
+  for (let i = 0; i < 3000; i++) deep = { a: [deep] };
+  const out = JSON.stringify(redactValue({ session_id: 's1', tool_response: deep }));
+  assert.ok(!out.includes(PW));
+  assert.match(out, /REDACTED:env-secret/);
+});
+
 test('punctuation after a bare value is kept outside the redaction', () => {
   assert.equal(redactString(`f(password=${PW}), then`), 'f(password=[REDACTED:env-secret]), then');
   assert.equal(redactString(`{password: ${PW}, user: bob}`), '{password: [REDACTED:env-secret], user: bob}');

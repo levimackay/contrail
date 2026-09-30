@@ -2001,23 +2001,55 @@ function redactString(s) {
   }
   return out;
 }
-function redactValue(value, key = "") {
-  if (typeof value === "string") {
-    if (key && secretValue(key, value, true)) return tag("secret-field");
-    return redactString(value);
+var MAX_DEPTH2 = 64;
+function jsonText(root) {
+  const parts = [];
+  const stack = [{ value: root }];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if ("raw" in item) {
+      parts.push(item.raw);
+      continue;
+    }
+    const v = item.value;
+    if (Array.isArray(v)) {
+      stack.push({ raw: "]" });
+      for (let i = v.length - 1; i >= 0; i--) {
+        stack.push({ value: v[i] ?? null });
+        if (i > 0) stack.push({ raw: "," });
+      }
+      stack.push({ raw: "[" });
+    } else if (v && typeof v === "object") {
+      const entries = Object.entries(v).filter(([, x]) => x !== void 0);
+      stack.push({ raw: "}" });
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const [k, x] = entries[i];
+        stack.push({ value: x });
+        stack.push({ raw: `${i > 0 ? "," : ""}${JSON.stringify(k)}:` });
+      }
+      stack.push({ raw: "{" });
+    } else {
+      parts.push(JSON.stringify(v) ?? "null");
+    }
   }
-  if (Array.isArray(value)) return value.map((v) => redactValue(v));
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value);
-    const pair = entries.find(([k, v]) => PAIR_NAME.has(k.toLowerCase()) && typeof v === "string");
-    const pairName = pair && isSecretName(pair[1]) ? pair[1] : "";
-    const keyOf = (k) => PAIR_NAME.has(k.toLowerCase()) ? "" : pairName && PAIR_VALUE.has(k.toLowerCase()) ? pairName : k;
-    return Object.fromEntries(entries.map(([k, v]) => [k, redactValue(v, keyOf(k))]));
-  }
-  return value;
+  return parts.join("");
 }
 var PAIR_NAME = /* @__PURE__ */ new Set(["key", "name", "parameterkey", "parametername"]);
 var PAIR_VALUE = /* @__PURE__ */ new Set(["value", "parametervalue"]);
+function redactValue(value) {
+  const walk = (v, depth, key) => {
+    if (typeof v === "string") return key && secretValue(key, v, true) ? tag("secret-field") : redactString(v);
+    if (!v || typeof v !== "object") return v;
+    if (depth >= MAX_DEPTH2) return redactString(jsonText(v));
+    if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1, ""));
+    const entries = Object.entries(v);
+    const pair = entries.find(([k, x]) => PAIR_NAME.has(k.toLowerCase()) && typeof x === "string");
+    const pairName = pair && isSecretName(pair[1]) ? pair[1] : "";
+    const keyOf = (k) => PAIR_NAME.has(k.toLowerCase()) ? "" : pairName && PAIR_VALUE.has(k.toLowerCase()) ? pairName : k;
+    return Object.fromEntries(entries.map(([k, x]) => [k, walk(x, depth + 1, keyOf(k))]));
+  };
+  return walk(value, 0, "");
+}
 var PATTERNS = [
   ...RULES.flatMap((r) => r.when ? [r.re, r.when] : [r.re]),
   PLACEHOLDER,
@@ -2120,10 +2152,8 @@ function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
   }
   const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
   const hookEvent = str(p, "hook_event_name") ?? "unknown";
-  if (hookEvent === "InstructionsLoaded") attachInstructionText(p, capturedUs);
-  if (hookEvent === "PostToolUse" && str(p, "tool_name") === "Skill") attachSkillText(p, capturedUs);
   const cwd = str(p, "cwd") ?? null;
-  return {
+  const meta = {
     capturedUs,
     sessionId: str(p, "session_id") ?? null,
     promptId: str(p, "prompt_id") ?? null,
@@ -2132,11 +2162,20 @@ function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
     toolName: str(p, "tool_name") ?? null,
     toolUseId: str(p, "tool_use_id") ?? null,
     cwd,
-    repoKey: cwd ? repoKeyOf(cwd) : null,
-    payload: JSON.stringify(stored(p, hookEvent, hmac)),
-    parseError: null,
-    touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
+    repoKey: cwd ? repoKeyOf(cwd) : null
   };
+  try {
+    if (hookEvent === "InstructionsLoaded") attachInstructionText(p, capturedUs);
+    if (hookEvent === "PostToolUse" && str(p, "tool_name") === "Skill") attachSkillText(p, capturedUs);
+    return {
+      ...meta,
+      payload: JSON.stringify(stored(p, hookEvent, hmac)),
+      parseError: null,
+      touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
+    };
+  } catch (e) {
+    return { ...meta, payload: "{}", parseError: `${name}: ${e.message}`, touches: [] };
+  }
 }
 function stored(p, hookEvent, hmac) {
   const clean = redactValue(capValue(dropBulky(p)));
@@ -2215,21 +2254,20 @@ function touchesOf(p, cwd) {
   }
   return [];
 }
-function dropBulky(value, key = "") {
+function dropBulky(value, key = "", depth = 0) {
   if (typeof value === "string") {
     if (key === "originalFile" || key === "base64") {
       return `[contrail: dropped ${key}, ${value.length} bytes, sha256 ${sha256(value).slice(0, 16)}]`;
     }
     return value;
   }
-  if (Array.isArray(value)) return value.map((v) => dropBulky(v));
-  if (value && typeof value === "object") {
-    const isBase64Block = value.type === "base64";
-    return Object.fromEntries(
-      Object.entries(value).map(([k, v]) => [k, dropBulky(v, isBase64Block && k === "data" ? "base64" : k)])
-    );
-  }
-  return value;
+  if (!value || typeof value !== "object") return value;
+  if (depth >= MAX_DEPTH2) return jsonText(value);
+  if (Array.isArray(value)) return value.map((v) => dropBulky(v, "", depth + 1));
+  const isBase64Block = value.type === "base64";
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [k, dropBulky(v, isBase64Block && k === "data" ? "base64" : k, depth + 1)])
+  );
 }
 function capValue(value) {
   if (typeof value === "string") return capString(value);

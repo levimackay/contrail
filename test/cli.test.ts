@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -185,6 +185,15 @@ test('with no data directory, the error names where it looked, honoring CLAUDE_C
   });
   mkdirSync(join(base, 'contrail-contrail'), { recursive: true });
   assert.equal(resolveDataDir(undefined, { CLAUDE_CONFIG_DIR: config }, '/nonexistent-home'), join(base, 'contrail-contrail'));
+});
+
+test('ingest and queries make the data directory private, as the health hook does', async () => {
+  for (const argv of [['ingest', '--from-hook'], ['sessions']]) {
+    const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
+    chmodSync(data, 0o755);
+    assert.equal((await run([...argv, '--data', data])).code, 0);
+    assert.equal(statSync(data).mode & 0o777, 0o700, argv.join(' '));
+  }
 });
 
 test('with no runtime, the launcher says what to install, and the Stop hook stays quiet', () => {

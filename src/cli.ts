@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -163,11 +163,24 @@ interface Store {
   hashToken?: (span: string) => string;
 }
 
+/**
+ * The spool exists and the directory is private. Claude Code creates the data directory with the
+ * user's umask, and the health hook that tightens it only runs when a session starts.
+ */
+function prepareDataDir(dataDir: string): void {
+  mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(dataDir, 0o700);
+  } catch {
+    // not ours to change (another owner); it still works
+  }
+}
+
 async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Promise<T>): Promise<T> {
   const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
   let db: Db;
   try {
-    mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+    prepareDataDir(dataDir);
     db = await openDb(join(dataDir, 'contrail.db'));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
@@ -446,7 +459,7 @@ async function statusline(flags: Flags, io: Io): Promise<number> {
 
 async function ingestCommand(flags: Flags, io: Io): Promise<number> {
   const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
-  mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+  prepareDataDir(dataDir);
   const db = await openDb(join(dataDir, 'contrail.db'));
   try {
     migrate(db);

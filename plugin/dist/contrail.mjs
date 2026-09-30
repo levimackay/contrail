@@ -438,7 +438,7 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename as basename4, dirname as dirname2, join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -3670,11 +3670,18 @@ ${e.stack ?? String(e)}
     return flags["from-skill"] ? 0 : 3;
   }
 }
+function prepareDataDir(dataDir) {
+  mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
+  try {
+    chmodSync2(dataDir, 448);
+  } catch {
+  }
+}
 async function withStore(flags, io, use) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   let db;
   try {
-    mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
+    prepareDataDir(dataDir);
     db = await openDb(join5(dataDir, "contrail.db"));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
@@ -3921,7 +3928,7 @@ async function statusline(flags, io) {
 }
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
-  mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
+  prepareDataDir(dataDir);
   const db = await openDb(join5(dataDir, "contrail.db"));
   try {
     migrate(db);

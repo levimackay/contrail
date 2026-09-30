@@ -21,7 +21,7 @@ export interface IngestReport {
   staleTmpRemoved: number;
 }
 
-interface Touch {
+export interface Touch {
   path: string;
   kind: 'read' | 'write' | 'expected';
 }
@@ -74,20 +74,8 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
 
     db.exec('BEGIN IMMEDIATE');
     try {
-      const inserted = db.run(
-        `INSERT OR IGNORE INTO events
-           (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        name, row.capturedUs, row.sessionId, row.promptId, row.agentId, row.hookEvent,
-        row.toolName, row.toolUseId, row.cwd, row.repoKey, row.payload, row.parseError,
-      );
-      if (inserted) {
-        const id = db.get<{ id: number }>('SELECT id FROM events WHERE spool_name = ?', name)!.id;
-        for (const t of row.touches) db.run('INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)', id, t.path, t.kind);
-        report.ingested++;
-      } else {
-        report.duplicates++;
-      }
+      if (insertRow(db, name, row)) report.ingested++;
+      else report.duplicates++;
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
@@ -103,7 +91,26 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
   return report;
 }
 
-interface Row {
+/**
+ * Stores one event and its file touches, inside the caller's transaction. Keyed by name, so
+ * storing the same event twice is a no-op; returns whether it was new. `source` is null for a
+ * hook event recorded live.
+ */
+export function insertRow(db: Db, name: string, row: Row, source: 'transcript' | null = null): boolean {
+  const inserted = db.run(
+    `INSERT OR IGNORE INTO events
+       (spool_name, captured_us, session_id, prompt_id, agent_id, hook_event, tool_name, tool_use_id, cwd, repo_key, payload, parse_error, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    name, row.capturedUs, row.sessionId, row.promptId, row.agentId, row.hookEvent,
+    row.toolName, row.toolUseId, row.cwd, row.repoKey, row.payload, row.parseError, source,
+  );
+  if (!inserted) return false;
+  const id = db.get<{ id: number }>('SELECT id FROM events WHERE spool_name = ?', name)!.id;
+  for (const t of row.touches) db.run('INSERT INTO touches (event_id, path, kind) VALUES (?, ?, ?)', id, t.path, t.kind);
+  return true;
+}
+
+export interface Row {
   capturedUs: number;
   sessionId: string | null;
   promptId: string | null;
@@ -240,7 +247,7 @@ function attachFileText(p: Record<string, unknown>, path: string, capturedUs: nu
   }
 }
 
-function touchesOf(p: Record<string, unknown>, cwd: string): Touch[] {
+export function touchesOf(p: Record<string, unknown>, cwd: string): Touch[] {
   const tool = str(p, 'tool_name') ?? '';
   const input = obj(p, 'tool_input');
   const response = p.tool_response;

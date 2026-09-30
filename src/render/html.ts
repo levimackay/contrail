@@ -5,7 +5,7 @@ import { callId, clip } from '../util.ts';
 import { parseAnsi } from './ansi.ts';
 import { kindOf, renderRisks, renderTree, summary } from './session.ts';
 import { COLOR } from './style.ts';
-import { originWording, renderWhy } from './why.ts';
+import { originWording, renderWhy, sourceNote } from './why.ts';
 
 /**
  * contrail report: one session as a single HTML file. The page loads nothing and runs no
@@ -119,7 +119,7 @@ export function renderReport(r: ReportInput): string {
 <header>
   <div class="brand">${LOGO_MARK}<span>contrail</span></div>
   <h1>Session ${escapeHtml(sessionId.slice(0, 8))}</h1>
-  <p class="meta"><code>${escapeHtml(clip(g.env.cwd, 160))}</code> · ${escapeHtml(time(first))} to ${escapeHtml(time(last))}</p>
+  <p class="meta"><code>${escapeHtml(clip(g.env.cwd, 160))}</code> · ${escapeHtml(time(first))} to ${escapeHtml(time(last))}</p>${sourceNote(g) ? `\n  <p class="meta"><b>${escapeHtml(sourceNote(g)!)}</b></p>` : ''}
   <nav><a href="#risks">Sensitive actions</a><a href="#timeline">Timeline</a><a href="#trails">Trails</a></nav>
 </header>
 <main>

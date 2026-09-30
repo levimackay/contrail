@@ -175,6 +175,11 @@ export interface Graph {
   agentSaid: { byPrompt: Record<string, string>; byAgent: Record<string, string> };
   env: Env;
   firstEvent: string | null;
+  /**
+   * Where the events came from: Contrail's hooks, live; Claude Code's session transcript,
+   * reconstructed by `contrail import`; or both (a session resumed after it was imported).
+   */
+  source: 'hooks' | 'transcript' | 'both';
   /** When each event was captured, in microseconds since the epoch: timeUs[seq - 1]. */
   timeUs: number[];
   /** The keyed hash that hashed inputs were stored with; absent when no key exists. */

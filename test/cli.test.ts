@@ -183,7 +183,7 @@ test('an unknown target is a clear error, not a stack trace', async () => {
   const data = spoolFrom();
   const r = await run(['why', 'src/never-touched.ts', '--data', data]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /^contrail: Nothing recorded matches "src\/never-touched\.ts": no agent change to that file, .*Contrail only sees sessions recorded since it was installed\./);
+  assert.match(r.err, /^contrail: Nothing recorded matches "src\/never-touched\.ts": no agent change to that file, .*Contrail only sees sessions recorded since it was installed, and earlier ones brought in with contrail import\./);
 });
 
 test('doctor reports what is stored', async () => {
@@ -242,14 +242,16 @@ test('before anything is recorded, each query says what to do next', async () =>
   const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
   const why = await run(['why', 'last', '--data', data]);
   assert.equal(why.code, 1);
-  assert.match(why.err, /^contrail: No recorded edit, command or commit in this repository yet\. .+ then try again\.\n$/);
+  // Each also says how to bring in sessions from before Contrail was installed.
+  const hint = "Sessions from before Contrail was installed can be brought in from Claude Code's transcripts: run contrail import in a terminal.";
+  assert.equal(why.err, `contrail: No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again.\n${hint}\n`);
   const risks = await run(['risks', '--data', data]);
   assert.equal(risks.code, 0);
-  assert.match(risks.out, /No tool calls recorded yet\. .+ then try again\.\n$/);
+  assert.match(risks.out, new RegExp(`No tool calls recorded yet\\. .+ then try again\\.\\n {2}${hint.replace(/[.:']/g, '\\$&')}\\n$`));
   assert.doesNotMatch(risks.out, /None found/);
-  assert.match((await run(['sessions', '--data', data])).out, /^No sessions recorded yet\. .+ then try again\./);
-  assert.match((await run(['trace', '--data', data])).err, /^contrail: No sessions recorded yet\. .+ then try again\./);
-  assert.match((await run(['doctor', '--data', data])).out, /\nNo events yet\. .+ then check again\.\n$/);
+  assert.equal((await run(['sessions', '--data', data])).out, `No sessions recorded yet. Use Claude Code with the plugin enabled, then try again.\n${hint}\n`);
+  assert.match((await run(['trace', '--data', data])).err, /^contrail: No sessions recorded yet\. .+ then try again\.\n.+contrail import/);
+  assert.match((await run(['doctor', '--data', data])).out, /\nNo events yet\. .+ then check again\. Sessions from before .+ run contrail import in a terminal\.\n$/);
 });
 
 test('a session with prompts and no tool calls is labeled with its own id, not a prompt id', async () => {

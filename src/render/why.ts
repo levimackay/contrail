@@ -17,6 +17,23 @@ export const FOOTER = [
   "Not observable: the agent's reasons for this action.",
 ];
 
+/**
+ * How a session was recorded, when not by Contrail's hooks. Every report that shows a session
+ * says so up front, so a reconstruction is never read as a live record.
+ */
+export function sourceNote(g: Pick<Graph, 'source'>): string | null {
+  if (g.source === 'transcript') return "reconstructed from Claude Code's transcript by contrail import, not recorded live";
+  if (g.source === 'both') return "partly reconstructed from Claude Code's transcript by contrail import, partly recorded live";
+  return null;
+}
+
+/** The short form of sourceNote, for a session named in a list; empty for a live one. */
+export function sourceTag(g: Pick<Graph, 'source'>): string {
+  if (g.source === 'transcript') return '(from transcript)';
+  if (g.source === 'both') return '(partly from transcript)';
+  return '';
+}
+
 export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PLAIN): string {
   const out: string[] = [];
   const a = e.action;
@@ -37,6 +54,8 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
               : ` · ${a.status.toUpperCase()}`),
     ),
   );
+  const source = sourceNote(g);
+  if (source) out.push(s.bold(`  ${source}`));
   if (note) out.push(s.dim(`  ${note}`));
   out.push('');
 

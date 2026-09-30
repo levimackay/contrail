@@ -438,7 +438,7 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync as chmodSync2, existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename as basename4, dirname as dirname2, join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2384,14 +2384,14 @@ function findCommit(db, sha, cwd, repoKey) {
       ORDER BY captured_us DESC`,
     wanted.slice(0, 7)
   );
+  const info = cwd ? commitInfo(cwd, wanted) : null;
   for (const row of rows) {
     const p = JSON.parse(row.payload);
     const commit = parseCommitSha(str(p.tool_input, "command") ?? "", str(p.tool_response, "stdout") ?? toText(p.tool_response));
-    if (commit && (wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) {
-      return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: "stdout" };
-    }
+    if (!commit || !(wanted.startsWith(commit.sha) || commit.sha.startsWith(wanted))) continue;
+    if (info && !ranAt(db, row.toolUseId, info.sec)) continue;
+    return { sessionId: row.sessionId, toolUseId: row.toolUseId, cwd: row.cwd, commit, via: "stdout" };
   }
-  const info = cwd ? commitInfo(cwd, wanted) : null;
   if (info) {
     const window = 3600 * 1e6;
     const calls = db.all(
@@ -2417,6 +2417,15 @@ function findCommit(db, sha, cwd, repoKey) {
     }
   }
   throw new ContrailError(`No recorded agent action made commit ${sha}. Contrail sees commits made by Claude Code through its shell tool.`);
+}
+function ranAt(db, toolUseId, sec) {
+  const span = db.get(
+    `SELECT MIN(captured_us) AS first, MAX(captured_us) AS last FROM events
+      WHERE tool_use_id = ? AND hook_event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure')`,
+    toolUseId
+  );
+  if (!span?.first || !span.last) return false;
+  return sec * 1e6 >= span.first - 1e6 && sec * 1e6 <= span.last + 1e6;
 }
 function commitInfo(cwd, sha) {
   try {
@@ -3755,6 +3764,10 @@ async function withStore(flags, io, use) {
   let db;
   try {
     mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
+    try {
+      chmodSync2(dataDir, 448);
+    } catch {
+    }
     db = await openDb(join5(dataDir, "contrail.db"));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
@@ -3977,7 +3990,14 @@ async function report(args, flags, io) {
       io.out(html);
       return 0;
     }
-    writeFileSync2(path, html, { mode: 384 });
+    const tmp = join5(dirname2(path), `.${basename4(path)}.${process.pid}.tmp`);
+    try {
+      writeFileSync2(tmp, html, { mode: 384, flag: "wx" });
+      renameSync(tmp, path);
+    } catch (e) {
+      rmSync2(tmp, { force: true });
+      throw new ContrailError(`Cannot write ${path}: ${e.message}`);
+    }
     io.out(`Wrote ${path}
 `);
     return 0;

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -169,6 +169,11 @@ async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Pro
   let db: Db;
   try {
     mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+    try {
+      chmodSync(dataDir, 0o700); // what the agent read lives here
+    } catch {
+      // a directory someone else owns can still be read
+    }
     db = await openDb(join(dataDir, 'contrail.db'));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
@@ -416,8 +421,17 @@ async function report(args: string[], flags: Flags, io: Io): Promise<number> {
       io.out(html);
       return 0;
     }
-    // The report holds what the agent read (redacted), so it gets the same 0600 as the database.
-    writeFileSync(path, html, { mode: 0o600 });
+    // The report holds what the agent read (redacted), so it gets the same 0600 as the database:
+    // written beside the target and renamed over it, so an existing file's mode or a symlink at
+    // that path is replaced, never followed.
+    const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+    try {
+      writeFileSync(tmp, html, { mode: 0o600, flag: 'wx' });
+      renameSync(tmp, path);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw new ContrailError(`Cannot write ${path}: ${(e as Error).message}`);
+    }
     io.out(`Wrote ${path}\n`);
     return 0;
   });

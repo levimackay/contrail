@@ -257,6 +257,20 @@ test('report writes one self-contained HTML page whose cards link to real calls'
   for (const word of ['because', 'caused', 'led to', 'decided', 'tainted', 'malicious']) assert.ok(!own.includes(word), word);
 });
 
+test('report -o replaces what is at the path with a 0600 file: an existing mode or a symlink is never kept', async () => {
+  const { lstatSync, readFileSync, symlinkSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'contrail-report-'));
+  const victim = join(dir, 'victim.txt');
+  writeFileSync(victim, 'keep me', { mode: 0o644 });
+  symlinkSync(victim, join(dir, 'link.html'));
+  assert.equal((await run(['report', '9c1e', '-o', join(dir, 'link.html')])).code, 0);
+  assert.equal(readFileSync(victim, 'utf8'), 'keep me');
+  assert.ok(lstatSync(join(dir, 'link.html')).isFile());
+  writeFileSync(join(dir, 'open.html'), 'x', { mode: 0o644 });
+  assert.equal((await run(['report', '9c1e', '-o', join(dir, 'open.html')])).code, 0);
+  assert.equal(lstatSync(join(dir, 'open.html')).mode & 0o777, 0o600);
+});
+
 test('report escapes recorded text, so a hostile page cannot inject markup into it', async () => {
   const { buildGraph } = await import('../src/graph/build.ts');
   const { explain } = await import('../src/engine/explain.ts');

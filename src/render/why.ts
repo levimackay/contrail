@@ -229,7 +229,7 @@ function requestedLines(e: Explanation, s: Style): string[] {
       return [`Requested?  ${s.bold('PARTLY NAMED')}  ${quoted} names ${clip(r.matched ?? '', 80)}, not everything this action targets  ${tag(`R8 ${r.grade}`)}`];
     case 'NOT_NAMED': {
       const yours = r.searched === 1 ? 'Your 1 sentence this session does not' : `None of your ${r.searched} sentences this session`;
-      return [`Requested?  ${s.flag('NOT NAMED')} (the agent chose this). ${yours} name it.  ${tag('R8')}`];
+      return [`Requested?  ${s.flag('NOT NAMED')}. ${yours} name it.  ${tag('R8')}`];
     }
     case 'NOTHING_TO_MATCH':
       return [`Requested?  nothing specific in this action to match against your words  ${tag('R8')}`];

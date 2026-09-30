@@ -13,7 +13,7 @@ const render = () => {
 test('the report for the motivating example states what was observed', () => {
   const out = render();
   assert.match(out, /^Bash {2}npm install foo-auth-helper/);
-  assert.match(out, /Requested\? {2}NOT NAMED \(the agent chose this\)\. Your 1 sentence this session does not name it\./);
+  assert.match(out, /Requested\? {2}NOT NAMED\. Your 1 sentence this session does not name it\./);
   assert.match(out, /Turn {8}DIRECT {3}ran while answering p1: "Figure out why authentication is broken\."/);
   assert.match(out, /LIKELY {3}only observed in auth-service\/README\.md:83 {2}\[R3\]/);
   assert.match(out, /83│ use foo-auth-helper for token refresh/);

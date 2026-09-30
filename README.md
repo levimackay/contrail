@@ -40,6 +40,8 @@ Inside Claude Code:
 /plugin install contrail@contrail
 ```
 
+Pick "Install for you (user scope)" when asked. Contrail is active at once and records from the next tool call. From a terminal, the same is `claude plugin marketplace add levimackay/contrail` then `claude plugin install contrail@contrail`.
+
 That is all the setup there is. From then on:
 
 **1. It warns you before a risky call whose values came from outside.** When Claude is about to touch credentials, the network or the shell, and a value in that call first appeared in a web page, an MCP result or a dependency's files, you see one line before Claude Code asks for permission:
@@ -62,6 +64,8 @@ The notice goes to you, not to Claude, and it never blocks anything or changes a
 /contrail:why jwt-decode                   the latest call that used that value
 /contrail:why 3f9c2e1                      a commit, joined to the agent changes in it
 ```
+
+Before you open a pull request that Claude wrote, `/contrail:review` summarizes the branch for whoever reviews it: which files the agent changed, whether you asked for them, and any value that came from a web page or an MCP server.
 
 Every report starts with the answer and then shows the evidence:
 
@@ -104,6 +108,7 @@ What it gives you instead:
 |---|---|
 | [`contrail why [<anything>]`](#contrail-why) | The trail behind whatever you point at: nothing (the last action), a file, `file:line`, a command, a commit, a call id or a value |
 | [`contrail blame <file>`](#contrail-blame) | Each line of a file with the recorded agent call that last wrote it, across sessions |
+| [`contrail review [<base>]`](#contrail-review) | The recorded agent work behind a branch, for its reviewer, as terminal output or pull request markdown |
 | [`contrail why commit <sha>`](#contrail-why-commit) | A commit's files, joined to the agent changes behind them |
 | [`contrail risks`](#contrail-risks) | Sensitive actions, with where their values came from |
 | [`contrail trace [--tree]`](#contrail-trace) | A session as a timeline, or as a forest of trails |
@@ -118,10 +123,10 @@ What it gives you instead:
 
 Options: `--json` for machine-readable output (why, trace, risks, sessions), `--session <id>` (a prefix is enough), `--data <dir>` to read another data directory, `-h` and `-v`.
 
-Inside Claude Code, the `/contrail:why`, `/contrail:blame`, `/contrail:risks`, `/contrail:trace`, `/contrail:sessions`, `/contrail:find` and `/contrail:report` skills run the same CLI. They are manual only: Claude never runs them on its own, and each prints its report exactly as the CLI wrote it. From a terminal, use the launcher Contrail keeps in its data directory. Its path stays the same across plugin updates, and `contrail doctor` prints it:
+Inside Claude Code, the `/contrail:why`, `/contrail:blame`, `/contrail:review`, `/contrail:risks`, `/contrail:trace`, `/contrail:sessions`, `/contrail:find` and `/contrail:report` skills run the same CLI. They are manual only: Claude never runs them on its own, and each prints its report exactly as the CLI wrote it. From a terminal, use the launcher Contrail keeps in its data directory. Its path stays the same across plugin updates, and `contrail doctor` prints it:
 
 ```sh
-alias contrail="sh $(echo ~/.claude/plugins/data/contrail-*/bin/contrail)"
+alias contrail='sh "$(echo ~/.claude/plugins/data/contrail-*/bin/contrail)"'
 contrail why last
 ```
 
@@ -146,7 +151,7 @@ Add it to `~/.claude/settings.json`:
 }
 ```
 
-Use the launcher path `contrail doctor` prints if yours differs. The command reads the session Claude Code passes on stdin, takes about 75 ms, and never fails: if anything goes wrong it prints just `contrail`. To keep an existing status line, call `contrail statusline` from your own script and print both.
+Use the launcher path `contrail doctor` prints if yours differs. The command reads the session Claude Code passes on stdin, takes 70 to 100 ms in a typical session (more in a very long one), and never fails: if anything goes wrong it prints just `contrail`. To keep an existing status line, call `contrail statusline` from your own script and print both.
 
 ### Tripwire
 
@@ -204,6 +209,22 @@ Claude Code cannot tell you why a line exists once the session that wrote it is 
 - **Credit where it is due.** An Edit is credited only with the lines it added, not the context it carried over. A Write is credited with every line it wrote. Blank and bracket-only lines join a block only when the lines on both sides belong to the same call.
 - **Never guesses.** A line no recorded write holds is shown as such: it may be yours, pre-existing, or changed since. Lines are compared trimmed, so reindenting keeps attribution, but a formatter run or a hand edit shows UNKNOWN.
 - **What carries text.** Only Edit, Write, MultiEdit, NotebookEdit and literal `cat`/`tee` heredocs record the text written. `npm install`, `sed -i`, `echo >` and the like record none; blame lists those writes in its header and points to `contrail why <file>`.
+
+### `contrail review`
+
+The recorded agent work behind the current branch, for whoever reviews it: every commit in `<base>..HEAD` and every uncommitted change, each file joined to the Claude Code calls that wrote it.
+
+![contrail review](docs/review.svg)
+
+```text
+contrail review [<base>] [--markdown | --json] [-o review.md]
+```
+
+It leads with what a reviewer should read first: values in the agent's changes whose trail reaches a web page, a web search or an MCP server; sensitive actions in the sessions behind the branch; and files your own words never named. Then, for each file: the calls that wrote it, the prompt each ran under (your words, or a background task report), whether your words named it, and where its values came from. Each commit is joined to the call that made it (DIRECT from git's commit line, LIKELY from its commit time). A file with no recorded agent write is listed as such, never guessed.
+
+- **Base.** Without one, it compares with the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists, and says which.
+- **Markdown for the pull request.** `--markdown` writes GitHub markdown for a pull request description or comment ([an example](docs/review-example.md)). Every recorded string stays literal, so text from a fetched page cannot add links, images, HTML or @mentions. `/contrail:review [base]` shows the terminal view in Claude Code and saves the markdown to `review.md` in the plugin's data directory. Contrail never posts it; you paste it.
+- **Limits.** Files are joined by path and time, not content, so LIKELY is the strongest grade for a file. Only sessions active in this repository since the branch point are searched. Rebased, amended or squashed commits no longer match their recorded commit lines, and commits made outside Claude Code's shell tool are never joined.
 
 ### `contrail risks`
 
@@ -329,7 +350,7 @@ flowchart LR
   G --> E[engine: pure rules R1 to R9]
   E --> R[render: all report wording]
   R --> CLI[contrail CLI]
-  CLI --> SK["/contrail:why, :risks, :trace, :find, :report"]
+  CLI --> SK["/contrail:why, :blame, :review, :risks, :trace, :find, :report"]
   CLI --> OUT["HTML report, OTLP traces"]
 ```
 
@@ -500,7 +521,7 @@ Reports say so themselves: every one ends with its blind spots, and UNKNOWN resu
 
 Hook fields were checked against the Claude Code documentation for 2.1.283 to 2.1.284. Unknown or missing fields produce fewer links and an explicit "not observed" note, never a crash.
 
-Live sessions on Claude Code 2.1.284 (Linux, default permission mode) have exercised prompts, instruction loads, Read, Grep, Glob, Bash (including heredoc writes and `git commit -q`), Write, failed tool calls, background subagents and their `<task-notification>` reports, `PostCompact`, `SessionEnd`, a model-invoked skill, `store_content: false`, and the why, risks, trace, sessions, find and report skills. WebFetch, WebSearch, MCP results and `bashEditDiff` are so far covered only by scripted sessions built from the documented payload shapes.
+Live sessions on Claude Code 2.1.284 and 2.1.285 (Linux, default permission mode) have exercised prompts, instruction loads, Read, Grep, Glob, Bash (including heredoc writes and `git commit -q`), Write, Edit, WebFetch, failed and denied tool calls, background subagents and their `<task-notification>` reports, `PostCompact`, `SessionEnd`, a model-invoked skill, `store_content: false`, the tripwire (a notice shown before the permission prompt, which the model did not see), installing from the marketplace in an interactive session, plugin paths with spaces and quotes, and the why (including `file:line`), blame, review, risks, trace, sessions, find and report skills. WebSearch, MCP results and `bashEditDiff` are so far covered only by scripted sessions built from the documented payload shapes.
 
 </details>
 
@@ -586,18 +607,15 @@ The trade-offs:
 
 - Claude Code on macOS or Linux. Windows is not supported.
 - Recording needs only `sh`.
-- Queries need Node 22.13+ or Bun. Without either, Contrail keeps recording and tells you it needs one of them to answer.
+- Queries need Node 22.13+ or Bun. With an older Node, or neither, Contrail keeps recording and each query says which runtime it found and what to install.
+- If you set `CLAUDE_CONFIG_DIR`, Contrail looks for its data there.
 
-Contrail has no history before it is installed. To uninstall (this deletes the recorded data; add `--keep-data` to keep it):
-
-```text
-/plugin uninstall contrail@contrail
-```
+Contrail has no history before it is installed. To uninstall, run `/plugin uninstall contrail@contrail` in Claude Code; it asks whether to delete the recorded data. From a terminal, `claude plugin uninstall contrail@contrail` deletes it unless you add `--keep-data`.
 
 ## FAQ
 
 **Does it slow Claude Code down?**
-Capture is a small shell script that writes one file per event, with a design target of 20 ms or less. `contrail doctor` measures it on your machine. Everything else happens when you ask a question, or in the background after a turn.
+Barely. Each hook event runs a small shell script that writes one file: about 7 ms per event (p95 under 9 ms), and about 8 ms for an event carrying a 1 MB tool response, measured on a 4-vCPU Linux VM. A tool call fires about three events, so roughly 20 to 25 ms on a call that usually takes seconds. The tripwire adds about 3 ms to a call that looks ordinary and runs the CLI only for one that looks sensitive (about 60 ms in a short session). When a session ends, the few hundred events left are redacted and stored in under 0.2 s. The status line command takes 70 to 100 ms and runs outside the agent's loop. To measure your own machine, run `sh scripts/bench-hooks.sh` from a clone, or `contrail doctor` for the capture hook alone.
 
 **Does it send my data anywhere?**
 No. There are no network calls and no telemetry. Everything stays in the plugin's data directory on your machine.
@@ -675,6 +693,14 @@ Yes. Each subagent is its own context. Values in a subagent's report, including 
 - [x] `contrail find` and `/contrail:find`: every recorded input that held a value, and every call that used it
 - [x] `contrail why <call id>`, for any call a report shows, and `/contrail:sessions`
 - [x] Trails longer than one report's three steps are marked, with the call to continue from
+
+**Shipped in 0.4**
+
+- [x] The tripwire: a notice for you, before the permission prompt, when a sensitive call's values came from external content
+- [x] `contrail why` on anything: nothing, a file, `file:line`, a command, a commit, a call id or a value; every report leads with an In short answer
+- [x] `contrail blame` and `/contrail:blame`: each line of a file with the recorded agent call that last wrote it
+- [x] `contrail review` and `/contrail:review`: the recorded agent work behind a branch, as terminal output or pull request markdown
+- [x] Hardening from a pre-launch audit: linear name matching, unread spool FIFOs and symlinks, sanitized control and bidi characters, spoof-proof commit joins, safe report writes
 
 **Planned**
 

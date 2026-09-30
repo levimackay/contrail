@@ -54,6 +54,7 @@ const TEXT_RESULTS = `IFNULL(hook_event = 'PostToolUse' AND (tool_name IN (${TEX
 export function loadRows(db: Db, sessionId: string, { later = false } = {}): EventRow[] {
   if (!later) return db.all<EventRow>('SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name', sessionId);
   // The same rows in the same order; a stored payload is never NULL, so NULL marks one that waits.
+  // The second SELECT lists the table's columns in order, so a migration that adds one adds it there.
   const rows = db.all<Omit<EventRow, 'payload'> & { payload: string | null }>(
     `SELECT * FROM events WHERE session_id = ? AND NOT ${TEXT_RESULTS}
      UNION ALL

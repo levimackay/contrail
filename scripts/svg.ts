@@ -68,7 +68,9 @@ ${body}
 }
 
 /** The demo views shown in the README, as `contrail <args>`. `{sha}` is the demo commit. */
-const VIEWS: Array<{ file: string; args: string[]; cols?: number }> = [
+const VIEWS: Array<{ file: string; args: string[]; cols?: number; lines?: number }> = [
+  // The README's first image: the answer at the top of a report, cut before the evidence.
+  { file: 'hero.svg', args: ['why', 'cat ~/.aws/credentials'], lines: 13 },
   { file: 'why.svg', args: ['why', 'npm install jwt-decode'] },
   { file: 'risks.svg', args: ['risks'] },
   { file: 'trace.svg', args: ['trace', '--session', '4f2a'] },
@@ -95,6 +97,7 @@ async function renderDocs(): Promise<void> {
     let err = '';
     const code = await main([...args, '--data', data], { out: s => (out += s), err: s => (err += s), cwd: repo, env: { FORCE_COLOR: '1' }, home: '/Users/dev' });
     if (code !== 0) throw new Error(`contrail ${args.join(' ')} exited ${code}: ${err}`);
+    if (view.lines) out = `${out.split('\n').slice(0, view.lines).join('\n')}\n\x1b[2m…  the full evidence follows: every value, its quoted source line, and the blind spots\x1b[0m\n`;
     const command = `contrail ${args.map(shellQuote).join(' ')}`;
     writeFileSync(join(docs, view.file), ansiToSvg(`\x1b[2m$\x1b[0m \x1b[1m${command}\x1b[0m\n${out}`, command, view.cols));
     console.log(`docs/${view.file}  ${command}`);

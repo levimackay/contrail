@@ -29,12 +29,43 @@ const namesSecret = (v: string) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.
 export const SECRET_NAME =
   /secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie/i;
 
+const PEM_BEGIN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
+const PEM_END = /-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
+/** An unterminated key (truncated output) takes only whole base64 lines, split by real or JSON-escaped newlines. */
+const PEM_BODY = /(?:(?:\r?\n|\\r\\n|\\n)[A-Za-z0-9+/=]{1,1024}(?=\r?\n|\\[rn]|["']|$)){0,1024}/y;
+const PEM_SPAN = 65536;
+
+/**
+ * Private key blocks, found in one pass: every END marker is located once, and each BEGIN
+ * takes the first END after it, so a run of headers with no END costs linear time.
+ */
+function redactPrivateKeys(s: string): string {
+  if (!s.includes('PRIVATE KEY')) return s;
+  const ends: Array<[number, number]> = [];
+  for (const m of s.matchAll(PEM_END)) ends.push([m.index, m.index + m[0].length]);
+  let out = '';
+  let last = 0;
+  let e = 0;
+  PEM_BEGIN.lastIndex = 0;
+  for (let m = PEM_BEGIN.exec(s); m; m = PEM_BEGIN.exec(s)) {
+    const headerEnd = m.index + m[0].length;
+    while (e < ends.length && ends[e]![0] < headerEnd) e++;
+    let stop: number;
+    if (e < ends.length && ends[e]![0] - headerEnd <= PEM_SPAN) {
+      stop = ends[e]![1];
+    } else {
+      PEM_BODY.lastIndex = headerEnd;
+      PEM_BODY.exec(s);
+      stop = PEM_BODY.lastIndex;
+    }
+    out += s.slice(last, m.index) + tag('private-key');
+    last = stop;
+    PEM_BEGIN.lastIndex = stop;
+  }
+  return out + s.slice(last);
+}
+
 const RULES: Rule[] = [
-  {
-    id: 'private-key',
-    // Unterminated keys (truncated output) take only whole base64 lines, so the text after them survives.
-    re: /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,65536}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----|(?:\r?\n[A-Za-z0-9+/=]{1,128}(?=\r?\n|$)){0,1024})/g,
-  },
   { id: 'aws-access-key', re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
   { id: 'github-token', re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g },
   { id: 'gitlab-token', re: /\bglpat-[A-Za-z0-9_-]{20,64}/g },
@@ -102,7 +133,7 @@ const RULES: Rule[] = [
 ];
 
 export function redactString(s: string): string {
-  let out = s;
+  let out = redactPrivateKeys(s);
   for (const rule of RULES) {
     const replace: Replace = rule.replace ?? (() => tag(rule.id));
     out = out.replace(rule.re, replace);
@@ -133,4 +164,4 @@ export function redactValue(value: unknown, key = ''): unknown {
 }
 
 /** Every pattern this module runs, for the test that checks each quantifier is bounded. */
-export const PATTERNS: RegExp[] = [...RULES.map(r => r.re), PLACEHOLDER, CODE_REF, SECRET_NAME];
+export const PATTERNS: RegExp[] = [...RULES.map(r => r.re), PLACEHOLDER, CODE_REF, SECRET_NAME, PEM_BEGIN, PEM_END, PEM_BODY];

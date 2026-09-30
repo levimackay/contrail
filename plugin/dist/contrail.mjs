@@ -1612,12 +1612,36 @@ var PLACEHOLDER = /^(?:\$\{?[A-Za-z_]\w{0,127}\}?|<[^<>\n]{0,128}>|x{3,64}|\*{3,
 var CODE_REF = /^(?:[A-Za-z_][\w.]{0,127}(?:\(.{0,512}\)|\[.{0,512}\]|\[)|[A-Za-z_]\w{0,63}(?:\.[A-Za-z_]\w{0,63}){1,12}|\d{1,6})$/;
 var namesSecret = (v) => PLACEHOLDER.test(v) || CODE_REF.test(v) || v.startsWith("[REDACTED");
 var SECRET_NAME = /secret|token|passw(?:or)?d|pass(?:phrase)?(?![a-z])|pwd|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie/i;
+var PEM_BEGIN = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
+var PEM_END = /-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g;
+var PEM_BODY = /(?:(?:\r?\n|\\r\\n|\\n)[A-Za-z0-9+/=]{1,1024}(?=\r?\n|\\[rn]|["']|$)){0,1024}/y;
+var PEM_SPAN = 65536;
+function redactPrivateKeys(s) {
+  if (!s.includes("PRIVATE KEY")) return s;
+  const ends = [];
+  for (const m of s.matchAll(PEM_END)) ends.push([m.index, m.index + m[0].length]);
+  let out = "";
+  let last = 0;
+  let e = 0;
+  PEM_BEGIN.lastIndex = 0;
+  for (let m = PEM_BEGIN.exec(s); m; m = PEM_BEGIN.exec(s)) {
+    const headerEnd = m.index + m[0].length;
+    while (e < ends.length && ends[e][0] < headerEnd) e++;
+    let stop;
+    if (e < ends.length && ends[e][0] - headerEnd <= PEM_SPAN) {
+      stop = ends[e][1];
+    } else {
+      PEM_BODY.lastIndex = headerEnd;
+      PEM_BODY.exec(s);
+      stop = PEM_BODY.lastIndex;
+    }
+    out += s.slice(last, m.index) + tag("private-key");
+    last = stop;
+    PEM_BEGIN.lastIndex = stop;
+  }
+  return out + s.slice(last);
+}
 var RULES = [
-  {
-    id: "private-key",
-    // Unterminated keys (truncated output) take only whole base64 lines, so the text after them survives.
-    re: /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,65536}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----|(?:\r?\n[A-Za-z0-9+/=]{1,128}(?=\r?\n|$)){0,1024})/g
-  },
   { id: "aws-access-key", re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/g },
   { id: "github-token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g },
   { id: "gitlab-token", re: /\bglpat-[A-Za-z0-9_-]{20,64}/g },
@@ -1683,7 +1707,7 @@ var RULES = [
   }
 ];
 function redactString(s) {
-  let out = s;
+  let out = redactPrivateKeys(s);
   for (const rule of RULES) {
     const replace = rule.replace ?? (() => tag(rule.id));
     out = out.replace(rule.re, replace);
@@ -1706,7 +1730,7 @@ function redactValue(value, key = "") {
   }
   return value;
 }
-var PATTERNS = [...RULES.map((r) => r.re), PLACEHOLDER, CODE_REF, SECRET_NAME];
+var PATTERNS = [...RULES.map((r) => r.re), PLACEHOLDER, CODE_REF, SECRET_NAME, PEM_BEGIN, PEM_END, PEM_BODY];
 
 // src/ingest/ingest.ts
 var STRING_CAP = 256 * 1024;

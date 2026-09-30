@@ -156,3 +156,30 @@ function unboundedQuantifier(source: string): string | undefined {
 test('every quantifier in every redaction pattern is bounded', () => {
   for (const re of PATTERNS) assert.equal(unboundedQuantifier(re.source), undefined, re.source.slice(0, 80));
 });
+
+/** Runs fn up to three times and returns the fastest, so one pause on a busy runner does not fail a test. */
+function fastest(fn: () => void): number {
+  let best = Infinity;
+  for (let i = 0; i < 3 && best >= 200; i++) {
+    const start = performance.now();
+    fn();
+    best = Math.min(best, performance.now() - start);
+  }
+  return best;
+}
+const CAP = 256 * 1024;
+const fill = (unit: string, prefix = '') => prefix + unit.repeat(Math.ceil(CAP / unit.length)).slice(0, CAP);
+
+test('a run of private key headers with no END redacts in linear time', () => {
+  for (const s of [fill('-----BEGIN PRIVATE KEY-----'), fill('-----BEGIN PRIVATE KEY-----\n-----END '), fill('\\nAAAA', '-----BEGIN PRIVATE KEY-----')]) {
+    const ms = fastest(() => redactString(s));
+    assert.ok(ms < 200, `took ${Math.round(ms)} ms`);
+  }
+});
+
+test('an unterminated private key inside JSON text, with escaped newlines, loses its body too', () => {
+  const body = [repeat('MIIE', 16), repeat('ABCD', 16), repeat('x9Z+', 4)];
+  const out = redactString(`{"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----\\n${body.join('\\n')}\\n`);
+  assert.match(out, /\[REDACTED:private-key\]/);
+  for (const line of body) assert.ok(!out.includes(line), line);
+});

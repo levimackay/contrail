@@ -54,7 +54,7 @@ const where = (link: Link, input: Input) => `${input.label}${link.quote?.line !=
 function fileState(f: ReviewFile): string {
   const committed = f.commits.length ? `committed in ${f.commits.slice(0, 3).map(short).join(', ')}${f.commits.length > 3 ? `, +${f.commits.length - 3} more` : ''}` : '';
   if (committed && f.uncommitted) return `${committed}; changed again, not committed`;
-  return committed || (f.uncommitted ? 'not committed' : 'in the diff');
+  return committed || (f.uncommitted ? 'not committed' : 'committed, in no listed commit (an older one, or a merge)');
 }
 
 function baseWords(r: Review): string {

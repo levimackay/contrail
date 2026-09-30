@@ -37,6 +37,9 @@ const VERDICT_WORDS: Record<Verdict, string> = {
   NOTHING_TO_MATCH: 'nothing in it to match against your words',
 };
 
+/** How a call ended, when it did not end with a result. A denied call has no result recorded. */
+const STATUS_WORDS: Record<Action['status'], string> = { ok: '', failed: 'failed', interrupted: 'interrupted', pending: 'no result recorded' };
+
 /** The value, link and source a trail leads with: a target with a found source, else any found value. */
 function headline(e: Explanation, g: Graph): { token: string; link: Link; input: Input } | null {
   const head = headlineTrace(e);
@@ -112,7 +115,8 @@ export function renderReview(r: Review, s: Style = PLAIN): string {
     const g = r.graphs.get(f.action.scope.sessionId)!;
     const mark = f.externalUpstream ? s.flag('▲') : f.requested === 'NOT_NAMED' ? s.bold('△') : s.dim('·');
     const asked = f.requested === 'NOT_NAMED' ? s.flag(VERDICT_WORDS[f.requested]) : VERDICT_WORDS[f.requested];
-    out.push(`  ${mark} ${s.bold(describe(f.action, g))}`);
+    const status = STATUS_WORDS[f.action.status];
+    out.push(`  ${mark} ${s.bold(describe(f.action, g))}${status ? (f.action.status === 'pending' ? s.dim(` (${status})`) : s.flag(` ${status.toUpperCase()}`)) : ''}`);
     out.push(`    ${s.accent(f.kinds.join(' · '))}   ${asked}   ${s.dim(`session ${sid(f.action.scope.sessionId)} · ${turnLabel(f.action, g)} · ${callId(f.action.id)}`)}`);
     const src = firstSource(f);
     if (src) {
@@ -356,7 +360,8 @@ export function renderReviewMarkdown(r: Review, version: string): string {
   for (const f of r.findings.slice(0, LIST_LIMIT)) {
     const g = r.graphs.get(f.action.scope.sessionId)!;
     const mark = f.externalUpstream ? '▲' : f.requested === 'NOT_NAMED' ? '△' : '·';
-    top.push(`- ${mark} ${mdCode(describe(f.action, g), 140)} · ${f.kinds.join(', ')} · ${VERDICT_WORDS[f.requested]} · ${f.action.tool} ${mdCall(f.action.id)} in session ${mdSession(f.action.scope.sessionId)}`);
+    const status = STATUS_WORDS[f.action.status];
+    top.push(`- ${mark} ${mdCode(describe(f.action, g), 140)}${status ? ` · ${status}` : ''} · ${f.kinds.join(', ')} · ${VERDICT_WORDS[f.requested]} · ${f.action.tool} ${mdCall(f.action.id)} in session ${mdSession(f.action.scope.sessionId)}`);
     const src = firstSource(f);
     if (src) top.push(`  - **${src.link.grade}** ${mdCode(src.link.token ?? '', 80)} from ${mdCode(where(src.link, src.input), 120)} (${src.input.trust})`);
   }

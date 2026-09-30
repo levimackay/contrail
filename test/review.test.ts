@@ -89,6 +89,8 @@ before(async () => {
     ...at(call('c2', 'Bash', { command: 'git add b.txt && git commit -q -m "Add b"' }, '', { stdout: '', stderr: '' }), T0 + 229),
     ...at(call('w3', 'Write', { file_path: join(s.repo, 'c.txt'), content: 'c\n' }, 'File created'), T0 + 400),
     ...at(call('w4', 'Write', { file_path: join(s.repo, 'd.txt'), content: 'd\n' }, 'File created'), T0 + 600),
+    // A call you denied: Claude Code records it before it runs, and no result after.
+    [d.pre('n1', 'Bash', { command: 'curl -s https://status.x.example/ping' }), T0 + 650],
   ]);
   // A session from before this branch wrote human.txt: it is not part of this branch's work.
   s.record('old-session', [
@@ -152,6 +154,7 @@ test('the terminal view names what it could not attribute instead of guessing', 
   assert.match(r.out, /"Add c"\n {4}UNKNOWN {2}no recorded agent call made it/);
   assert.match(r.out, /"Add b"\n {4}LIKELY {3}made by Bash c2 .*the only recorded git commit running when git dated it {2}\[R9\]/);
   assert.match(r.out, /No recorded agent change[^\n]*\n {2}UNKNOWN {2}base\.txt +not committed\n {2}UNKNOWN {2}human\.txt +committed in [0-9a-f]{7}\n/);
+  assert.match(r.out, /\n {2}△ curl -s https:\/\/status\.x\.example\/ping \(no result recorded\)\n {4}network {3}not named by you/);
 });
 
 test('a named base narrows the range', async () => {

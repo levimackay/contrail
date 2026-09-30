@@ -3682,6 +3682,7 @@ var VERDICT_WORDS = {
   PARTLY_NAMED: "partly named by you",
   NOTHING_TO_MATCH: "nothing in it to match against your words"
 };
+var STATUS_WORDS = { ok: "", failed: "failed", interrupted: "interrupted", pending: "no result recorded" };
 function headline3(e, g) {
   const head = headlineTrace(e);
   const link = head?.links.find((l) => l.grade !== "UNKNOWN");
@@ -3745,7 +3746,8 @@ function renderReview(r, s = PLAIN) {
     const g = r.graphs.get(f.action.scope.sessionId);
     const mark = f.externalUpstream ? s.flag("\u25B2") : f.requested === "NOT_NAMED" ? s.bold("\u25B3") : s.dim("\xB7");
     const asked = f.requested === "NOT_NAMED" ? s.flag(VERDICT_WORDS[f.requested]) : VERDICT_WORDS[f.requested];
-    out.push(`  ${mark} ${s.bold(describe(f.action, g))}`);
+    const status = STATUS_WORDS[f.action.status];
+    out.push(`  ${mark} ${s.bold(describe(f.action, g))}${status ? f.action.status === "pending" ? s.dim(` (${status})`) : s.flag(` ${status.toUpperCase()}`) : ""}`);
     out.push(`    ${s.accent(f.kinds.join(" \xB7 "))}   ${asked}   ${s.dim(`session ${sid(f.action.scope.sessionId)} \xB7 ${turnLabel(f.action, g)} \xB7 ${callId(f.action.id)}`)}`);
     const src = firstSource(f);
     if (src) {
@@ -3948,7 +3950,8 @@ function renderReviewMarkdown(r, version) {
   for (const f of r.findings.slice(0, LIST_LIMIT)) {
     const g = r.graphs.get(f.action.scope.sessionId);
     const mark = f.externalUpstream ? "\u25B2" : f.requested === "NOT_NAMED" ? "\u25B3" : "\xB7";
-    top.push(`- ${mark} ${mdCode(describe(f.action, g), 140)} \xB7 ${f.kinds.join(", ")} \xB7 ${VERDICT_WORDS[f.requested]} \xB7 ${f.action.tool} ${mdCall(f.action.id)} in session ${mdSession(f.action.scope.sessionId)}`);
+    const status = STATUS_WORDS[f.action.status];
+    top.push(`- ${mark} ${mdCode(describe(f.action, g), 140)}${status ? ` \xB7 ${status}` : ""} \xB7 ${f.kinds.join(", ")} \xB7 ${VERDICT_WORDS[f.requested]} \xB7 ${f.action.tool} ${mdCall(f.action.id)} in session ${mdSession(f.action.scope.sessionId)}`);
     const src = firstSource(f);
     if (src) top.push(`  - **${src.link.grade}** ${mdCode(src.link.token ?? "", 80)} from ${mdCode(where(src.link, src.input), 120)} (${src.input.trust})`);
   }

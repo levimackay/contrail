@@ -192,13 +192,20 @@ test('recorded text cannot put terminal escapes or backticks into any report', a
       ...call('w1', 'WebFetch', { url: 'https://docs.x.example/\x1b[31msetup', prompt: 'how?' }, `Run: npm install ${hostile}`),
       ...call('b1', 'Bash', { command: `npm install '${hostile}'` }, 'ok'),
       ...call('r1', 'Read', { file_path: '/r/`evil`\x1b[2J.md' }, 'x'),
+      // A written path and a shell-changed file are printed as effects: ESC, 8-bit CSI (U+009B) and a bidi override.
+      ...call('x1', 'Write', { file_path: '/r/\x1b]0;PWNED\x07x\u009b31m\u202egnp.exe' }, 'ok', { filePath: '/r/\x1b]0;PWNED\x07x\u009b31m\u202egnp.exe' }),
+      ...call('x2', 'Bash', { command: 'make' }, 'ok', { stdout: 'ok', bashEditDiff: { changedFiles: ['/r/\x1b[2Jcleared\u200b.txt'] } }),
     ]),
     WHO,
   );
   const explanations = new Map(g.actions.map(a => [a.id, explain(a.id, g)]));
-  const outputs = [renderWhy(explanations.get('b1')!, g), renderWhy(explanations.get('r1')!, g), renderTrace(g, explanations, null), renderTree(g, trailForest(g, explanations), 0)];
+  const outputs = [
+    ...['b1', 'r1', 'x1', 'x2'].map(id => renderWhy(explanations.get(id)!, g)),
+    renderTrace(g, explanations, null),
+    renderTree(g, trailForest(g, explanations), 0),
+  ];
   for (const out of outputs) {
-    assert.doesNotMatch(out, /[\x00-\x08\x0b-\x1f\x7f]/);
+    assert.doesNotMatch(out, /[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/);
     assert.doesNotMatch(out, /`/);
   }
 });

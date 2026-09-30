@@ -23,7 +23,7 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
   const inputs = new Map(g.inputs.map(i => [i.id, i]));
   const prompt = g.prompts.find(p => p.promptId === a.promptId);
 
-  out.push(`${s.bold(a.tool)}  ${s.bold(describe(a, g))}`);
+  out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
   out.push(
     s.dim(
       `  session ${a.scope.sessionId.slice(0, 8)} · ${prompt ? `turn ${prompt.label}` : 'turn not recorded'} · ${callId(a.id)} · seq ${a.preSeq}` +
@@ -67,9 +67,10 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
   const effects = e.effects.map(l => ({ l, fx: g.effects.find(x => x.id === l.to) })).filter((x): x is { l: Link; fx: Effect } => !!x.fx);
   if (effects.length) {
     out.push(s.bold('Effects'));
-    const width = Math.max(...effects.map(x => x.fx.target.length));
+    const target = (fx: Effect) => clip(fx.target, 100);
+    const width = Math.max(...effects.map(x => target(x.fx).length));
     for (const { l, fx } of effects) {
-      out.push(`  ${s.grade(l.grade)}${fx.target.padEnd(width)}  ${effectWording(fx)}  ${s.dim(`[${l.rule} ${fx.evidence}]`)}`);
+      out.push(`  ${s.grade(l.grade)}${target(fx).padEnd(width)}  ${effectWording(fx)}  ${s.dim(`[${l.rule} ${clip(fx.evidence, 40)}]`)}`);
       for (const line of fx.patch.slice(0, 6)) out.push(s.dim(`      ${clip(line, 100)}`));
     }
     out.push('');

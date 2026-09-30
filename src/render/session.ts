@@ -106,7 +106,7 @@ function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Ma
 
   const effects = g.effects.filter(x => x.actionId === a.id && x.kind !== 'network');
   if (effects.length && kind === 'SHELL') {
-    const shown = effects.slice(0, 4).map(x => x.target).join(', ') + (effects.length > 4 ? `, +${effects.length - 4} more` : '');
+    const shown = effects.slice(0, 4).map(x => clip(x.target, 80)).join(', ') + (effects.length > 4 ? `, +${effects.length - 4} more` : '');
     const how = effects.every(x => x.evidence === 'expected') ? s.dim(' (expected, not observed)') : '';
     lines.push(`         ${s.dim('→')} ${shown}${how}`);
   }
@@ -288,7 +288,7 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
   const out: string[] = [];
   const { commit, action, explanation: e } = r;
   const prompt = g.prompts.find(p => p.promptId === action.promptId);
-  out.push(`${s.bold('Commit')} ${s.accent(commit.sha)} on ${commit.branch}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
+  out.push(`${s.bold('Commit')} ${s.accent(commit.sha)} on ${clip(commit.branch, 60)}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
   if (r.via === 'time') {
     const at = r.commitSec ? new Date(r.commitSec * 1000).toISOString().slice(11, 19) : 'that second';
     out.push(
@@ -296,7 +296,7 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
       `           ${s.dim('git printed no commit line for this command, so the join is on time, not on git\'s output')}`,
     );
   } else {
-    out.push(`  ${s.grade('DIRECT')}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim('[R1]')}`);
+    out.push(`  ${s.grade('DIRECT')}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${clip(commit.branch, 60)} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim('[R1]')}`);
   }
   const verdict = e.requested.verdict;
   const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : '';

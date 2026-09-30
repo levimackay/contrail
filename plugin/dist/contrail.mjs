@@ -497,11 +497,12 @@ function changedFiles(response, cwd) {
   return arr(field(diff, "changedFiles")).map((f) => typeof f === "string" ? f : str(f, "path") ?? str(f, "filePath") ?? str(f, "file")).filter((f) => Boolean(f)).map((f) => isAbsolute(f) || !cwd ? f : resolve(cwd, f));
 }
 function clip(s, max) {
-  const one = s.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/`/g, "'").replace(/\s+/g, " ").trim();
+  const one = s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "\uFFFD").replace(/`/g, "'").replace(/\s+/g, " ").trim();
   return one.length <= max ? one : one.slice(0, max - 1) + "\u2026";
 }
 function callId(id) {
-  return id.length > 12 ? `${id.slice(0, 5)}\u2026${id.slice(-5)}` : id;
+  const safe = id.replace(/[^\w-]/g, "?");
+  return safe.length > 12 ? `${safe.slice(0, 5)}\u2026${safe.slice(-5)}` : safe;
 }
 
 // src/engine/tokens.ts
@@ -1771,7 +1772,8 @@ function newAction(id, scope, row, p, seq) {
     id,
     scope,
     promptId: row.prompt_id,
-    tool: row.tool_name ?? str(p, "tool_name") ?? "unknown",
+    // Tool names are identifiers; anything else in one is not printed as-is.
+    tool: (row.tool_name ?? str(p, "tool_name") ?? "unknown").replace(/[^\w.:-]/g, "?").slice(0, 128),
     input: obj(p, "tool_input") ?? {},
     response: null,
     preSeq: seq,
@@ -2471,9 +2473,9 @@ function pickSession(db, prefix, repoKey) {
     prefix
   );
   if (matches.length === 1) return matches[0].id;
-  if (!matches.length) throw new ContrailError(`No session starts with "${prefix}". Run contrail sessions to list them.`);
-  throw new ContrailError(`"${prefix}" matches several sessions:
-${matches.map((m) => `  ${m.id}`).join("\n")}
+  if (!matches.length) throw new ContrailError(`No session starts with "${clip(prefix, 60)}". Run contrail sessions to list them.`);
+  throw new ContrailError(`"${clip(prefix, 60)}" matches several sessions:
+${matches.map((m) => `  ${clip(m.id, 80)}`).join("\n")}
 Use more characters.`);
 }
 function loadRows(db, sessionId) {
@@ -2599,7 +2601,7 @@ function renderWhy(e, g, note, s = PLAIN) {
   const a = e.action;
   const inputs = new Map(g.inputs.map((i) => [i.id, i]));
   const prompt = g.prompts.find((p) => p.promptId === a.promptId);
-  out.push(`${s.bold(a.tool)}  ${s.bold(describe(a, g))}`);
+  out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
   out.push(
     s.dim(
       `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}${a.status === "ok" ? "" : ` \xB7 ${a.status.toUpperCase()}`}`
@@ -2631,9 +2633,10 @@ function renderWhy(e, g, note, s = PLAIN) {
   const effects = e.effects.map((l) => ({ l, fx: g.effects.find((x) => x.id === l.to) })).filter((x) => !!x.fx);
   if (effects.length) {
     out.push(s.bold("Effects"));
-    const width = Math.max(...effects.map((x) => x.fx.target.length));
+    const target = (fx) => clip(fx.target, 100);
+    const width = Math.max(...effects.map((x) => target(x.fx).length));
     for (const { l, fx } of effects) {
-      out.push(`  ${s.grade(l.grade)}${fx.target.padEnd(width)}  ${effectWording(fx)}  ${s.dim(`[${l.rule} ${fx.evidence}]`)}`);
+      out.push(`  ${s.grade(l.grade)}${target(fx).padEnd(width)}  ${effectWording(fx)}  ${s.dim(`[${l.rule} ${clip(fx.evidence, 40)}]`)}`);
       for (const line of fx.patch.slice(0, 6)) out.push(s.dim(`      ${clip(line, 100)}`));
     }
     out.push("");
@@ -2884,7 +2887,7 @@ function actionLines(a, g, e, inputs, s) {
   if (detail) lines.push(`         ${s.dim("\u21B3")} ${detail}`);
   const effects = g.effects.filter((x) => x.actionId === a.id && x.kind !== "network");
   if (effects.length && kind === "SHELL") {
-    const shown = effects.slice(0, 4).map((x) => x.target).join(", ") + (effects.length > 4 ? `, +${effects.length - 4} more` : "");
+    const shown = effects.slice(0, 4).map((x) => clip(x.target, 80)).join(", ") + (effects.length > 4 ? `, +${effects.length - 4} more` : "");
     const how = effects.every((x) => x.evidence === "expected") ? s.dim(" (expected, not observed)") : "";
     lines.push(`         ${s.dim("\u2192")} ${shown}${how}`);
   }
@@ -3041,7 +3044,7 @@ function renderCommit(r, g, s = PLAIN) {
   const out = [];
   const { commit, action, explanation: e } = r;
   const prompt = g.prompts.find((p) => p.promptId === action.promptId);
-  out.push(`${s.bold("Commit")} ${s.accent(commit.sha)} on ${commit.branch}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
+  out.push(`${s.bold("Commit")} ${s.accent(commit.sha)} on ${clip(commit.branch, 60)}  ${s.bold(`"${clip(commit.subject, 80)}"`)}`);
   if (r.via === "time") {
     const at = r.commitSec ? new Date(r.commitSec * 1e3).toISOString().slice(11, 19) : "that second";
     out.push(
@@ -3049,7 +3052,7 @@ function renderCommit(r, g, s = PLAIN) {
       `           ${s.dim("git printed no commit line for this command, so the join is on time, not on git's output")}`
     );
   } else {
-    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${commit.branch} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
+    out.push(`  ${s.grade("DIRECT")}made by ${action.tool} ${callId(action.id)} (seq ${action.preSeq}): [${clip(commit.branch, 60)} ${commit.sha}] ${clip(commit.subject, 60)}  ${s.dim("[R1]")}`);
   }
   const verdict = e.requested.verdict;
   const said = e.requested.sentence ? ` "${clip(e.requested.sentence.text, 70)}"` : "";

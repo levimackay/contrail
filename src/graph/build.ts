@@ -236,7 +236,8 @@ function newAction(id: string, scope: Scope, row: EventRow, p: Record<string, un
     id,
     scope,
     promptId: row.prompt_id,
-    tool: row.tool_name ?? str(p, 'tool_name') ?? 'unknown',
+    // Tool names are identifiers; anything else in one is not printed as-is.
+    tool: (row.tool_name ?? str(p, 'tool_name') ?? 'unknown').replace(/[^\w.:-]/g, '?').slice(0, 128),
     input: obj(p, 'tool_input') ?? {},
     response: null,
     preSeq: seq,

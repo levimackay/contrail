@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -173,4 +173,83 @@ test('the data directory resolves as the capture hook does: CONTRAIL_HOME before
   assert.equal(resolveDataDir(undefined, { CONTRAIL_HOME: '/home' }, '/Users/dev', '/plugin'), '/home');
   assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev', '/plugin'), '/plugin');
   assert.equal(resolveDataDir(undefined, { CLAUDE_PLUGIN_DATA: '/env' }, '/Users/dev'), '/env');
+});
+
+test('before anything is recorded, each query says what to do next', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
+  const why = await run(['why', 'last', '--data', data]);
+  assert.equal(why.code, 1);
+  assert.match(why.err, /^contrail: No recorded edit, command or commit in this repository yet\. .+ then try again\.\n$/);
+  const risks = await run(['risks', '--data', data]);
+  assert.equal(risks.code, 0);
+  assert.match(risks.out, /No tool calls recorded yet\. .+ then try again\.\n$/);
+  assert.doesNotMatch(risks.out, /None found/);
+  assert.match((await run(['sessions', '--data', data])).out, /^No sessions recorded yet\. .+ then try again\./);
+  assert.match((await run(['trace', '--data', data])).err, /^contrail: No sessions recorded yet\. .+ then try again\./);
+  assert.match((await run(['doctor', '--data', data])).out, /\nNo events yet\. .+ then check again\.\n$/);
+});
+
+test('a session with prompts and no tool calls is labeled with its own id, not a prompt id', async () => {
+  const data = spoolFrom(session([d.prompt('hello there', 'p1'), d.prompt('and again', 'p2')], 'abcdef12-session'));
+  const r = await run(['trace', '--data', data]);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /^Session abcdef12 /);
+  assert.equal(JSON.parse((await run(['trace', '--json', '--data', data])).out).session, 'abcdef12-session');
+});
+
+test('counts read as English: one tool call, two turns', async () => {
+  const data = spoolFrom(session([d.prompt('read it', 'p1'), ...call('toolu_01One', 'Read', { file_path: '/r/a.txt' }, 'a')]));
+  assert.match((await run(['trace', '--data', data])).out, /\n1 turn · 1 tool call · 0 file effects\n/);
+  assert.match((await run(['risks', '--data', data])).out, /^Sensitive actions \(0 of 1 tool call in 1 session\)\n/);
+});
+
+test('from a skill, an error is the output and the exit is 0, so Claude Code shows it as the report', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
+  const plain = await run(['why', 'last', '--data', data]);
+  const skill = await run(['why', 'last', '--from-skill', '--data', data]);
+  assert.equal(plain.code, 1);
+  assert.equal(skill.code, 0);
+  assert.equal(skill.err, '');
+  assert.equal(skill.out, plain.err);
+});
+
+test('with no data directory, the error names where it looked, honoring CLAUDE_CONFIG_DIR', async () => {
+  const { resolveDataDir } = await import('../src/paths.ts');
+  const config = mkdtempSync(join(tmpdir(), 'contrail-config-'));
+  const base = join(config, 'plugins', 'data');
+  assert.throws(() => resolveDataDir(undefined, { CLAUDE_CONFIG_DIR: config }, '/nonexistent-home'), {
+    message: `No Contrail data directory in ${base} yet. Install the plugin in Claude Code (/plugin install contrail@contrail) and start a session, or set CONTRAIL_HOME to a data directory.`,
+  });
+  mkdirSync(join(base, 'contrail-contrail'), { recursive: true });
+  assert.equal(resolveDataDir(undefined, { CLAUDE_CONFIG_DIR: config }, '/nonexistent-home'), join(base, 'contrail-contrail'));
+});
+
+test('ingest and queries make the data directory private, as the health hook does', async () => {
+  for (const argv of [['ingest', '--from-hook'], ['sessions']]) {
+    const data = mkdtempSync(join(tmpdir(), 'contrail-cli-'));
+    chmodSync(data, 0o755);
+    assert.equal((await run([...argv, '--data', data])).code, 0);
+    assert.equal(statSync(data).mode & 0o777, 0o700, argv.join(' '));
+  }
+});
+
+test('with no runtime, the launcher says what to install, and the Stop hook stays quiet', () => {
+  // A PATH holding only what the launcher itself needs: no node, no bun.
+  const bin = mkdtempSync(join(tmpdir(), 'contrail-bin-'));
+  for (const tool of ['sh', 'dirname']) {
+    symlinkSync(spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim(), join(bin, tool));
+  }
+  const sh = join(bin, 'sh');
+  const launcher = new URL('../plugin/bin/contrail', import.meta.url).pathname;
+  const env = { PATH: bin };
+  const query = spawnSync(sh, [launcher, 'why', 'last'], { env, encoding: 'utf8' });
+  assert.equal(query.status, 127);
+  assert.equal(query.stdout, '');
+  assert.match(query.stderr, /^contrail: queries need Node 22\.13\+ or Bun, and neither is on PATH\. Install one, then run this again\. Recording still works/);
+  const skill = spawnSync(sh, [launcher, 'why', '--from-skill', '--stdin'], { env, input: 'last\n', encoding: 'utf8' });
+  assert.equal(skill.status, 0);
+  assert.equal(skill.stdout, query.stderr);
+  const hook = spawnSync(sh, [launcher, 'ingest', '--from-hook'], { env, encoding: 'utf8' });
+  assert.equal(hook.status, 0);
+  assert.equal(hook.stdout + hook.stderr, '');
 });

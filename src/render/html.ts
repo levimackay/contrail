@@ -55,7 +55,7 @@ const time = (us: number | undefined) => (us ? new Date(Math.floor(us / 1000)).t
 
 export function renderReport(r: ReportInput): string {
   const g = r.graph;
-  const sessionId = g.actions[0]?.scope.sessionId ?? '';
+  const sessionId = g.sessionId;
   const anchor = (id: string) => `a-${id.replace(/[^\w-]/g, '_')}`;
   const byAction = new Map(r.findings.map(f => [f.action.id, f]));
   const external = r.findings.filter(f => f.externalUpstream).length;

@@ -108,7 +108,11 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey,
     );
-    if (!rows.length) throw new ContrailError('No recorded actions in this repository yet.');
+    if (!rows.length) {
+      throw new ContrailError(
+        'No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again.',
+      );
+    }
   }
 
   return { ...rows[0]!, total: rows.length };

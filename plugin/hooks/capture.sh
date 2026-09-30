@@ -12,7 +12,8 @@ if [ -z "$data" ]; then
 fi
 
 spool="$data/spool"
-if ! mkdir -p "$spool" 2>/dev/null; then
+# Every process started here is paid on every event; `test` is built in, mkdir is not.
+if [ ! -d "$spool" ] && ! mkdir -p "$spool" 2>/dev/null; then
   cat >/dev/null
   exit 0
 fi

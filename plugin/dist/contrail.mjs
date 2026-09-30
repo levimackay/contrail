@@ -1763,6 +1763,7 @@ function buildGraph(rows, who, hashToken) {
   for (const i of inputs) if (i.text.includes(HASHED)) i.hashed = true;
   inputs.sort((a, b) => a.availableAt - b.availableAt || a.id.localeCompare(b.id));
   return {
+    sessionId: mainScope.sessionId,
     actions: actionList,
     inputs,
     effects,
@@ -2377,11 +2378,13 @@ function resolveDataDir(flag, env, home, pluginData) {
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
   if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
-  const base = join4(home, ".claude", "plugins", "data");
+  const base = join4(env.CLAUDE_CONFIG_DIR || join4(home, ".claude"), "plugins", "data");
   const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
   if (hits.length === 1) return join4(base, hits[0]);
   if (hits.length === 0) {
-    throw new ContrailError("No recorded data found. Is the Contrail plugin installed? Set CONTRAIL_HOME to point at a data directory.");
+    throw new ContrailError(
+      `No Contrail data directory in ${base} yet. Install the plugin in Claude Code (/plugin install contrail@contrail) and start a session, or set CONTRAIL_HOME to a data directory.`
+    );
   }
   const list = hits.map((h) => `  ${join4(base, h)}`).join("\n");
   throw new ContrailError(`Found ${hits.length} Contrail data directories:
@@ -2842,7 +2845,11 @@ function findTarget(db, target, repoKey) {
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey
     );
-    if (!rows.length) throw new ContrailError("No recorded actions in this repository yet.");
+    if (!rows.length) {
+      throw new ContrailError(
+        "No recorded edit, command or commit in this repository yet. Contrail records from the moment the plugin is enabled: use Claude Code here, then try again."
+      );
+    }
   }
   return { ...rows[0], total: rows.length };
 }
@@ -3124,12 +3131,12 @@ function matchesFilter(a, g, filter) {
 }
 function renderTrace(g, explanations, filter, s = PLAIN) {
   const out = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? "";
+  const sessionId = g.sessionId;
   const inputs = new Map(g.inputs.map((i) => [i.id, i]));
   out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(
     s.dim(
-      `${g.prompts.length} turn${g.prompts.length === 1 ? "" : "s"} \xB7 ${g.actions.length} tool calls \xB7 ${g.effects.filter((e) => e.kind === "file").length} file effects` + (filter ? ` \xB7 showing --${filter}` : "")
+      `${counted(g.prompts.length, "turn")} \xB7 ${counted(g.actions.length, "tool call")} \xB7 ${counted(g.effects.filter((e) => e.kind === "file").length, "file effect")}` + (filter ? ` \xB7 showing --${filter}` : "")
     )
   );
   const items = [];
@@ -3192,7 +3199,7 @@ function traceSource(t, inputs, s) {
 }
 function renderTree(g, forest, omitted, s = PLAIN) {
   const out = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? "";
+  const sessionId = g.sessionId;
   out.push(`${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(s.dim("Each action sits under the call whose output first held its headline value. Data flow, not the agent's reasons."));
   for (const root of forest) {
@@ -3244,7 +3251,7 @@ function renderFind(value, hits, scanned, s = PLAIN) {
 `;
   }
   for (const { graph: g, sightings } of found) {
-    const sessionId = g.actions[0]?.scope.sessionId ?? "";
+    const sessionId = g.sessionId;
     const first = g.prompts.find((p) => p.from === "you");
     out.push("", `${s.bold("Session")} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : "")}`);
     let seenSource = false;
@@ -3304,8 +3311,13 @@ function highlightFlag(row, s) {
 function renderRisks(findings, scanned, g, s = PLAIN) {
   const out = [];
   out.push(
-    `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${scanned.actions} tool calls in ${scanned.sessions} session${scanned.sessions === 1 ? "" : "s"})`)}`
+    `${s.bold("Sensitive actions")} ${s.dim(`(${findings.length} of ${counted(scanned.actions, "tool call")} in ${counted(scanned.sessions, "session")})`)}`
   );
+  if (!scanned.actions) {
+    out.push("", "  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.");
+    return `${out.join("\n")}
+`;
+  }
   if (!findings.length) out.push("", "  None found.");
   for (const f of findings) {
     const graph = g.get(f.action.scope.sessionId);
@@ -3384,6 +3396,7 @@ function renderCommit(r, g, s = PLAIN) {
 `;
 }
 var pad2 = (text, width) => text.padEnd(width);
+var counted = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 function localTime(us) {
   const d = new Date(Math.floor(us / 1e3));
   const two = (n) => String(n).padStart(2, "0");
@@ -3628,7 +3641,7 @@ var gradeClass = (g) => g.toLowerCase();
 var time = (us) => us ? new Date(Math.floor(us / 1e3)).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "";
 function renderReport(r) {
   const g = r.graph;
-  const sessionId = g.actions[0]?.scope.sessionId ?? "";
+  const sessionId = g.sessionId;
   const anchor = (id) => `a-${id.replace(/[^\w-]/g, "_")}`;
   const byAction = new Map(r.findings.map((f) => [f.action.id, f]));
   const external = r.findings.filter((f) => f.externalUpstream).length;
@@ -3799,7 +3812,7 @@ var hexId = (kind, value, length) => {
 };
 var nanos = (us) => (BigInt(Math.round(us)) * 1000n).toString();
 function toOtlp(g, explanations, findings, version) {
-  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? "unknown";
+  const sessionId = g.sessionId || "unknown";
   const traceId = hexId("trace", sessionId, 32);
   const rootId = hexId("session", sessionId, 16);
   const actionSpan = (id) => hexId("action", `${sessionId}:${id}`, 16);
@@ -4054,7 +4067,9 @@ async function openDb(path) {
   try {
     sqlite = await import("node:sqlite");
   } catch {
-    throw new ContrailError("Contrail needs Node 22.13+ or Bun to answer queries. Recording still works.");
+    throw new ContrailError(
+      `queries need Node 22.13+ or Bun, and this is Node ${process.versions.node}. Install either one, then run this again. Recording still works in the meantime.`
+    );
   }
   const db = new sqlite.DatabaseSync(path);
   return {
@@ -4095,6 +4110,7 @@ var OPTIONS = {
   otel: { type: "boolean" },
   output: { type: "string", short: "o" },
   "from-hook": { type: "boolean" },
+  "from-skill": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
   ...Object.fromEntries(FILTERS.map((f) => [f, { type: "boolean" }]))
@@ -4189,26 +4205,30 @@ ${USAGE}`);
     return await run(rest);
   } catch (e) {
     if (flags["from-hook"]) return 0;
+    const say = flags["from-skill"] ? io.out : io.err;
     if (e instanceof ContrailError) {
-      io.err(`contrail: ${e.message}
+      say(`contrail: ${e.message}
 `);
-      return 1;
+      return flags["from-skill"] ? 0 : 1;
     }
-    io.err(`contrail: unexpected error. Please report it with this output.
+    say(`contrail: unexpected error. Please report it with this output.
 ${e.stack ?? String(e)}
 `);
-    return 3;
+    return flags["from-skill"] ? 0 : 3;
+  }
+}
+function prepareDataDir(dataDir) {
+  mkdirSync(join6(dataDir, "spool"), { recursive: true, mode: 448 });
+  try {
+    chmodSync2(dataDir, 448);
+  } catch {
   }
 }
 async function withStore(flags, io, use) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   let db;
   try {
-    mkdirSync(join6(dataDir, "spool"), { recursive: true, mode: 448 });
-    try {
-      chmodSync2(dataDir, 448);
-    } catch {
-    }
+    prepareDataDir(dataDir);
     db = await openDb(join6(dataDir, "contrail.db"));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
@@ -4355,7 +4375,7 @@ async function trace2(flags, io, s) {
       const explanations2 = new Map(graph.actions.slice(0, MAX_EXPLAINED).map((a) => [a.id, explain(a.id, graph)]));
       const forest = trailForest(graph, explanations2);
       const omitted = graph.actions.length - explanations2.size;
-      if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}
 `);
       else io.out(renderTree(graph, forest, omitted, s));
       return 0;
@@ -4366,7 +4386,7 @@ async function trace2(flags, io, s) {
       if (!matchesFilter(a, graph, filter) || !EXPLAINED.has(kindForExplain(a.tool))) continue;
       explanations.set(a.id, explain(a.id, graph));
     }
-    if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}
+    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}
 `);
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
@@ -4482,7 +4502,7 @@ async function find(args, flags, io, s) {
     });
     if (flags.json) {
       const json = hits.filter((h) => h.sightings.length).map((h) => ({
-        session: h.graph.actions[0]?.scope.sessionId ?? null,
+        session: h.graph.sessionId,
         sightings: h.sightings.map(
           (x) => x.source ? { seq: x.seq, held: { source: x.source.input.label, trust: x.source.input.trust, origin: x.source.input.origin, line: x.source.line } } : { seq: x.seq, used: { action: x.use.action.id, tool: x.use.action.tool, argPath: x.use.argPath, sensitive: x.use.kinds } }
         )
@@ -4556,7 +4576,7 @@ async function statusline(flags, io) {
 }
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
-  mkdirSync(join6(dataDir, "spool"), { recursive: true, mode: 448 });
+  prepareDataDir(dataDir);
   const db = await openDb(join6(dataDir, "contrail.db"));
   try {
     migrate(db);

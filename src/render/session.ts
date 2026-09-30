@@ -47,12 +47,12 @@ export function renderTrace(
   s: Style = PLAIN,
 ): string {
   const out: string[] = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? g.prompts[0]?.promptId ?? '';
+  const sessionId = g.sessionId;
   const inputs = new Map(g.inputs.map(i => [i.id, i]));
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(
     s.dim(
-      `${g.prompts.length} turn${g.prompts.length === 1 ? '' : 's'} · ${g.actions.length} tool calls · ${g.effects.filter(e => e.kind === 'file').length} file effects` +
+      `${counted(g.prompts.length, 'turn')} · ${counted(g.actions.length, 'tool call')} · ${counted(g.effects.filter(e => e.kind === 'file').length, 'file effect')}` +
         (filter ? ` · showing --${filter}` : ''),
     ),
   );
@@ -127,7 +127,7 @@ export function traceSource(t: TokenTrace, inputs: Map<string, Input>, s: Style)
 /** trace --tree: each action under the call whose output first held its headline value. */
 export function renderTree(g: Graph, forest: TreeRoot[], omitted: number, s: Style = PLAIN): string {
   const out: string[] = [];
-  const sessionId = g.actions[0]?.scope.sessionId ?? '';
+  const sessionId = g.sessionId;
   out.push(`${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(clip(g.env.cwd, 120))}`);
   out.push(s.dim('Each action sits under the call whose output first held its headline value. Data flow, not the agent\'s reasons.'));
   for (const root of forest) {
@@ -186,7 +186,7 @@ export function renderFind(value: string, hits: Array<{ graph: Graph; sightings:
     return `${out.join('\n')}\n`;
   }
   for (const { graph: g, sightings } of found) {
-    const sessionId = g.actions[0]?.scope.sessionId ?? '';
+    const sessionId = g.sessionId;
     const first = g.prompts.find(p => p.from === 'you');
     out.push('', `${s.bold('Session')} ${sessionId.slice(0, 8)}  ${s.dim(first ? `"${clip(first.text, 70)}"` : '')}`);
     let seenSource = false;
@@ -250,8 +250,12 @@ function highlightFlag(row: string, s: Style): string {
 export function renderRisks(findings: Finding[], scanned: { actions: number; sessions: number }, g: Map<string, Graph>, s: Style = PLAIN): string {
   const out: string[] = [];
   out.push(
-    `${s.bold('Sensitive actions')} ${s.dim(`(${findings.length} of ${scanned.actions} tool calls in ${scanned.sessions} session${scanned.sessions === 1 ? '' : 's'})`)}`,
+    `${s.bold('Sensitive actions')} ${s.dim(`(${findings.length} of ${counted(scanned.actions, 'tool call')} in ${counted(scanned.sessions, 'session')})`)}`,
   );
+  if (!scanned.actions) {
+    out.push('', '  No tool calls recorded yet. Contrail records from the moment the plugin is enabled: use Claude Code, then try again.');
+    return `${out.join('\n')}\n`;
+  }
   if (!findings.length) out.push('', '  None found.');
   for (const f of findings) {
     const graph = g.get(f.action.scope.sessionId)!;
@@ -341,6 +345,9 @@ export function renderCommit(r: CommitReport, g: Graph, s: Style = PLAIN): strin
 }
 
 const pad = (text: string, width: number) => text.padEnd(width);
+
+/** "1 tool call", "2 tool calls" */
+const counted = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 export function localTime(us: number): string {
   const d = new Date(Math.floor(us / 1000));

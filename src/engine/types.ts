@@ -161,6 +161,8 @@ export interface Prompt {
 }
 
 export interface Graph {
+  /** the session these events belong to */
+  sessionId: string;
   actions: Action[];
   inputs: Input[];
   effects: Effect[];

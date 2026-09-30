@@ -19,7 +19,9 @@ export async function openDb(path: string): Promise<Db> {
   try {
     sqlite = await import('node:sqlite');
   } catch {
-    throw new ContrailError('Contrail needs Node 22.13+ or Bun to answer queries. Recording still works.');
+    throw new ContrailError(
+      `queries need Node 22.13+ or Bun, and this is Node ${process.versions.node}. Install either one, then run this again. Recording still works in the meantime.`,
+    );
   }
   const db = new sqlite.DatabaseSync(path);
   return {

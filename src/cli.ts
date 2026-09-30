@@ -59,6 +59,7 @@ const OPTIONS = {
   otel: { type: 'boolean' },
   output: { type: 'string', short: 'o' },
   'from-hook': { type: 'boolean' },
+  'from-skill': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
   ...Object.fromEntries(FILTERS.map(f => [f, { type: 'boolean' }])),
@@ -155,12 +156,15 @@ export async function main(argv: string[], io: Io): Promise<number> {
     return await run(rest);
   } catch (e) {
     if (flags['from-hook']) return 0; // a hook must never fail loudly
+    // A skill's command that exits non-zero is shown as a failed shell block, not as its output,
+    // so from a skill the message is the output.
+    const say = flags['from-skill'] ? io.out : io.err;
     if (e instanceof ContrailError) {
-      io.err(`contrail: ${e.message}\n`);
-      return 1;
+      say(`contrail: ${e.message}\n`);
+      return flags['from-skill'] ? 0 : 1;
     }
-    io.err(`contrail: unexpected error. Please report it with this output.\n${(e as Error).stack ?? String(e)}\n`);
-    return 3;
+    say(`contrail: unexpected error. Please report it with this output.\n${(e as Error).stack ?? String(e)}\n`);
+    return flags['from-skill'] ? 0 : 3;
   }
 }
 
@@ -172,16 +176,24 @@ interface Store {
   hashToken?: (span: string) => string;
 }
 
+/**
+ * The spool exists and the directory is private. Claude Code creates the data directory with the
+ * user's umask, and the health hook that tightens it only runs when a session starts.
+ */
+function prepareDataDir(dataDir: string): void {
+  mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(dataDir, 0o700);
+  } catch {
+    // not ours to change (another owner); it still works
+  }
+}
+
 async function withStore<T>(flags: Flags, io: Io, use: (store: Store) => T | Promise<T>): Promise<T> {
   const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
   let db: Db;
   try {
-    mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
-    try {
-      chmodSync(dataDir, 0o700); // what the agent read lives here
-    } catch {
-      // a directory someone else owns can still be read
-    }
+    prepareDataDir(dataDir);
     db = await openDb(join(dataDir, 'contrail.db'));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
@@ -344,7 +356,7 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
       const explanations = new Map(graph.actions.slice(0, MAX_EXPLAINED).map(a => [a.id, explain(a.id, graph)]));
       const forest = trailForest(graph, explanations);
       const omitted = graph.actions.length - explanations.size;
-      if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
+      if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, forest: forest.map(treeJson), omitted }, null, 2)}\n`);
       else io.out(renderTree(graph, forest, omitted, s));
       return 0;
     }
@@ -354,7 +366,7 @@ async function trace(flags: Flags, io: Io, s: Style): Promise<number> {
       if (!matchesFilter(a, graph, filter) || !EXPLAINED.has(kindForExplain(a.tool))) continue;
       explanations.set(a.id, explain(a.id, graph));
     }
-    if (flags.json) io.out(`${JSON.stringify({ session: graph.actions[0]?.scope.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
+    if (flags.json) io.out(`${JSON.stringify({ session: graph.sessionId, filter, explanations: [...explanations.values()] }, null, 2)}\n`);
     else io.out(renderTrace(graph, explanations, filter, s));
     return 0;
   });
@@ -485,7 +497,7 @@ async function find(args: string[], flags: Flags, io: Io, s: Style): Promise<num
       const json = hits
         .filter(h => h.sightings.length)
         .map(h => ({
-          session: h.graph.actions[0]?.scope.sessionId ?? null,
+          session: h.graph.sessionId,
           sightings: h.sightings.map(x =>
             x.source
               ? { seq: x.seq, held: { source: x.source.input.label, trust: x.source.input.trust, origin: x.source.input.origin, line: x.source.line } }
@@ -568,7 +580,7 @@ async function statusline(flags: Flags, io: Io): Promise<number> {
 
 async function ingestCommand(flags: Flags, io: Io): Promise<number> {
   const dataDir = resolveDataDir(flags.data as string | undefined, io.env, io.home, flags['plugin-data'] as string | undefined);
-  mkdirSync(join(dataDir, 'spool'), { recursive: true, mode: 0o700 });
+  prepareDataDir(dataDir);
   const db = await openDb(join(dataDir, 'contrail.db'));
   try {
     migrate(db);

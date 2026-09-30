@@ -11,7 +11,8 @@ if [ -z "$data" ]; then
 elif ! mkdir -p "$data/spool" 2>/dev/null || [ ! -w "$data/spool" ]; then
   msg="Contrail is not recording: $data/spool is not writable."
 else
-  # What the agent read lives here: only this user may list or open it.
+  # Claude Code creates the data directory with the user's umask, often 0755; it holds what the
+  # agent read, so keep it private.
   chmod 700 "$data" 2>/dev/null
   # A stable path to the CLI, for a shell alias or a statusLine command: the plugin's own
   # directory changes with every version, the data directory does not.

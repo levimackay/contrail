@@ -1135,6 +1135,13 @@ function quote(input, index) {
 
 // src/engine/requested.ts
 var NEGATOR = /(?<![\w./-])(?:not|never|no|without|avoid|stop|skip|instead of|rather than)(?![\w-])|n't(?![\w-])/i;
+var CLAUSE_BREAK = /[,;:()]|\s(?:but|then|just|so|and then)\s/gi;
+function negates(text, index) {
+  const before = text.slice(0, index);
+  let start = 0;
+  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
+  return NEGATOR.test(before.slice(start));
+}
 function splitSentences(text) {
   return text.replace(/```[\s\S]*?(?:```|$)/g, "\n").split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
 }
@@ -1151,12 +1158,12 @@ function requested(action, tokens, sentences) {
     let latest2 = null;
     for (const s of before) {
       const hit = alternatives.find((t) => !t.derived && findMention(s.text, t.text) >= 0) ?? alternatives.find((t) => findMention(s.text, t.text) >= 0);
-      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived };
+      if (hit) latest2 = { sentence: s, token: hit, strong: !hit.derived, negated: negates(s.text, findMention(s.text, hit.text)) };
     }
     if (latest2) kept.push(latest2);
   }
   if (kept.length === 0) return { verdict: "NOT_NAMED", grade: "UNKNOWN", searched };
-  const negated = kept.find((k) => NEGATOR.test(k.sentence.text));
+  const negated = kept.find((k) => k.negated);
   if (negated) {
     return { verdict: "NAMED_NEGATED", grade: "POSSIBLE", searched, sentence: negated.sentence, matched: negated.token.text };
   }

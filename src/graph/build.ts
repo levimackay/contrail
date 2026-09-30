@@ -80,6 +80,16 @@ export function buildGraph(rows: EventRow[], who: { home: string; user: string }
       case 'PreToolUse':
         if (id && !actions.has(id)) actions.set(id, newAction(id, scope, row, p, seq));
         break;
+      case 'PermissionDenied': {
+        // Auto mode refused the call: no PreToolUse fired, so this is the only record of the attempt.
+        if (!id) break;
+        const a = actions.get(id) ?? newAction(id, scope, row, p, seq);
+        actions.set(id, a);
+        a.postSeq = seq;
+        a.status = 'denied';
+        a.denial = str(p, 'reason') ?? '';
+        break;
+      }
       case 'PostToolUse':
       case 'PostToolUseFailure': {
         if (!id) break;

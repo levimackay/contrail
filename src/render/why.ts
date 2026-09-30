@@ -28,7 +28,13 @@ export function renderWhy(e: Explanation, g: Graph, note?: string, s: Style = PL
     s.dim(
       `  session ${a.scope.sessionId.slice(0, 8)} · ${prompt ? `turn ${prompt.label}` : 'turn not recorded'} · ${callId(a.id)} · seq ${a.preSeq}` +
         ` · ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : 'main agent'}` +
-        (a.status === 'ok' ? '' : a.status === 'pending' ? ' · no result recorded (denied, stopped, or still running)' : ` · ${a.status.toUpperCase()}`),
+        (a.status === 'ok'
+          ? ''
+          : a.status === 'pending'
+            ? ' · no result recorded (denied, stopped, or still running)'
+            : a.status === 'denied'
+              ? ` · DENIED by auto mode, never ran${a.denial ? `: ${clip(a.denial, 100)}` : ''}`
+              : ` · ${a.status.toUpperCase()}`),
     ),
   );
   if (note) out.push(s.dim(`  ${note}`));

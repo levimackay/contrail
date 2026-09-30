@@ -90,7 +90,7 @@ export function renderTrace(
 function actionLines(a: Action, g: Graph, e: Explanation | undefined, inputs: Map<string, Input>, s: Style): string[] {
   const kind = kindOf(a);
   const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : '';
-  const failed = a.status === 'failed' || a.status === 'interrupted' ? s.flag(` ${a.status.toUpperCase()}`) : '';
+  const failed = a.status === 'failed' || a.status === 'interrupted' || a.status === 'denied' ? s.flag(` ${a.status.toUpperCase()}`) : '';
   const lines = [`  ${s.dim(pad(`${a.preSeq}`, 4))} ${pad(kind, 7)} ${summary(a, g)}${who}${failed}`];
   if (!e) return lines;
 
@@ -151,7 +151,7 @@ function rootLine(root: TreeRoot, g: Graph, s: Style): string {
 function nodeLines(node: TreeNode, prefix: string, last: boolean, g: Graph, s: Style, out: string[]): void {
   const a = node.action;
   const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : '';
-  const failed = a.status === 'failed' || a.status === 'interrupted' ? s.flag(` ${a.status.toUpperCase()}`) : '';
+  const failed = a.status === 'failed' || a.status === 'interrupted' || a.status === 'denied' ? s.flag(` ${a.status.toUpperCase()}`) : '';
   const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : '';
   const external = node.source?.trust === 'external' ? ` ${s.flag('(external)')}` : '';
   const via = node.link && node.token ? `  ${s.dim('←')} ${s.grade(node.link.grade, 0).trim()} ${clip(node.token, 80)}${line}${external}` : '';

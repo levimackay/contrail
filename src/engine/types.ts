@@ -44,7 +44,9 @@ export interface Action {
   response: unknown;
   preSeq: number;
   postSeq: number | null;
-  status: 'ok' | 'failed' | 'interrupted' | 'pending';
+  /** denied: auto mode refused the call, so it never ran; `denial` holds Claude Code's reason */
+  status: 'ok' | 'failed' | 'interrupted' | 'pending' | 'denied';
+  denial?: string;
   mcpServer: { name: string; source: string } | null;
 }
 

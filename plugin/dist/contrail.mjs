@@ -1613,6 +1613,15 @@ function buildGraph(rows, who, hashToken) {
       case "PreToolUse":
         if (id && !actions.has(id)) actions.set(id, newAction(id, scope, row, p, seq));
         break;
+      case "PermissionDenied": {
+        if (!id) break;
+        const a = actions.get(id) ?? newAction(id, scope, row, p, seq);
+        actions.set(id, a);
+        a.postSeq = seq;
+        a.status = "denied";
+        a.denial = str(p, "reason") ?? "";
+        break;
+      }
       case "PostToolUse":
       case "PostToolUseFailure": {
         if (!id) break;
@@ -3489,7 +3498,7 @@ function findTarget(db, target, repoKey) {
   } else if (target.kind === "command") {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND tool_name = 'Bash'
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND tool_name = 'Bash'
           AND instr(${COMMAND}, ?) > 0 AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC`,
       target.text
@@ -3498,7 +3507,7 @@ function findTarget(db, target, repoKey) {
   } else if (target.kind === "call") {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
           AND (? = '' OR substr(tool_use_id, -?) = ?)
         ORDER BY captured_us DESC, spool_name DESC`,
       target.prefix.length,
@@ -3512,7 +3521,7 @@ function findTarget(db, target, repoKey) {
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey
     );
@@ -3570,7 +3579,7 @@ function renderWhy(e, g, note, s = PLAIN) {
   out.push(`${s.bold(clip(a.tool, 60))}  ${s.bold(describe(a, g))}`);
   out.push(
     s.dim(
-      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : ` \xB7 ${a.status.toUpperCase()}`)
+      `  session ${a.scope.sessionId.slice(0, 8)} \xB7 ${prompt ? `turn ${prompt.label}` : "turn not recorded"} \xB7 ${callId(a.id)} \xB7 seq ${a.preSeq} \xB7 ${a.scope.agentId ? `subagent ${callId(a.scope.agentId)}` : "main agent"}` + (a.status === "ok" ? "" : a.status === "pending" ? " \xB7 no result recorded (denied, stopped, or still running)" : a.status === "denied" ? ` \xB7 DENIED by auto mode, never ran${a.denial ? `: ${clip(a.denial, 100)}` : ""}` : ` \xB7 ${a.status.toUpperCase()}`)
     )
   );
   if (note) out.push(s.dim(`  ${note}`));
@@ -3842,7 +3851,7 @@ function renderTrace(g, explanations, filter, s = PLAIN) {
 function actionLines(a, g, e, inputs, s) {
   const kind = kindOf(a);
   const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
-  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
+  const failed = a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? s.flag(` ${a.status.toUpperCase()}`) : "";
   const lines = [`  ${s.dim(pad2(`${a.preSeq}`, 4))} ${pad2(kind, 7)} ${summary(a, g)}${who}${failed}`];
   if (!e) return lines;
   const detail = trailDetail(e, inputs, s);
@@ -3894,7 +3903,7 @@ function rootLine(root, g, s) {
 function nodeLines(node, prefix, last, g, s, out) {
   const a = node.action;
   const who = a.scope.agentId ? s.dim(` [subagent ${callId(a.scope.agentId)}]`) : "";
-  const failed = a.status === "failed" || a.status === "interrupted" ? s.flag(` ${a.status.toUpperCase()}`) : "";
+  const failed = a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? s.flag(` ${a.status.toUpperCase()}`) : "";
   const line = node.link?.quote?.line != null ? s.dim(` (line ${node.link.quote.line})`) : "";
   const external = node.source?.trust === "external" ? ` ${s.flag("(external)")}` : "";
   const via = node.link && node.token ? `  ${s.dim("\u2190")} ${s.grade(node.link.grade, 0).trim()} ${clip(node.token, 80)}${line}${external}` : "";
@@ -4337,13 +4346,13 @@ function renderReport(r) {
   for (const a of g.actions) {
     const e = r.explanations.get(a.id);
     const f = byAction.get(a.id);
-    const tone = [f ? "sensitive" : "", f?.externalUpstream ? "ext" : "", a.status === "failed" || a.status === "interrupted" ? "failed" : ""].filter(Boolean).join(" ");
+    const tone = [f ? "sensitive" : "", f?.externalUpstream ? "ext" : "", a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? "failed" : ""].filter(Boolean).join(" ");
     const pills = [
       e ? `<span class="grade ${gradeClass(e.chainGrade)}">${e.chainGrade}</span>` : "",
       e?.requested.verdict === "NOT_NAMED" ? '<span class="pill flag">not named by you</span>' : e?.requested.verdict === "NAMED" ? '<span class="pill">named by you</span>' : "",
       f ? `<span class="pill ${f.externalUpstream ? "ext" : "flag"}">${escapeHtml(f.kinds.join(" \xB7 "))}</span>` : "",
       a.scope.agentId ? `<span class="pill">subagent ${escapeHtml(callId(a.scope.agentId))}</span>` : "",
-      a.status === "failed" || a.status === "interrupted" ? `<span class="pill flag">${a.status}</span>` : ""
+      a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? `<span class="pill flag">${a.status}</span>` : ""
     ].join("");
     const head = `<span class="seq">${a.preSeq}</span><span class="kind">${escapeHtml(kindOf(a))}</span><code>${escapeHtml(clip(summary(a, g), 140))}</code>${pills}`;
     items.push({
@@ -4560,7 +4569,7 @@ function toOtlp(g, explanations, findings, version) {
         attributes: attrs({ "contrail.effect.kind": fx.kind, "contrail.effect.target": clip(fx.target, 200), "contrail.effect.evidence": fx.evidence })
       })),
       links: provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan),
-      ...a.status === "failed" || a.status === "interrupted" ? { status: { code: STATUS_ERROR, message: a.status } } : {}
+      ...a.status === "failed" || a.status === "interrupted" || a.status === "denied" ? { status: { code: STATUS_ERROR, message: a.status } } : {}
     });
   }
   return {
@@ -4621,7 +4630,7 @@ var VERDICT_WORDS = {
   PARTLY_NAMED: "partly named by you",
   NOTHING_TO_MATCH: "nothing in it to match against your words"
 };
-var STATUS_WORDS = { ok: "", failed: "failed", interrupted: "interrupted", pending: "no result recorded" };
+var STATUS_WORDS = { ok: "", failed: "failed", interrupted: "interrupted", pending: "no result recorded", denied: "denied by auto mode" };
 function headline2(e, g) {
   const head = headlineTrace(e);
   const link = head?.links.find((l) => l.grade !== "UNKNOWN");

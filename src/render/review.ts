@@ -38,7 +38,7 @@ const VERDICT_WORDS: Record<Verdict, string> = {
 };
 
 /** How a call ended, when it did not end with a result. A denied call has no result recorded. */
-const STATUS_WORDS: Record<Action['status'], string> = { ok: '', failed: 'failed', interrupted: 'interrupted', pending: 'no result recorded' };
+const STATUS_WORDS: Record<Action['status'], string> = { ok: '', failed: 'failed', interrupted: 'interrupted', pending: 'no result recorded', denied: 'denied by auto mode' };
 
 /** The value, link and source a trail leads with: a target with a found source, else any found value. */
 function headline(e: Explanation, g: Graph): { token: string; link: Link; input: Input } | null {

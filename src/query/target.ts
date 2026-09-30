@@ -84,7 +84,7 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
   } else if (target.kind === 'command') {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND tool_name = 'Bash'
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND tool_name = 'Bash'
           AND instr(${COMMAND}, ?) > 0 AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC`,
       target.text,
@@ -94,7 +94,7 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
     // Any tool, any repository: a call id names one call wherever it ran.
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND substr(tool_use_id, 1, ?) = ? AND length(tool_use_id) >= ?
           AND (? = '' OR substr(tool_use_id, -?) = ?)
         ORDER BY captured_us DESC, spool_name DESC`,
       target.prefix.length, target.prefix, target.prefix.length + target.suffix.length,
@@ -104,7 +104,7 @@ export function findTarget(db: Db, target: Exclude<Target, { kind: 'line' }>, re
   } else {
     rows = db.all(
       `SELECT session_id AS sessionId, tool_use_id AS toolUseId FROM events
-        WHERE hook_event = 'PreToolUse' AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
+        WHERE hook_event IN ('PreToolUse', 'PermissionDenied') AND repo_key = ? AND ${WRITE_OR_EXTERNAL} AND ${NOT_CONTRAIL}
         ORDER BY captured_us DESC, spool_name DESC LIMIT 1`,
       repoKey,
     );

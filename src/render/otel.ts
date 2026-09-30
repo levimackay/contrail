@@ -122,7 +122,7 @@ export function toOtlp(g: Graph, explanations: Map<string, Explanation>, finding
           attributes: attrs({ 'contrail.effect.kind': fx.kind, 'contrail.effect.target': clip(fx.target, 200), 'contrail.effect.evidence': fx.evidence }),
         })),
       links: provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan),
-      ...(a.status === 'failed' || a.status === 'interrupted' ? { status: { code: STATUS_ERROR, message: a.status } } : {}),
+      ...(a.status === 'failed' || a.status === 'interrupted' || a.status === 'denied' ? { status: { code: STATUS_ERROR, message: a.status } } : {}),
     });
   }
 

@@ -2121,7 +2121,7 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     try {
       row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
     } catch (e) {
-      row = failedRow(capturedUs, `${name}: ${e.message}`);
+      row = failedRow(capturedUs, errorText(name, e));
     }
     if (row.parseError) report2.parseErrors++;
     db.exec("BEGIN IMMEDIATE");
@@ -2167,7 +2167,7 @@ function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return { ...failedRow(capturedUs, `${name}: ${e.message}`), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
+    return { ...failedRow(capturedUs, errorText(name, e)), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
   }
   const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { value: parsed };
   const hookEvent = str(p, "hook_event_name") ?? "unknown";
@@ -2193,7 +2193,7 @@ function toRow(name, raw, capturedUs, repoKeyOf, hmac) {
       touches: hookEvent === "PostToolUse" ? touchesOf(p, cwd ?? "") : []
     };
   } catch (e) {
-    return { ...meta, payload: "{}", parseError: `${name}: ${e.message}`, touches: [] };
+    return { ...meta, payload: "{}", parseError: errorText(name, e), touches: [] };
   }
 }
 function stored(p, hookEvent, hmac) {
@@ -2217,6 +2217,11 @@ function failedRow(capturedUs, parseError) {
     payload: "{}",
     parseError
   };
+}
+var QUOTED_INPUT = /(?:\.{3})?"[\s\S]{0,1024}"(?:\.{3})?(?= is not valid JSON$)/;
+function errorText(name, e) {
+  const message = e instanceof Error ? e.message : String(e);
+  return redactString(`${name}: ${message.replace(QUOTED_INPUT, '"\u2026"')}`);
 }
 var INSTRUCTION_FILE = /(^|\/)CLAUDE(\.local)?\.md$|\/\.claude\/rules\/.+\.md$/i;
 function attachInstructionText(p, capturedUs) {

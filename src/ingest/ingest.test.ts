@@ -57,6 +57,18 @@ test('keeps malformed JSON instead of dropping it', async () => {
   assert.match(row.parse_error, /1-1-a\.json/);
 });
 
+test('a parse error does not quote the payload it could not parse', async () => {
+  const { db, spool } = await setup();
+  drop(spool, '1-1-a.json', `x ghp_${'a1B2'.repeat(9)}`);
+  drop(spool, '1-2-b.json', `{"a": ghp_${'a1B2'.repeat(9)}}`);
+  ingest(db, spool, repoKey);
+  for (const row of db.all<{ parse_error: string; payload: string }>('SELECT parse_error, payload FROM events')) {
+    assert.match(row.parse_error, /\.json: .*is not valid JSON/);
+    assert.ok(!row.parse_error.includes('ghp_'), row.parse_error);
+    assert.ok(!row.payload.includes('ghp_'), row.payload);
+  }
+});
+
 test('records file touches for writes, reads and shell-changed files', async () => {
   const { db, spool } = await setup();
   const base = { hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/r' };

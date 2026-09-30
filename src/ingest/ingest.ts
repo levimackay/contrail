@@ -6,7 +6,7 @@ import type { Db } from '../store/sqlite.ts';
 import { changedFiles, obj, str } from '../util.ts';
 import { expectedShellEffects } from '../engine/effects.ts';
 import { hashContent, type Hmac } from './content.ts';
-import { jsonText, MAX_DEPTH, redactCapped, redactValue } from './redact.ts';
+import { jsonText, MAX_DEPTH, redactCapped, redactString, redactValue } from './redact.ts';
 
 /** Longest string kept per field. Long enough to hold most files an agent reads, so lineage can match. */
 export const STRING_CAP = 256 * 1024;
@@ -62,7 +62,7 @@ export function ingest(db: Db, spoolDir: string, repoKeyOf: (cwd: string) => str
       row = toRow(name, raw, capturedUs, repoKeyOf, hmac);
     } catch (e) {
       // Never let one bad payload block every later event: store the failure and move on.
-      row = failedRow(capturedUs, `${name}: ${(e as Error).message}`);
+      row = failedRow(capturedUs, errorText(name, e));
     }
     if (row.parseError) report.parseErrors++;
 
@@ -117,7 +117,7 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    return { ...failedRow(capturedUs, `${name}: ${(e as Error).message}`), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
+    return { ...failedRow(capturedUs, errorText(name, e)), payload: JSON.stringify({ raw: redactCapped(raw, STRING_CAP) }) };
   }
 
   const p = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { value: parsed }) as Record<string, unknown>;
@@ -147,7 +147,7 @@ function toRow(name: string, raw: string, capturedUs: number, repoKeyOf: (cwd: s
   } catch (e) {
     // The event parsed but its body could not be stored: keep which session, call and tool it was,
     // so it still joins, and store no body rather than an unredacted one.
-    return { ...meta, payload: '{}', parseError: `${name}: ${(e as Error).message}`, touches: [] };
+    return { ...meta, payload: '{}', parseError: errorText(name, e), touches: [] };
   }
 }
 
@@ -167,6 +167,14 @@ function failedRow(capturedUs: number, parseError: string): Row {
     capturedUs, sessionId: null, promptId: null, agentId: null, hookEvent: 'unparsed', toolName: null,
     toolUseId: null, cwd: null, repoKey: null, touches: [], payload: '{}', parseError,
   };
+}
+
+/** V8 quotes the start of the bad input in a JSON.parse error; that is payload, so it is left out. */
+const QUOTED_INPUT = /(?:\.{3})?"[\s\S]{0,1024}"(?:\.{3})?(?= is not valid JSON$)/;
+
+function errorText(name: string, e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e);
+  return redactString(`${name}: ${message.replace(QUOTED_INPUT, '"…"')}`);
 }
 
 /** Only the files InstructionsLoaded can name: CLAUDE.md, CLAUDE.local.md and .claude/rules/*.md. */

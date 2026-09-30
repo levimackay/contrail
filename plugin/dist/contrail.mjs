@@ -438,17 +438,18 @@ import { homedir as homedir2 } from "node:os";
 
 // src/cli.ts
 import { spawnSync } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync3, mkdirSync, mkdtempSync, readdirSync as readdirSync3, readFileSync as readFileSync4, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename4, dirname as dirname2, join as join5 } from "node:path";
+import { join as join7 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 // src/engine/effects.ts
-import { basename as basename2, isAbsolute as isAbsolute3, resolve as resolve3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute3, resolve as resolve3 } from "node:path";
 
 // src/util.ts
-import { isAbsolute, relative, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 function stringLeaves(value, path = "$") {
   if (typeof value === "string") return [{ path, value }];
   if (Array.isArray(value)) return value.flatMap((v, i) => stringLeaves(v, `${path}[${i}]`));
@@ -503,10 +504,21 @@ function clip(s, max) {
 function callId(id) {
   return id.length > 12 ? `${id.slice(0, 5)}\u2026${id.slice(-5)}` : id;
 }
+function realPath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    try {
+      return join(realpathSync(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
+}
 
 // src/engine/tokens.ts
 var import_shell_quote = __toESM(require_shell_quote(), 1);
-import { basename, dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
+import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
 
 // src/engine/text.ts
 var INVISIBLE = /[​-‏‪-‮⁠-⁤﻿]/g;
@@ -684,7 +696,7 @@ function unwrapCommand(words2) {
       argv = argv.slice(1);
       continue;
     }
-    const wrapper = basename(argv[0]);
+    const wrapper = basename2(argv[0]);
     if (!WRAPPERS.has(wrapper)) break;
     argv = argv.slice(1);
     while (argv.length && argv[0].startsWith("-") && argv[0] !== "-") {
@@ -780,13 +792,13 @@ function collector(env) {
       const rel = displayPath(abs, env.cwd, env.home);
       if (targetCount >= MAX_TARGETS) return;
       if (push(rel, "target", group, argPath)) targetCount++;
-      const base = basename(abs);
+      const base = basename2(abs);
       if (!GENERIC_BASENAMES.has(base.toLowerCase())) {
         if (base !== rel && passes(base)) push(base, "target", group, argPath);
         const stem = base.replace(/\.[^.]+$/, "");
         if (stem !== base && passes(stem)) push(stem, "target", group, argPath, true);
       }
-      for (const seg of dirname(rel).split("/")) {
+      for (const seg of dirname2(rel).split("/")) {
         if (seg && seg !== "." && seg !== "~" && !GENERIC_DIRS.has(seg.toLowerCase())) api.hint(seg, argPath);
       }
     },
@@ -812,7 +824,7 @@ function bash(command, b) {
   for (const seg of segments(command)) {
     const argv = unwrapCommand(seg.words);
     if (argv.length === 0) continue;
-    const prog = basename(argv[0]);
+    const prog = basename2(argv[0]);
     const args = argv.slice(1);
     const packages = installArgs(prog, args);
     if (packages) {
@@ -1001,7 +1013,7 @@ function parseCommitSha(command, stdout) {
 function runsGitCommit(command) {
   return shellSegments(command).some((seg) => {
     const words2 = unwrapCommand(seg.words);
-    if (basename2(words2[0] ?? "") !== "git") return false;
+    if (basename3(words2[0] ?? "") !== "git") return false;
     if (words2.some((w) => w === "--dry-run" || w === "--abort" || w === "--quit")) return false;
     for (let i = 1; i < words2.length; i++) {
       const w = words2[i];
@@ -1034,7 +1046,7 @@ function expectedShellEffects(command, cwd) {
     const words2 = seg.words.filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
     const [first, ...args] = words2;
     if (!first) continue;
-    const prog = basename2(first === "sudo" ? args.shift() ?? "" : first);
+    const prog = basename3(first === "sudo" ? args.shift() ?? "" : first);
     const plain = args.filter((a) => !a.startsWith("-"));
     if (LOCKFILES[prog] && plain[0] && INSTALL_VERBS2.has(plain[0])) {
       file("package.json");
@@ -1498,7 +1510,7 @@ function findValue(g, value) {
 }
 function runsContrail(a) {
   const command = a.tool === "Bash" ? stringLeaves(a.input).find((l) => l.path === "$.command")?.value ?? "" : "";
-  return /(^|[\s;&|(/])(bin\/contrail|contrail)\s+(why|find|trace|risks|sessions|report|export|doctor|statusline)\b/.test(command);
+  return /(^|[\s;&|(/])(bin\/contrail|contrail)\s+(why|find|trace|risks|sessions|report|review|export|doctor|statusline)\b/.test(command);
 }
 
 // src/engine/tree.ts
@@ -1537,12 +1549,12 @@ var ContrailError = class extends Error {
 // src/ingest/content.ts
 import { createHmac, randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 var STRUCTURE = /* @__PURE__ */ new Set(["filePath", "agentId", "status", "isAsync", "success", "commandName", "code", "url", "interrupted", "isImage", "noOutputExpected", "type", "bashEditDiff", "resolvedModel", "description"]);
 var COMMIT_LINE2 = /^\[[^\]\n]{1,200}\] [^\n]{0,300}$/m;
 var TASK_HEAD = /^\s*<task-notification>[\s\S]{0,4000}?<\/summary>/;
 function contentHmac(dataDir, create) {
-  const path = join(dataDir, "content.key");
+  const path = join2(dataDir, "content.key");
   let key;
   try {
     key = readFileSync(path);
@@ -1611,7 +1623,7 @@ ${hash(value)}` : hash(value);
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync as readFileSync2, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 
 // src/ingest/redact.ts
 var tag = (id) => `[REDACTED:${id}]`;
@@ -1728,7 +1740,7 @@ function ingest(db, spoolDir, repoKeyOf, now = Date.now(), hmac) {
     return report2;
   }
   for (const name of names) {
-    const file = join2(spoolDir, name);
+    const file = join3(spoolDir, name);
     if (name.startsWith(".tmp.")) {
       if (removeIfStale(file, now)) report2.staleTmpRemoved++;
       continue;
@@ -1848,7 +1860,7 @@ function attachSkillText(p, capturedUs) {
   const name = str(obj(p, "tool_input"), "skill");
   const cwd = str(p, "cwd");
   if (!name || !SKILL_NAME.test(name) || name.includes("..")) return;
-  const candidates = [join2(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join2(cwd, ".claude", "skills", name, "SKILL.md")] : []];
+  const candidates = [join3(homedir(), ".claude", "skills", name, "SKILL.md"), ...cwd ? [join3(cwd, ".claude", "skills", name, "SKILL.md")] : []];
   const found = [...new Set(candidates)].filter((path) => {
     try {
       return statSync(path).isFile();
@@ -1935,7 +1947,7 @@ function sha256(s) {
 
 // src/ingest/repo.ts
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync as realpathSync2 } from "node:fs";
 function makeRepoKeyOf() {
   const cache = /* @__PURE__ */ new Map();
   return (cwd) => {
@@ -1954,7 +1966,7 @@ function gitCommonDir(cwd) {
       timeout: 2e3,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
-    return out ? realpathSync(out) : null;
+    return out ? realpathSync2(out) : null;
   } catch {
     return null;
   }
@@ -1962,19 +1974,19 @@ function gitCommonDir(cwd) {
 
 // src/paths.ts
 import { existsSync, readdirSync as readdirSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 function resolveDataDir(flag, env, home, pluginData) {
   if (flag) return flag;
   if (env.CONTRAIL_HOME) return env.CONTRAIL_HOME;
   if (pluginData) return pluginData;
   if (env.CLAUDE_PLUGIN_DATA) return env.CLAUDE_PLUGIN_DATA;
-  const base = join3(home, ".claude", "plugins", "data");
+  const base = join4(home, ".claude", "plugins", "data");
   const hits = existsSync(base) ? readdirSync2(base).filter((n) => n === "contrail" || n.startsWith("contrail-")) : [];
-  if (hits.length === 1) return join3(base, hits[0]);
+  if (hits.length === 1) return join4(base, hits[0]);
   if (hits.length === 0) {
     throw new ContrailError("No recorded data found. Is the Contrail plugin installed? Set CONTRAIL_HOME to point at a data directory.");
   }
-  const list = hits.map((h) => `  ${join3(base, h)}`).join("\n");
+  const list = hits.map((h) => `  ${join4(base, h)}`).join("\n");
   throw new ContrailError(`Found ${hits.length} Contrail data directories:
 ${list}
 Set CONTRAIL_HOME to pick one.`);
@@ -2034,6 +2046,47 @@ function bashCallsBetween(db, fromUs, toUs, repoKey, mightCommit = false) {
   }
   return [...byId.values()].filter((c) => c.preUs && c.postUs);
 }
+function joinCommits(db, commits, repoKey, sinceSec) {
+  const joins = /* @__PURE__ */ new Map();
+  if (!commits.length) return joins;
+  const fromUs = Math.min(sinceSec ?? Infinity, ...commits.map((c) => c.sec)) * 1e6 - WINDOW_US;
+  const toUs = Math.max(...commits.map((c) => c.sec)) * 1e6 + WINDOW_US;
+  const printed = db.all(
+    `SELECT * FROM (
+       SELECT session_id AS sessionId, tool_use_id AS toolUseId, json_extract(payload, '$.tool_input.command') AS command,
+              payload, captured_us AS us
+         FROM events
+        WHERE hook_event = 'PostToolUse' AND tool_name = 'Bash' AND repo_key = ? AND captured_us BETWEEN ? AND ?
+     ) WHERE ${MIGHT_COMMIT} ORDER BY us DESC`,
+    repoKey,
+    fromUs,
+    toUs
+  );
+  const byPrefix = /* @__PURE__ */ new Map();
+  for (const row of printed) {
+    const p = JSON.parse(row.payload);
+    const made = parseCommitSha(row.command ?? "", str(p.tool_response, "stdout") ?? toText(p.tool_response));
+    if (!made) continue;
+    const key = made.sha.slice(0, 7).toLowerCase();
+    byPrefix.set(key, [...byPrefix.get(key) ?? [], { sha: made.sha.toLowerCase(), sessionId: row.sessionId, toolUseId: row.toolUseId }]);
+  }
+  let calls = null;
+  for (const c of commits) {
+    const sha = c.sha.toLowerCase();
+    const hit = byPrefix.get(sha.slice(0, 7))?.find((h) => sha.startsWith(h.sha));
+    if (hit) {
+      joins.set(c.sha, { kind: "joined", sessionId: hit.sessionId, toolUseId: hit.toolUseId, via: "stdout" });
+      continue;
+    }
+    calls ??= bashCallsBetween(db, fromUs, toUs, repoKey, true);
+    const { match, candidates } = commitByTime(c.sec, calls);
+    joins.set(
+      c.sha,
+      match ? { kind: "joined", sessionId: match.sessionId, toolUseId: match.toolUseId, via: "time" } : candidates > 1 ? { kind: "ambiguous", candidates } : { kind: "none" }
+    );
+  }
+  return joins;
+}
 function commitInfo(cwd, sha) {
   try {
     const run = (args) => execFileSync2("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 5e3, stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -2055,8 +2108,42 @@ function commitFiles(cwd, sha) {
   }
 }
 
+// src/query/review.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { join as join5 } from "node:path";
+
+// src/engine/review.ts
+function branchFloor(mergeBaseSec, authorSecs) {
+  return Math.min(mergeBaseSec, ...authorSecs);
+}
+function joinFileWrites(file, writes) {
+  const until = file.uncommitted || file.lastCommitSec === null ? Infinity : (file.lastCommitSec + 1) * 1e6;
+  const held = writes.filter((w) => w.us <= until).sort((a, b) => b.us - a.us);
+  const grade = held.some((w) => !w.expected) ? "LIKELY" : held.length ? "POSSIBLE" : "UNKNOWN";
+  return { grade, writes: held };
+}
+function externalTrails(e, g) {
+  const inputs = new Map(g.inputs.map((i) => [i.id, i]));
+  const out = [];
+  for (const top of bestPerGroup(e.traces)) {
+    const steps = [];
+    for (let t = top; t; t = t.upstream?.trace) {
+      const found = t.links.filter((l) => l.grade !== "UNKNOWN" && l.to && inputs.has(l.to));
+      const best = found.find((l) => l.grade === "LIKELY") ?? found.find((l) => l.firstSeen);
+      if (!best) break;
+      const input = inputs.get(best.to);
+      steps.push({ link: best, input });
+      if (input.trust !== "external") continue;
+      const sameLine = out.some((x) => x.steps.at(-1).input.id === input.id && x.steps.at(-1).link.quote?.line === best.quote?.line);
+      if (!sameLine || top.token.role !== "hint") out.push({ token: top.token, steps });
+      break;
+    }
+  }
+  return out;
+}
+
 // src/query/sessions.ts
-import { basename as basename3 } from "node:path";
+import { basename as basename4 } from "node:path";
 
 // src/graph/build.ts
 var DEPENDENCY_DIR = /(^|\/)(node_modules|vendor|\.venv|venv|site-packages)(\/|$)/;
@@ -2379,8 +2466,8 @@ function classify(a, env) {
     return { origin: "shell", trust: network || dependency ? "external" : "local", ref: `shell:${a.id}`, label: `the output of \`${clip(command, 50)}\`` };
   }
   if (tool === "WebFetch") {
-    const where = hostPath(str(a.input, "url") ?? "");
-    return { origin: "web", trust: "external", ref: where, label: `WebFetch of ${where}` };
+    const where2 = hostPath(str(a.input, "url") ?? "");
+    return { origin: "web", trust: "external", ref: where2, label: `WebFetch of ${where2}` };
   }
   if (tool === "WebSearch") {
     return { origin: "web_search", trust: "external", ref: `search:${a.id}`, label: `WebSearch ${JSON.stringify(str(a.input, "query") ?? "")}` };
@@ -2439,9 +2526,9 @@ function effectsOf(a, env) {
 
 // src/query/sessions.ts
 function recentSessions(db, repoKey, limit, all = false) {
-  const query = (where, ...params) => db.all(
+  const query = (where2, ...params) => db.all(
     `SELECT session_id AS id, MAX(captured_us) AS lastUs, MAX(cwd) AS cwd FROM events
-        WHERE session_id IS NOT NULL ${where}
+        WHERE session_id IS NOT NULL ${where2}
         GROUP BY session_id ORDER BY lastUs DESC LIMIT ?`,
     ...params,
     limit
@@ -2470,11 +2557,193 @@ function loadRows(db, sessionId) {
   return db.all("SELECT * FROM events WHERE session_id = ? ORDER BY captured_us, spool_name", sessionId);
 }
 function loadGraph(db, sessionId, home, hashToken) {
-  return buildGraph(loadRows(db, sessionId), { home, user: basename3(home) }, hashToken);
+  return buildGraph(loadRows(db, sessionId), { home, user: basename4(home) }, hashToken);
+}
+
+// src/query/review.ts
+var LIMITS = { commits: 500, files: 1e3, sessions: 30, writersPerFile: 3, explained: 300, touches: 5e4 };
+var DEFAULT_BASES = ["origin/HEAD", "origin/main", "origin/master", "main", "master"];
+var GIT_BUFFER_MB = 32;
+function gitIn(cwd) {
+  return (args) => {
+    try {
+      return execFileSync3("git", ["-C", cwd, ...args], {
+        encoding: "utf8",
+        timeout: 15e3,
+        maxBuffer: GIT_BUFFER_MB * 1024 * 1024,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }
+      });
+    } catch (e) {
+      const code = e.code;
+      if (code === "ENOENT") throw new ContrailError("git is not installed or not on PATH; contrail review reads the branch from git.");
+      if (code === "ENOBUFS") throw new ContrailError(`git's output for this range is larger than the ${GIT_BUFFER_MB} MB Contrail reads. Name a closer base: contrail review <base>.`);
+      if (code === "ETIMEDOUT") throw new ContrailError("git did not answer within 15 seconds.");
+      return null;
+    }
+  };
+}
+var zList = (out) => (out ?? "").split("\0").filter(Boolean);
+var REVISION = /^[^\s\x00-\x1f\x7f-][^\s\x00-\x1f\x7f]{0,255}$/;
+function branchRange(cwd, base) {
+  const top = gitIn(cwd)(["rev-parse", "--show-toplevel"])?.trim();
+  if (!top) throw new ContrailError(`${clip(cwd, 200)} is not inside a git repository. contrail review lists the changes on the current branch, so run it inside one.`);
+  const git = gitIn(top);
+  const head = git(["rev-parse", "--verify", "-q", "HEAD^{commit}"])?.trim();
+  if (!head) throw new ContrailError("This repository has no commits yet, so there is no branch to review.");
+  const branch = git(["symbolic-ref", "-q", "--short", "HEAD"])?.trim() || null;
+  const resolve6 = (rev) => git(["rev-parse", "--verify", "-q", `${rev}^{commit}`])?.trim() || null;
+  let name;
+  let baseSha;
+  if (base !== void 0) {
+    if (!REVISION.test(base)) throw new ContrailError(`"${clip(base, 80)}" is not a revision contrail review accepts. Name a branch, tag or commit, for example origin/main.`);
+    name = base;
+    baseSha = resolve6(base);
+    if (!baseSha) throw new ContrailError(`Unknown base "${clip(base, 80)}": git has no commit by that name here. Name a branch, tag or commit, for example origin/main.`);
+  } else {
+    const found = DEFAULT_BASES.map((rev) => ({ rev, sha: resolve6(rev) })).find((c) => c.sha);
+    if (!found) throw new ContrailError(`No base to compare with: none of ${DEFAULT_BASES.join(", ")} exists here. Name one: contrail review <base>.`);
+    name = found.rev === "origin/HEAD" ? git(["rev-parse", "--abbrev-ref", "origin/HEAD"])?.trim() || found.rev : found.rev;
+    baseSha = found.sha;
+  }
+  const mergeBase = git(["merge-base", baseSha, head])?.trim();
+  if (!mergeBase) throw new ContrailError(`${clip(name, 80)} and HEAD share no history, so there is no range between them to review.`);
+  const mergeBaseSec = Number(git(["show", "-s", "--format=%ct", mergeBase])?.trim() ?? 0);
+  const range = `${mergeBase}..${head}`;
+  const totalCommits = Number(git(["rev-list", "--count", range])?.trim() ?? 0);
+  const commits = [];
+  const meta = (git(["log", "-z", `--max-count=${LIMITS.commits}`, "--format=%H%x00%ct%x00%at%x00%P%x00%s", range]) ?? "").split("\0");
+  for (let i = 0; i + 5 <= meta.length; i += 5) {
+    const [sha, sec, authorSec, parents, subject] = meta.slice(i, i + 5);
+    commits.push({ sha, sec: Number(sec), authorSec: Number(authorSec), merge: parents.split(" ").length > 1, subject, files: [] });
+  }
+  const bySha = new Map(commits.map((c) => [c.sha, c]));
+  let current;
+  for (const raw of (git(["log", "-z", "--no-renames", "--name-only", `--max-count=${LIMITS.commits}`, "--format=%x01%H", range]) ?? "").split("\0")) {
+    const part = raw.replace(/^\n/, "");
+    if (part.startsWith("")) current = bySha.get(part.slice(1));
+    else if (part && current) current.files.push(part);
+  }
+  const committed = zList(git(["diff", "-z", "--no-renames", "--name-only", mergeBase, head]));
+  const dirty = /* @__PURE__ */ new Set([...zList(git(["diff", "-z", "--no-renames", "--name-only", "HEAD"])), ...zList(git(["ls-files", "-z", "--others", "--exclude-standard"]))]);
+  const all = [.../* @__PURE__ */ new Set([...committed, ...dirty])].sort();
+  const commitsOf = /* @__PURE__ */ new Map();
+  for (const c of commits) for (const f of c.files) commitsOf.set(f, [...commitsOf.get(f) ?? [], c.sha]);
+  const files = all.slice(0, LIMITS.files).map((path) => ({ path, commits: commitsOf.get(path) ?? [], uncommitted: dirty.has(path) }));
+  return { top, head, branch, base: { name, given: base !== void 0, tried: base !== void 0 ? [base] : DEFAULT_BASES, mergeBase, mergeBaseSec }, commits, totalCommits, files, totalFiles: all.length };
+}
+function reviewBranch(db, o) {
+  const range = branchRange(o.cwd, o.base);
+  const floorSec = branchFloor(range.base.mergeBaseSec, range.commits.map((c) => c.authorSec));
+  const joins = joinCommits(db, range.commits, o.repoKey, floorSec);
+  const top = realPath(range.top);
+  const wanted = new Map(range.files.map((f) => [join5(top, f.path), f.path]));
+  const writesTo = /* @__PURE__ */ new Map();
+  const real = /* @__PURE__ */ new Map();
+  for (const t of recordedWrites(db, floorSec * 1e6, o.repoKey)) {
+    const path = wanted.get(real.get(t.path) ?? real.set(t.path, realPath(t.path)).get(t.path));
+    if (!path) continue;
+    writesTo.set(path, [...writesTo.get(path) ?? [], { sessionId: t.sessionId, actionId: t.toolUseId, us: t.us, expected: t.kind === "expected" }]);
+  }
+  const secOf = new Map(range.commits.map((c) => [c.sha, c.sec]));
+  const headSec = range.commits[0]?.sec ?? null;
+  const joined = range.files.map((f) => {
+    const lastCommitSec = f.commits.length ? secOf.get(f.commits[0]) : headSec;
+    return { file: f, ...joinFileWrites({ lastCommitSec, uncommitted: f.uncommitted }, writesTo.get(f.path) ?? []) };
+  });
+  const latest = /* @__PURE__ */ new Map();
+  const seen = (id, us) => latest.set(id, Math.max(latest.get(id) ?? 0, us));
+  for (const j of joined) for (const w of j.writes) seen(w.sessionId, w.us);
+  for (const c of range.commits) {
+    const join8 = joins.get(c.sha);
+    if (join8?.kind === "joined") seen(join8.sessionId, c.sec * 1e6);
+  }
+  const ids = [...latest.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  const graphs = new Map(ids.slice(0, LIMITS.sessions).map((id) => [id, loadGraph(db, id, o.home, o.hashToken)]));
+  const explained = /* @__PURE__ */ new Map();
+  let budget = LIMITS.explained;
+  let unexplained = 0;
+  const explainOnce = (sessionId, actionId, capped = true) => {
+    const g = graphs.get(sessionId);
+    const action = g?.actions.find((a) => a.id === actionId) ?? null;
+    if (!g || !action) return { action, explanation: null };
+    const key = `${sessionId}\0${actionId}`;
+    let e = explained.get(key);
+    if (!e && capped && budget <= 0) {
+      unexplained++;
+      return { action, explanation: null };
+    }
+    if (!e) {
+      e = explain(actionId, g);
+      explained.set(key, e);
+      if (capped) budget--;
+    }
+    return { action, explanation: e };
+  };
+  const files = joined.map(({ file, grade, writes }) => {
+    const calls2 = [...new Map(writes.map((w) => [`${w.sessionId}\0${w.actionId}`, w])).values()];
+    const firstPerSession = calls2.filter((w, i) => calls2.findIndex((x) => x.sessionId === w.sessionId) === i);
+    const picked = [.../* @__PURE__ */ new Set([...firstPerSession, ...calls2])].slice(0, LIMITS.writersPerFile);
+    const writers = picked.map((w) => ({ ...w, ...explainOnce(w.sessionId, w.actionId) }));
+    return { ...file, grade, writers, moreWriters: calls2.length - picked.length };
+  });
+  const commits = range.commits.map((c) => {
+    const join8 = joins.get(c.sha) ?? { kind: "none" };
+    const found = join8.kind === "joined" ? explainOnce(join8.sessionId, join8.toolUseId) : { action: null, explanation: null };
+    return { ...c, join: join8, ...found };
+  });
+  const external = [];
+  const calls = [
+    ...files.flatMap((f) => f.writers.map((w) => ({ sessionId: w.sessionId, e: w.explanation }))),
+    ...commits.map((c) => ({ sessionId: c.join.kind === "joined" ? c.join.sessionId : "", e: c.explanation }))
+  ];
+  const done = /* @__PURE__ */ new Set();
+  for (const { sessionId, e } of calls) {
+    if (!e || done.has(`${sessionId}\0${e.action.id}`)) continue;
+    done.add(`${sessionId}\0${e.action.id}`);
+    const wrote = files.filter((f) => f.writers.some((w) => w.actionId === e.action.id && w.sessionId === sessionId)).map((f) => f.path);
+    for (const trail of externalTrails(e, graphs.get(sessionId))) external.push({ sessionId, action: e.action, files: wrote, trail });
+  }
+  const findings = [];
+  let actionsScanned = 0;
+  for (const [id, g] of graphs) {
+    actionsScanned += g.actions.length;
+    findings.push(...findingsFor(g, (actionId) => explainOnce(id, actionId, false).explanation));
+  }
+  const notNamed = files.filter((f) => {
+    const verdicts = f.writers.flatMap((w) => w.explanation ? [w.explanation.requested.verdict] : []);
+    return verdicts.length > 0 && !verdicts.includes("NAMED");
+  });
+  return {
+    range,
+    floorSec,
+    commits,
+    files,
+    graphs,
+    sessionsOmitted: ids.length - graphs.size,
+    external,
+    findings: rankFindings(findings),
+    actionsScanned,
+    notNamed,
+    unexplained
+  };
+}
+function recordedWrites(db, sinceUs, repoKey) {
+  return db.all(
+    `SELECT t.path AS path, t.kind AS kind, e.session_id AS sessionId, e.tool_use_id AS toolUseId, e.captured_us AS us
+       FROM touches t JOIN events e ON e.id = t.event_id
+      WHERE t.kind IN ('write', 'expected') AND e.tool_use_id IS NOT NULL
+        AND e.session_id IN (SELECT DISTINCT session_id FROM events WHERE repo_key = ? AND captured_us >= ?)
+      ORDER BY e.captured_us DESC
+      LIMIT ?`,
+    repoKey,
+    sinceUs,
+    LIMITS.touches
+  );
 }
 
 // src/query/target.ts
-import { existsSync as existsSync2, realpathSync as realpathSync2 } from "node:fs";
+import { existsSync as existsSync2, realpathSync as realpathSync3 } from "node:fs";
 import { resolve as resolve5 } from "node:path";
 var SHORT_CALL = /^([A-Za-z0-9_-]{1,40})(?:…|\.\.\.)([A-Za-z0-9_-]{1,40})$/;
 var FULL_CALL = /^toolu_[A-Za-z0-9_-]{8,200}$/;
@@ -2483,8 +2752,8 @@ function parseTarget(args, cwd) {
   if (!text) throw new ContrailError('Usage: contrail why <path | "command text" | call id | last>');
   if (text === "last") return { kind: "last" };
   const abs = resolve5(cwd, text);
-  const short = SHORT_CALL.exec(text);
-  if (short && !existsSync2(abs)) return { kind: "call", prefix: short[1], suffix: short[2], shown: text };
+  const short2 = SHORT_CALL.exec(text);
+  if (short2 && !existsSync2(abs)) return { kind: "call", prefix: short2[1], suffix: short2[2], shown: text };
   if (FULL_CALL.test(text) && !existsSync2(abs)) return { kind: "call", prefix: text, suffix: "", shown: text };
   if (!/\s/.test(text) && (existsSync2(abs) || /\/|\.[A-Za-z0-9]{1,8}$/.test(text))) return { kind: "path", path: abs, shown: text };
   return { kind: "command", text };
@@ -2499,7 +2768,7 @@ var NOT_CONTRAIL = `NOT (${COMMAND} LIKE '%bin/contrail%' OR ${COMMAND} LIKE 'co
 function findTarget(db, target, repoKey) {
   let rows;
   if (target.kind === "path") {
-    const real = existsSync2(target.path) ? realpathSync2(target.path) : target.path;
+    const real = existsSync2(target.path) ? realpathSync3(target.path) : target.path;
     rows = db.all(
       `SELECT e.session_id AS sessionId, e.tool_use_id AS toolUseId
          FROM touches t JOIN events e ON e.id = t.event_id
@@ -2645,8 +2914,8 @@ function trace(t, depth, out, inputs, s) {
     }
     const src = inputs.get(l.to);
     if (!src) continue;
-    const where = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
-    out.push(`${pad3}  ${s.grade(l.grade)}${sourceWording(l, where)}  ${s.dim(`[${l.rule}]`)}`);
+    const where2 = l.quote?.line != null ? `${clip(src.label, 100)}:${l.quote.line}` : clip(src.label, 100);
+    out.push(`${pad3}  ${s.grade(l.grade)}${sourceWording(l, where2)}  ${s.dim(`[${l.rule}]`)}`);
     if (l.quote?.text) out.push(`${pad3}           ${s.dim(l.quote.line != null ? `${l.quote.line}\u2502` : "\u2502")} ${clip(l.quote.text, 100)}`);
     else if (l.quote && src.hashed) out.push(`${pad3}           ${s.dim(`${l.quote.line ?? ""}\u2502 (text not stored)`)}`);
     const origin = originWording(src);
@@ -2664,13 +2933,13 @@ function trace(t, depth, out, inputs, s) {
     out.push(s.dim(`${pad3}  the trail goes further back, past the ${MAX_DEPTH}-step limit of one report${next}`));
   }
 }
-function sourceWording(l, where) {
-  if (l.note === "you supplied it") return `you supplied it: ${where}`;
-  if (l.note === "also in") return `also in ${where}`;
-  if (l.grade === "LIKELY") return `only observed in ${where}`;
-  if (l.firstSeen) return `could be from ${where} (seen first)`;
-  if (l.note) return `${where} (${l.note})`;
-  return `could be from ${where}`;
+function sourceWording(l, where2) {
+  if (l.note === "you supplied it") return `you supplied it: ${where2}`;
+  if (l.note === "also in") return `also in ${where2}`;
+  if (l.grade === "LIKELY") return `only observed in ${where2}`;
+  if (l.firstSeen) return `could be from ${where2} (seen first)`;
+  if (l.note) return `${where2} (${l.note})`;
+  return `could be from ${where2}`;
 }
 var ORIGIN_WORDING = {
   prompt: "your words",
@@ -2724,8 +2993,8 @@ function describe(a, g) {
   if (a.tool === "WebFetch") return clip(str(a.input, "url") ?? "", 90);
   if (a.tool === "Agent" || a.tool === "Task") return clip(str(a.input, "description") ?? str(a.input, "prompt") ?? "", 90);
   if (a.tool === "Grep" || a.tool === "Glob") {
-    const where = str(a.input, "path");
-    return clip(`${JSON.stringify(str(a.input, "pattern") ?? "")}${where ? ` in ${displayPath(where, g.env.cwd, g.env.home)}` : ""}`, 90);
+    const where2 = str(a.input, "path");
+    return clip(`${JSON.stringify(str(a.input, "pattern") ?? "")}${where2 ? ` in ${displayPath(where2, g.env.cwd, g.env.home)}` : ""}`, 90);
   }
   if (a.tool === "WebSearch") return clip(JSON.stringify(str(a.input, "query") ?? ""), 90);
   if (a.tool === "Skill") return clip(str(a.input, "skill") ?? "", 90);
@@ -2891,9 +3160,9 @@ function renderFind(value, hits, scanned, s = PLAIN) {
     for (const hit of sightings) {
       if (hit.source) {
         const src = hit.source.input;
-        const where = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ""}`;
-        const trust = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
-        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("HELD", 6)} ${where}  ${trust}${seenSource ? "" : `  ${s.accent("first seen")}`}`);
+        const where2 = `${clip(src.label, 90)}${hit.source.line != null ? `:${hit.source.line}` : ""}`;
+        const trust2 = src.trust === "external" ? s.flag(`(${src.trust})`) : s.dim(`(${src.trust})`);
+        out.push(`  ${s.dim(pad2(`${hit.seq}`, 4))} ${pad2("HELD", 6)} ${where2}  ${trust2}${seenSource ? "" : `  ${s.accent("first seen")}`}`);
         seenSource = true;
         if (hit.source.text) out.push(`              ${s.dim(hit.source.line != null ? `${hit.source.line}\u2502` : "\u2502")} ${clip(hit.source.text, 96)}`);
         else if (src.hashed) out.push(`              ${s.dim(`${hit.source.line ?? ""}\u2502 (text not stored)`)}`);
@@ -2962,8 +3231,8 @@ function renderRisks(findings, scanned, g, s = PLAIN) {
     }
     out.push(`  ${external.length ? s.flag("values trace to external content:") : s.dim("values trace to:")}`);
     for (const { link, input } of shown) {
-      const where = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""}`;
-      out.push(`    ${s.grade(link.grade)}${clip(link.token ?? "", 80)}  \u2190 ${where}  ${input.trust === "external" ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
+      const where2 = `${clip(input.label, 100)}${link.quote?.line != null ? `:${link.quote.line}` : ""}`;
+      out.push(`    ${s.grade(link.grade)}${clip(link.token ?? "", 80)}  \u2190 ${where2}  ${input.trust === "external" ? s.flag(`(${input.trust})`) : s.dim(`(${input.trust})`)}`);
       if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}\u2502` : "\u2502")} ${clip(link.quote.text, 96)}`);
       else if (link.quote && input.hashed) out.push(`             ${s.dim(`${link.quote.line ?? ""}\u2502 (text not stored)`)}`);
     }
@@ -3392,14 +3661,409 @@ function provenanceLinks(a, e, inputs, actionIds, traceId, actionSpan, turnSpan)
   }));
 }
 
+// src/render/review.ts
+var REVIEW_BLIND_SPOTS = [
+  ...BASE_BLIND_SPOTS,
+  "changes made outside recorded Claude Code sessions (by you, another tool, or before Contrail was installed)",
+  "which part of a recorded write the diff holds (files are joined by path and time, not content)",
+  "commits rebased, amended or squashed after they were recorded (their new shas match no recorded commit line)",
+  "sessions removed by retention"
+];
+var LIST_LIMIT = 20;
+var COMMIT_LIMIT = 20;
+var sid = (id) => id.slice(0, 8);
+var short = (sha) => sha.slice(0, 7);
+var plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+var when = (sec) => new Date(sec * 1e3).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+var VERDICT_WORDS = {
+  NAMED: "named by you",
+  NOT_NAMED: "not named by you",
+  NAMED_NEGATED: "named, but your latest mention is negated",
+  PARTLY_NAMED: "partly named by you",
+  NOTHING_TO_MATCH: "nothing in it to match against your words"
+};
+function headline3(e, g) {
+  const head = headlineTrace(e);
+  const link = head?.links.find((l) => l.grade !== "UNKNOWN");
+  const input = link?.to ? g.inputs.find((i) => i.id === link.to) : void 0;
+  return head && link && input ? { token: head.token.text, link, input } : null;
+}
+var where = (link, input) => `${input.label}${link.quote?.line != null ? `:${link.quote.line}` : ""}`;
+function fileState(f) {
+  const committed = f.commits.length ? `committed in ${f.commits.slice(0, 3).map(short).join(", ")}${f.commits.length > 3 ? `, +${f.commits.length - 3} more` : ""}` : "";
+  if (committed && f.uncommitted) return `${committed}; changed again, not committed`;
+  return committed || (f.uncommitted ? "not committed" : "in the diff");
+}
+function baseWords(r) {
+  const b = r.range.base;
+  return b.given ? `base ${b.name}` : `base ${b.name} (default: first found of ${DEFAULT_BASES.join(", ")})`;
+}
+function counts(r) {
+  const agentFiles = r.files.filter((f) => f.grade !== "UNKNOWN").length;
+  const uncommitted = r.files.filter((f) => f.uncommitted).length;
+  const joined = r.commits.filter((c) => c.join.kind === "joined").length;
+  return [
+    plural(r.range.totalCommits, "commit"),
+    `${plural(r.range.totalFiles, "changed file")}${uncommitted ? ` (${uncommitted} not committed)` : ""}`,
+    `${agentFiles} with recorded agent changes`,
+    plural(r.graphs.size + r.sessionsOmitted, "session"),
+    `${joined} of ${r.commits.length} commits joined to the call that made them`
+  ];
+}
+function renderReview(r, s = PLAIN) {
+  const out = [];
+  const range = r.range;
+  const head = range.branch ?? `HEAD (detached at ${short(range.head)})`;
+  out.push(`${s.bold("Review")}  ${s.bold(clip(head, 80))} against ${s.bold(clip(range.base.name, 80))}`);
+  out.push(s.dim(`  ${clip(baseWords(r), 160)} \xB7 merge-base ${short(range.base.mergeBase)}`));
+  const facts = counts(r);
+  out.push(`  ${facts.slice(0, 3).join(s.dim(" \xB7 "))}`, `  ${facts.slice(3).join(s.dim(" \xB7 "))}`);
+  out.push(s.dim(`  agent changes: writes by sessions active here since ${when(r.floorSec)}, joined by path`));
+  const limits = limitNotes(r);
+  for (const note of limits) out.push(s.dim(`  ${note}`));
+  out.push("", s.bold("Values from external content in this change"));
+  if (!r.external.length) {
+    out.push(s.dim("  None: no value in the agent's recorded writes or commits on this branch traces to web, MCP or dependency content."));
+  }
+  for (const x of r.external.slice(0, LIST_LIMIT)) {
+    const g = r.graphs.get(x.sessionId);
+    const into = x.files.length ? `in ${x.files.map((f) => clip(f, 80)).join(", ")} \xB7 ` : "";
+    out.push(`  ${s.flag("\u25B2")} ${s.accent(clip(x.trail.token.text, 80))}  ${s.dim(`${into}${x.action.tool} ${callId(x.action.id)} \xB7 session ${sid(x.sessionId)} \xB7 ${turnLabel(x.action, g)}`)}`);
+    x.trail.steps.forEach(({ link: link2, input: input2 }, i) => {
+      const value = i ? `${clip(link2.token ?? "", 80)} ` : "";
+      const lead = i ? s.dim("one step back: ") : "";
+      out.push(`    ${s.grade(link2.grade)}${lead}${value}\u2190 ${clip(where(link2, input2), 100)}  ${trust(input2, s)}  ${s.dim(`[${link2.rule}]`)}`);
+    });
+    const { link, input } = x.trail.steps.at(-1);
+    if (link.quote?.text) out.push(`             ${s.dim(link.quote.line != null ? `${link.quote.line}\u2502` : "\u2502")} ${clip(link.quote.text, 96)}`);
+    else if (link.quote && input.hashed) out.push(`             ${s.dim(`${link.quote.line ?? ""}\u2502 (text not stored)`)}`);
+  }
+  more(out, r.external.length, s);
+  out.push("", `${s.bold("Sensitive actions in these sessions")} ${s.dim(`(${r.findings.length} of ${r.actionsScanned} tool calls)`)}`);
+  if (!r.findings.length) out.push(s.dim("  None found."));
+  for (const f of r.findings.slice(0, LIST_LIMIT)) {
+    const g = r.graphs.get(f.action.scope.sessionId);
+    const mark = f.externalUpstream ? s.flag("\u25B2") : f.requested === "NOT_NAMED" ? s.bold("\u25B3") : s.dim("\xB7");
+    const asked = f.requested === "NOT_NAMED" ? s.flag(VERDICT_WORDS[f.requested]) : VERDICT_WORDS[f.requested];
+    out.push(`  ${mark} ${s.bold(describe(f.action, g))}`);
+    out.push(`    ${s.accent(f.kinds.join(" \xB7 "))}   ${asked}   ${s.dim(`session ${sid(f.action.scope.sessionId)} \xB7 ${turnLabel(f.action, g)} \xB7 ${callId(f.action.id)}`)}`);
+    const src = firstSource(f);
+    if (src) {
+      out.push(`    ${s.grade(src.link.grade)}${clip(src.link.token ?? "", 80)} \u2190 ${clip(where(src.link, src.input), 100)}  ${trust(src.input, s)}`);
+    } else {
+      out.push(s.dim("    values trace to: no observed source"));
+    }
+  }
+  more(out, r.findings.length, s);
+  out.push("", s.bold("Changed without being named in your words"));
+  if (!r.notNamed.length) out.push(s.dim("  None: your words name a recorded writer of every agent-changed file that was explained."));
+  const width = Math.min(60, Math.max(0, ...r.notNamed.map((f) => clip(f.path, 60).length)));
+  for (const f of r.notNamed.slice(0, LIST_LIMIT)) {
+    const w = f.writers.find((x) => x.explanation);
+    const g = r.graphs.get(w.sessionId);
+    const what = w.action.tool === "Bash" ? ` ${clip(describe(w.action, g), 50)}` : "";
+    out.push(`  ${clip(f.path, 60).padEnd(width)}  ${s.dim("\u2190")} ${w.action.tool} ${callId(w.actionId)}${what}  ${s.dim(`session ${sid(w.sessionId)} \xB7 ${turnLabel(w.action, g)}`)}`);
+  }
+  more(out, r.notNamed.length, s);
+  out.push("", s.bold("Commits") + s.dim(" (newest first)"));
+  if (!r.commits.length) out.push(s.dim(`  None between ${clip(range.base.name, 80)} and HEAD.`));
+  for (const c of r.commits.slice(0, COMMIT_LIMIT)) commitLines(c, r, s, out);
+  if (r.range.totalCommits > Math.min(r.commits.length, COMMIT_LIMIT)) {
+    out.push(s.dim(`  ${r.range.totalCommits - Math.min(r.commits.length, COMMIT_LIMIT)} more; --json lists up to ${r.commits.length}.`));
+  }
+  const agent = r.files.filter((f) => f.grade !== "UNKNOWN");
+  const none = r.files.filter((f) => f.grade === "UNKNOWN");
+  out.push("", s.bold("Files with recorded agent changes"));
+  if (!agent.length) out.push(s.dim("  None."));
+  for (const f of agent) fileLines(f, r, s, out);
+  if (none.length) {
+    out.push("", `${s.bold("No recorded agent change")} ${s.dim("(you, another process, or a session Contrail did not record)")}`);
+    const w = Math.min(60, Math.max(...none.map((f) => clip(f.path, 60).length)));
+    for (const f of none) out.push(`  ${s.grade("UNKNOWN")}${clip(f.path, 60).padEnd(w)}  ${s.dim(fileState(f))}`);
+  }
+  out.push(
+    "",
+    s.dim("LIKELY, not DIRECT: the agent wrote that path while this branch was in progress; whether that exact change is what the diff holds is not observed."),
+    s.dim("Data provenance from Contrail's local record, not a judgment of this change. Not observable: the agent's reasons."),
+    s.dim(`Blind spots: ${REVIEW_BLIND_SPOTS.join("; ")}. No observed source is not the same as no source.`),
+    s.dim(`Run ${s.bold("contrail why <path>")} for the full trail behind any file, and ${s.bold("contrail review --markdown")} for a pull request description.`)
+  );
+  return `${out.join("\n")}
+`;
+}
+function more(out, total, s) {
+  if (total > LIST_LIMIT) out.push(s.dim(`  ${total - LIST_LIMIT} more; --json lists them all.`));
+}
+var trust = (i, s) => i.trust === "external" ? s.flag(`(${i.trust})`) : s.dim(`(${i.trust})`);
+function firstSource(f) {
+  return f.sources.find((x) => x.input.trust === "external") ?? f.sources[0];
+}
+function turnLabel(a, g) {
+  return g.prompts.find((p) => p.promptId === a.promptId)?.label ?? "no turn";
+}
+function turnWords(a, g, max) {
+  const p = g.prompts.find((x) => x.promptId === a.promptId);
+  return p ? { label: p.label, yours: p.from === "you", text: clip(p.text, max) } : null;
+}
+function commitLines(c, r, s, out) {
+  out.push(`  ${s.accent(short(c.sha))}  ${s.bold(`"${clip(c.subject, 80)}"`)}${c.merge ? s.dim(" (merge)") : ""}`);
+  if (c.join.kind === "ambiguous") {
+    out.push(`    ${s.grade("UNKNOWN")}${c.join.candidates} recorded git commits were running when git dated it, and git printed no commit line; neither is credited  ${s.dim("[R9]")}`);
+    return;
+  }
+  if (c.join.kind === "none" || !c.action) {
+    const why2 = c.join.kind === "joined" ? `made by ${callId(c.join.toolUseId)} in session ${sid(c.join.sessionId)}, past the session limit of this review` : "no recorded agent call made it (you, another tool, or a commit rebased or amended since)";
+    out.push(`    ${s.grade("UNKNOWN")}${s.dim(why2)}`);
+    return;
+  }
+  const g = r.graphs.get(c.join.sessionId);
+  const how = c.join.via === "stdout" ? `${s.grade("DIRECT")}made by ${c.action.tool} ${callId(c.action.id)} \xB7 session ${sid(c.join.sessionId)} \xB7 seq ${c.action.preSeq}  ${s.dim("[R1]")}` : `${s.grade("LIKELY")}made by ${c.action.tool} ${callId(c.action.id)} \xB7 session ${sid(c.join.sessionId)} \xB7 seq ${c.action.preSeq}: the only recorded git commit running when git dated it  ${s.dim("[R9]")}`;
+  out.push(`    ${how}`);
+  const turn = turnWords(c.action, g, 70);
+  const asked = c.explanation ? `   ${askedWords(c.explanation.requested.verdict, s)}` : "";
+  if (turn) out.push(`             ${turnLine(turn, s)}${asked}`);
+}
+function turnLine(t, s) {
+  return t.yours ? `turn ${t.label}: "${t.text}"` : `turn ${t.label}, ${s.dim("a background task report, not your words:")} "${t.text}"`;
+}
+function askedWords(v, s) {
+  return v === "NAMED" ? s.dim(VERDICT_WORDS[v]) : v === "NOTHING_TO_MATCH" ? s.dim(VERDICT_WORDS[v]) : s.flag(VERDICT_WORDS[v]);
+}
+function fileLines(f, r, s, out) {
+  out.push(`  ${s.bold(clip(f.path, 120))}  ${s.dim(fileState(f))}`);
+  for (const w of f.writers) writerLines(w, r, s, out);
+  if (f.moreWriters) out.push(s.dim(`             +${plural(f.moreWriters, "more recorded call")} wrote this path`));
+}
+function writerLines(w, r, s, out) {
+  const grade = s.grade(w.expected ? "POSSIBLE" : "LIKELY");
+  if (!w.action) {
+    out.push(`    ${grade}${callId(w.actionId)} \xB7 session ${sid(w.sessionId)}  ${s.dim("(session past the limit of this review; contrail why <path> explains it)")}  ${s.dim("[R7]")}`);
+    return;
+  }
+  const g = r.graphs.get(w.sessionId);
+  const what = w.action.tool === "Bash" ? ` ${clip(describe(w.action, g), 60)}` : "";
+  const expected = w.expected ? s.dim(" \xB7 expected, not observed") : "";
+  out.push(`    ${grade}${w.action.tool} ${callId(w.action.id)}${what} \xB7 session ${sid(w.sessionId)} \xB7 seq ${w.action.preSeq}${expected}  ${s.dim("[R7]")}`);
+  const turn = turnWords(w.action, g, 80);
+  const asked = w.explanation ? `   ${askedWords(w.explanation.requested.verdict, s)}` : "";
+  out.push(`             ${turn ? turnLine(turn, s) : s.dim("no turn recorded for this call")}${asked}`);
+  if (!w.explanation) {
+    out.push(s.dim("             not explained: past the limit of this review; contrail why <path> explains it"));
+    return;
+  }
+  const h = headline3(w.explanation, g);
+  out.push(
+    h ? `             ${s.grade(h.link.grade, 0).trim()} ${clip(h.token, 80)} \u2190 ${clip(where(h.link, h.input), 100)} ${trust(h.input, s)}` : `             ${s.grade("UNKNOWN", 0).trim()} ${s.dim(w.explanation.traces.length ? "no observed source for its values" : "nothing distinctive in it to trace")}`
+  );
+}
+function limitNotes(r) {
+  const notes = [];
+  if (r.range.totalCommits > r.commits.length) notes.push(`only the newest ${r.commits.length} of ${r.range.totalCommits} commits are joined`);
+  if (r.range.totalFiles > r.files.length) notes.push(`only ${r.files.length} of ${r.range.totalFiles} changed files are shown`);
+  if (r.sessionsOmitted) notes.push(`${plural(r.sessionsOmitted, "older session")} not loaded`);
+  if (r.unexplained) notes.push(`${plural(r.unexplained, "writing call")} not explained`);
+  return notes.length ? [`limits reached: ${notes.join("; ")}`] : [];
+}
+function reviewJson(r) {
+  const writer = (w) => {
+    const g = r.graphs.get(w.sessionId);
+    const p = w.action && g ? g.prompts.find((x) => x.promptId === w.action.promptId) : void 0;
+    const h = w.explanation && g ? headline3(w.explanation, g) : null;
+    return {
+      session: w.sessionId,
+      action: w.actionId,
+      tool: w.action?.tool ?? null,
+      seq: w.action?.preSeq ?? null,
+      evidence: w.expected ? "expected" : "reported",
+      grade: w.expected ? "POSSIBLE" : "LIKELY",
+      rule: "R7",
+      turn: p ? { label: p.label, from: p.from, text: p.text } : null,
+      requested: w.explanation?.requested.verdict ?? null,
+      headline: h ? { token: h.token, grade: h.link.grade, rule: h.link.rule, source: h.input.label, trust: h.input.trust, line: h.link.quote?.line ?? null } : null
+    };
+  };
+  return {
+    head: { sha: r.range.head, branch: r.range.branch },
+    base: { name: r.range.base.name, given: r.range.base.given, mergeBase: r.range.base.mergeBase },
+    searchedSince: new Date(r.floorSec * 1e3).toISOString(),
+    counts: {
+      commits: r.range.totalCommits,
+      files: r.range.totalFiles,
+      agentFiles: r.files.filter((f) => f.grade !== "UNKNOWN").length,
+      sessions: r.graphs.size + r.sessionsOmitted,
+      commitsJoined: r.commits.filter((c) => c.join.kind === "joined").length
+    },
+    external: r.external.map((x) => ({
+      session: x.sessionId,
+      action: x.action.id,
+      tool: x.action.tool,
+      files: x.files,
+      token: x.trail.token.text,
+      argPath: x.trail.token.argPath,
+      steps: x.trail.steps.map(({ link, input }) => ({ token: link.token ?? null, grade: link.grade, rule: link.rule, source: input.label, origin: input.origin, trust: input.trust, line: link.quote?.line ?? null, quote: link.quote?.text ?? null }))
+    })),
+    sensitive: r.findings.map((f) => ({ session: f.action.scope.sessionId, action: f.action.id, kinds: f.kinds, requested: f.requested, externalUpstream: f.externalUpstream, sources: f.sources.map((x) => ({ grade: x.link.grade, token: x.link.token, source: x.input.label, trust: x.input.trust, line: x.link.quote?.line ?? null })) })),
+    notNamed: r.notNamed.map((f) => f.path),
+    commits: r.commits.map((c) => ({
+      sha: c.sha,
+      subject: c.subject,
+      merge: c.merge,
+      madeBy: c.join.kind === "joined" ? { session: c.join.sessionId, action: c.join.toolUseId, grade: c.join.via === "stdout" ? "DIRECT" : "LIKELY", rule: c.join.via === "stdout" ? "R1" : "R9", requested: c.explanation?.requested.verdict ?? null } : null,
+      ambiguous: c.join.kind === "ambiguous" ? c.join.candidates : void 0
+    })),
+    files: r.files.map((f) => ({ path: f.path, commits: f.commits, uncommitted: f.uncommitted, grade: f.grade, rule: "R7", writers: f.writers.map(writer), moreWriters: f.moreWriters })),
+    limits: { commitsShown: r.commits.length, filesShown: r.files.length, sessionsOmitted: r.sessionsOmitted, unexplained: r.unexplained }
+  };
+}
+function mdCode(text, max) {
+  const t = clip(text, max);
+  return t ? `\`${t}\`` : "`(empty)`";
+}
+var escapeHtml2 = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+var htmlCode = (text, max) => `<code>${escapeHtml2(clip(text, max)) || "(empty)"}</code>`;
+var safeId = (id) => id.replace(/[^\w-]/g, "").slice(0, 80);
+var mdCall = (id) => `\`${callId(safeId(id))}\``;
+var mdSession = (id) => `\`${sid(safeId(id))}\``;
+var mdSha = (sha) => `\`${short(safeId(sha))}\``;
+var MD_BUDGET = 6e4;
+function renderReviewMarkdown(r, version) {
+  const range = r.range;
+  const head = range.branch ? mdCode(range.branch, 80) : `detached HEAD ${mdSha(range.head)}`;
+  const top = [];
+  top.push(`### Contrail review: ${head} against ${mdCode(range.base.name, 80)}`, "");
+  top.push(
+    "> [!NOTE]",
+    "> Data provenance from Contrail's local record of Claude Code sessions, not a judgment of this change. It shows which files recorded agent calls wrote, the prompt each call ran under, and where values in them first entered the agent's context. It does not show the agent's reasons.",
+    ""
+  );
+  top.push(`**${counts(r).join(" \xB7 ")}**`, "");
+  top.push(`<sub>Merge-base ${mdSha(range.base.mergeBase)}${range.base.given ? "" : `, base chosen by default (the first of ${DEFAULT_BASES.map((b) => `\`${b}\``).join(", ")} that exists)`}. Agent changes: recorded writes to these paths in sessions active in this repository since ${when(r.floorSec)}, joined by path.${limitNotes(r).map((n) => ` ${n.charAt(0).toUpperCase()}${n.slice(1)}.`).join("")}</sub>`, "");
+  top.push("#### Values from external content in this change", "");
+  if (!r.external.length) top.push("None: no value in the agent's recorded writes or commits on this branch traces to web, MCP or dependency content.");
+  for (const x of r.external.slice(0, LIST_LIMIT)) top.push(...externalMd(x));
+  mdMore(top, r.external.length);
+  top.push("");
+  top.push(`#### Sensitive actions in these sessions (${r.findings.length} of ${r.actionsScanned} tool calls)`, "");
+  if (!r.findings.length) top.push("None found.");
+  for (const f of r.findings.slice(0, LIST_LIMIT)) {
+    const g = r.graphs.get(f.action.scope.sessionId);
+    const mark = f.externalUpstream ? "\u25B2" : f.requested === "NOT_NAMED" ? "\u25B3" : "\xB7";
+    top.push(`- ${mark} ${mdCode(describe(f.action, g), 140)} \xB7 ${f.kinds.join(", ")} \xB7 ${VERDICT_WORDS[f.requested]} \xB7 ${f.action.tool} ${mdCall(f.action.id)} in session ${mdSession(f.action.scope.sessionId)}`);
+    const src = firstSource(f);
+    if (src) top.push(`  - **${src.link.grade}** ${mdCode(src.link.token ?? "", 80)} from ${mdCode(where(src.link, src.input), 120)} (${src.input.trust})`);
+  }
+  mdMore(top, r.findings.length);
+  if (r.findings.length) top.push("", "Marks: \u25B2 a value traces to web, MCP or dependency content; \u25B3 not named by you; \xB7 named by you.");
+  top.push("");
+  top.push("#### Changed without being named in your words", "");
+  if (!r.notNamed.length) top.push("None: your words name a recorded writer of every agent-changed file that was explained.");
+  for (const f of r.notNamed.slice(0, LIST_LIMIT)) {
+    const w = f.writers.find((x) => x.explanation);
+    top.push(`- ${mdCode(f.path, 120)} \xB7 ${w.action.tool} ${mdCall(w.actionId)} in session ${mdSession(w.sessionId)} \xB7 ${VERDICT_WORDS[w.explanation.requested.verdict]}`);
+  }
+  mdMore(top, r.notNamed.length);
+  top.push("");
+  top.push("#### Commits", "");
+  if (!r.commits.length) top.push(`None between ${mdCode(range.base.name, 80)} and HEAD.`);
+  for (const c of r.commits.slice(0, COMMIT_LIMIT)) top.push(commitMd(c, r));
+  if (range.totalCommits > Math.min(r.commits.length, COMMIT_LIMIT)) top.push(`- ${range.totalCommits - Math.min(r.commits.length, COMMIT_LIMIT)} more; \`contrail review --json\` lists them.`);
+  top.push("");
+  const footer = [
+    "---",
+    `<sub>LIKELY, not DIRECT: the agent wrote that path while this branch was in progress; whether that exact change is what the diff holds is not observed. DIRECT is used only for joins Claude Code recorded, such as git's own commit line in a command's output. Text matches are LIKELY at best. The agent's own words are never evidence.</sub>`,
+    "",
+    `<sub>Blind spots: ${REVIEW_BLIND_SPOTS.join("; ")}. No observed source is not the same as no source.</sub>`,
+    "",
+    `<sub>Written by \`contrail review\` ${escapeHtml2(version)} from the local record on the author's machine; nothing was sent anywhere. Run \`contrail why <path>\` there for the full trail behind any file.</sub>`,
+    ""
+  ];
+  const body = [];
+  const agent = r.files.filter((f) => f.grade !== "UNKNOWN");
+  const none = r.files.filter((f) => f.grade === "UNKNOWN");
+  body.push(`#### Files with recorded agent changes (${agent.length})`, "");
+  if (!agent.length) body.push("None.", "");
+  let used = [...top, ...footer].join("\n").length + 2e3;
+  let shown = 0;
+  for (const f of agent) {
+    const block = fileMd(f, r);
+    if (used + block.length > MD_BUDGET) break;
+    body.push(block);
+    used += block.length;
+    shown++;
+  }
+  if (shown < agent.length) body.push(`${agent.length - shown} more files did not fit; run \`contrail review\` locally for all of them.`, "");
+  if (none.length) {
+    body.push(`#### No recorded agent change (${none.length})`, "", "You, another process, or a session Contrail did not record.", "");
+    let listed = 0;
+    for (const f of none) {
+      const line = `- ${mdCode(f.path, 160)} \xB7 ${fileState(f)}`;
+      if (used + line.length > MD_BUDGET) break;
+      body.push(line);
+      used += line.length + 1;
+      listed++;
+    }
+    if (listed < none.length) body.push(`- ${none.length - listed} more`);
+    body.push("");
+  }
+  return `${[...top, ...body, ...footer].join("\n")}`;
+}
+function mdMore(out, total) {
+  if (total > LIST_LIMIT) out.push(`- ${total - LIST_LIMIT} more; \`contrail review --json\` lists them all.`);
+}
+function externalMd(x) {
+  const into = x.files.length ? ` in ${x.files.map((f) => mdCode(f, 100)).join(", ")}` : "";
+  const steps = x.trail.steps.map(({ link: link2, input }, i) => `${i ? `; one step back, ${mdCode(link2.token ?? "", 80)} ` : ""}**${link2.grade}** [${link2.rule}] from ${mdCode(where(link2, input), 120)} (${input.trust})`);
+  const lines = [`- \u25B2 ${mdCode(x.trail.token.text, 100)}${into} \xB7 ${x.action.tool} ${mdCall(x.action.id)} in session ${mdSession(x.sessionId)} \xB7 ${steps.join("")}`];
+  const { link } = x.trail.steps.at(-1);
+  if (link.quote?.text) lines.push(`  <br>line ${link.quote.line ?? "?"}: ${mdCode(link.quote.text, 140)}`);
+  return lines;
+}
+function commitMd(c, r) {
+  const head = `- ${mdSha(c.sha)} ${mdCode(c.subject, 100)}${c.merge ? " (merge)" : ""}`;
+  if (c.join.kind === "ambiguous") return `${head} \xB7 **UNKNOWN** [R9]: ${c.join.candidates} recorded git commits were running when git dated it; neither is credited`;
+  if (c.join.kind === "none" || !c.action) return `${head} \xB7 no recorded agent call made it`;
+  const g = r.graphs.get(c.join.sessionId);
+  const how = c.join.via === "stdout" ? "**DIRECT** [R1] made by" : "**LIKELY** [R9] made by";
+  const turn = turnWords(c.action, g, 100);
+  const said = turn ? ` \xB7 turn ${turn.label}${turn.yours ? "" : " (a background task report, not your words)"}: ${mdCode(turn.text, 100)}` : "";
+  const asked = c.explanation ? ` \xB7 ${VERDICT_WORDS[c.explanation.requested.verdict]}` : "";
+  return `${head} \xB7 ${how} ${c.action.tool} ${mdCall(c.action.id)} in session ${mdSession(c.join.sessionId)}${said}${asked}`;
+}
+function fileMd(f, r) {
+  const first = f.writers[0];
+  const verdict = f.writers.find((w) => w.explanation)?.explanation?.requested.verdict;
+  const summary2 = [htmlCode(f.path, 120), f.grade, first?.action ? `${escapeHtml2(first.action.tool)} <code>${escapeHtml2(callId(safeId(first.actionId)))}</code>` : "", verdict ? VERDICT_WORDS[verdict] : ""].filter(Boolean).join(" \xB7 ");
+  const lines = ["<details>", `<summary>${summary2}</summary>`, "", `- ${fileState(f)}`];
+  for (const w of f.writers) {
+    const g = r.graphs.get(w.sessionId);
+    const grade = w.expected ? "POSSIBLE" : "LIKELY";
+    if (!w.action || !g) {
+      lines.push(`- **${grade}** [R7] ${mdCall(w.actionId)} in session ${mdSession(w.sessionId)} (session past the limit of this review)`);
+      continue;
+    }
+    const what = w.action.tool === "Bash" ? ` ${mdCode(describe(w.action, g), 100)}` : "";
+    const expected = w.expected ? ", expected, not observed" : "";
+    const asked = w.explanation ? ` \xB7 ${VERDICT_WORDS[w.explanation.requested.verdict]}` : "";
+    lines.push(`- **${grade}** [R7] ${w.action.tool} ${mdCall(w.action.id)}${what} in session ${mdSession(w.sessionId)}, seq ${w.action.preSeq}${expected}${asked}`);
+    const turn = turnWords(w.action, g, 140);
+    if (turn) lines.push(`  - Turn ${turn.label}${turn.yours ? "" : " (a background task report, not your words)"}: ${mdCode(turn.text, 140)}`);
+    const h = w.explanation ? headline3(w.explanation, g) : null;
+    if (h) lines.push(`  - Trail: **${h.link.grade}** [${h.link.rule}] ${mdCode(h.token, 80)} from ${mdCode(where(h.link, h.input), 120)}, ${originWording(h.input)}`);
+    else if (w.explanation) lines.push(`  - Trail: **UNKNOWN** ${w.explanation.traces.length ? "no observed source for its values" : "nothing distinctive in it to trace"}`);
+  }
+  if (f.moreWriters) lines.push(`- ${plural(f.moreWriters, "more recorded call")} wrote this path`);
+  lines.push("", "</details>", "");
+  return lines.join("\n");
+}
+
 // src/store/retention.ts
 import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join6 } from "node:path";
 var DEFAULTS = { retentionDays: 90, maxDbMb: 1024, storeContent: true };
 function loadConfig(dataDir) {
   let raw;
   try {
-    raw = readFileSync3(join4(dataDir, "config.json"), "utf8");
+    raw = readFileSync3(join6(dataDir, "config.json"), "utf8");
   } catch {
     return { config: DEFAULTS, problem: null };
   }
@@ -3569,6 +4233,7 @@ var OPTIONS = {
   all: { type: "boolean" },
   tree: { type: "boolean" },
   otel: { type: "boolean" },
+  markdown: { type: "boolean" },
   output: { type: "string", short: "o" },
   "from-hook": { type: "boolean" },
   help: { type: "boolean", short: "h" },
@@ -3595,17 +4260,22 @@ Usage:
   contrail report [<session> | last] [-o file.html]
                                     a session as one self-contained HTML page
   contrail find "<value>" [--all]   every recorded input that held a value, and every call that used it
+  contrail review [<base>] [--markdown] [-o review.md]
+                                    this branch's commits and uncommitted changes, joined to the agent
+                                    calls behind them (base: the first of origin/HEAD, origin/main,
+                                    origin/master, main, master); --markdown for a pull request,
+                                    -o to save that markdown and print this view
   contrail statusline               one line for Claude Code's status bar (reads its JSON on stdin)
   contrail doctor                   check that recording and queries work
   contrail ingest                   move recorded events from the spool into the database
   contrail prune                    apply retention now and compact the database
 
 Options:
-  --json          machine-readable output (why, trace, risks, sessions)
+  --json          machine-readable output (why, trace, risks, sessions, review)
   --data <dir>    data directory (default: $CONTRAIL_HOME, $CLAUDE_PLUGIN_DATA, or the installed plugin's)
   --plugin-data <dir>
                   the plugin's data directory, used when $CONTRAIL_HOME is unset (the skills pass it)
-  --stdin         read the why target from standard input (used by the /contrail:why skill)
+  --stdin         read the why, find or review argument from standard input (the skills use it)
   -h, --help      show this help
   -v, --version   show the version
 `;
@@ -3642,6 +4312,7 @@ ${USAGE}`);
     report: (args) => report(args, flags, io),
     statusline: () => statusline(flags, io),
     find: (args) => find(args, flags, io, style),
+    review: (args) => review(args, flags, io, style),
     ingest: () => ingestCommand(flags, io),
     prune: () => pruneCommand(flags, io),
     doctor: () => doctor(flags, io)
@@ -3672,8 +4343,8 @@ async function withStore(flags, io, use) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
   let db;
   try {
-    mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
-    db = await openDb(join5(dataDir, "contrail.db"));
+    mkdirSync(join7(dataDir, "spool"), { recursive: true, mode: 448 });
+    db = await openDb(join7(dataDir, "contrail.db"));
   } catch (e) {
     if (e instanceof ContrailError) throw e;
     throw new ContrailError(`Cannot use the data directory ${dataDir}: ${e.message}`);
@@ -3683,7 +4354,7 @@ async function withStore(flags, io, use) {
     const repoKeyOf = makeRepoKeyOf();
     const storeContent = loadConfig(dataDir).config.storeContent;
     const hashToken = contentHmac(dataDir, !storeContent);
-    ingest(db, join5(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
+    ingest(db, join7(dataDir, "spool"), repoKeyOf, Date.now(), storeContent ? void 0 : hashToken);
     return await use({ db, dataDir, repoKey: repoKeyOf(io.cwd), ...hashToken ? { hashToken } : {} });
   } finally {
     db.close();
@@ -3742,17 +4413,6 @@ async function whyCommit(args, flags, io, s) {
     }
     return 0;
   });
-}
-function realPath(path) {
-  try {
-    return realpathSync3(path);
-  } catch {
-    try {
-      return join5(realpathSync3(dirname2(path)), basename4(path));
-    } catch {
-      return path;
-    }
-  }
 }
 async function trace2(flags, io, s) {
   const chosen = FILTERS.filter((f) => flags[f]);
@@ -3895,6 +4555,26 @@ async function find(args, flags, io, s) {
     return 0;
   });
 }
+async function review(args, flags, io, s) {
+  const base = (flags.stdin ? readStdin(io) : args[0] ?? "").trim() || void 0;
+  if (args.length > 1) throw new ContrailError("Usage: contrail review [<base>] [--markdown | --json] [-o review.md]");
+  if (flags.json && flags.markdown) throw new ContrailError("Pick one of --json and --markdown.");
+  return withStore(flags, io, ({ db, repoKey, hashToken }) => {
+    const r = reviewBranch(db, { cwd: io.cwd, base, repoKey, home: io.home, ...hashToken ? { hashToken } : {} });
+    const path = flags.output;
+    if (path) {
+      writeFileSync2(path, renderReviewMarkdown(r, VERSION), { mode: 384 });
+    }
+    if (flags.json) io.out(`${JSON.stringify(reviewJson(r), null, 2)}
+`);
+    else if (flags.markdown && !path) io.out(renderReviewMarkdown(r, VERSION));
+    else io.out(renderReview(r, s));
+    if (path) io.out(`
+Wrote the markdown for a pull request description to ${path}
+`);
+    return 0;
+  });
+}
 var readStdin = (io) => io.stdin ? io.stdin() : readFileSync4(0, "utf8");
 async function statusline(flags, io) {
   const s = io.env.NO_COLOR ? PLAIN : COLOR;
@@ -3916,12 +4596,12 @@ async function statusline(flags, io) {
 }
 async function ingestCommand(flags, io) {
   const dataDir = resolveDataDir(flags.data, io.env, io.home, flags["plugin-data"]);
-  mkdirSync(join5(dataDir, "spool"), { recursive: true, mode: 448 });
-  const db = await openDb(join5(dataDir, "contrail.db"));
+  mkdirSync(join7(dataDir, "spool"), { recursive: true, mode: 448 });
+  const db = await openDb(join7(dataDir, "contrail.db"));
   try {
     migrate(db);
     const { config } = loadConfig(dataDir);
-    const r = ingest(db, join5(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
+    const r = ingest(db, join7(dataDir, "spool"), makeRepoKeyOf(), Date.now(), config.storeContent ? void 0 : contentHmac(dataDir, true));
     const { sessionsRemoved } = prune(db, config, Date.now());
     if (!flags["from-hook"]) {
       io.out(
@@ -3951,7 +4631,7 @@ async function doctor(flags, io) {
   io.out(`contrail ${VERSION} on ${versions.bun ? `bun ${versions.bun}` : `node ${process.versions.node}`}
 `);
   return withStore(flags, io, ({ db, dataDir }) => {
-    const backlog = readdirSync3(join5(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
+    const backlog = readdirSync3(join7(dataDir, "spool")).filter((n) => n.endsWith(".json")).length;
     const stats = db.get(
       `SELECT COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions,
               SUM(parse_error IS NOT NULL) AS parseErrors, MAX(captured_us) AS last FROM events`
@@ -3967,7 +4647,7 @@ async function doctor(flags, io) {
       `last event       ${stats.last ? new Date(Math.floor(stats.last / 1e3)).toISOString() : "never"}`,
       `retention        ${config.retentionDays} days, up to ${config.maxDbMb} MB${problem ? ` (${problem})` : ""}`,
       `content          ${config.storeContent ? "stored as redacted text" : "stored as keyed hashes only (store_content: false)"}`,
-      `launcher         ${existsSync3(join5(dataDir, "bin", "contrail")) ? join5(dataDir, "bin", "contrail") : "written at the next session start"}`,
+      `launcher         ${existsSync3(join7(dataDir, "bin", "contrail")) ? join7(dataDir, "bin", "contrail") : "written at the next session start"}`,
       ...hook ? [`capture hook     ${hook} ms per event (median of 5)`] : [],
       stats.events === 0 && backlog === 0 ? "No events yet. Run a Claude Code session with the plugin enabled, then check again." : "Recording and queries work."
     ];
@@ -3984,7 +4664,7 @@ function captureTiming() {
     return null;
   }
   if (!existsSync3(hook)) return null;
-  const dir = mkdtempSync(join5(tmpdir(), "contrail-doctor-"));
+  const dir = mkdtempSync(join7(tmpdir(), "contrail-doctor-"));
   try {
     const times = [];
     for (let i = 0; i < 5; i++) {

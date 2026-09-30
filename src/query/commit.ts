@@ -99,12 +99,13 @@ export type CommitJoin =
 /**
  * findCommit for many commits at once, with bounded reads: each commit is joined to the recorded
  * shell command whose output was git's commit line (R1), or else to the one git commit running
- * in the second git dated it (R9). Only commands recorded in this repository near the commits' dates.
+ * in the second git dated it (R9). Only commands recorded in this repository from `sinceSec`
+ * (or the earliest commit's date) to shortly after the newest commit are read.
  */
-export function joinCommits(db: Db, commits: Array<{ sha: string; sec: number }>, repoKey: string): Map<string, CommitJoin> {
+export function joinCommits(db: Db, commits: Array<{ sha: string; sec: number }>, repoKey: string, sinceSec?: number): Map<string, CommitJoin> {
   const joins = new Map<string, CommitJoin>();
   if (!commits.length) return joins;
-  const fromUs = Math.min(...commits.map(c => c.sec)) * 1e6 - WINDOW_US;
+  const fromUs = Math.min(sinceSec ?? Infinity, ...commits.map(c => c.sec)) * 1e6 - WINDOW_US;
   const toUs = Math.max(...commits.map(c => c.sec)) * 1e6 + WINDOW_US;
 
   const printed = db.all<{ sessionId: string; toolUseId: string; command: string | null; payload: string }>(

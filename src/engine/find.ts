@@ -41,5 +41,5 @@ export function findValue(g: Graph, value: string): Sighting[] {
 
 function runsContrail(a: Action): boolean {
   const command = a.tool === 'Bash' ? stringLeaves(a.input).find(l => l.path === '$.command')?.value ?? '' : '';
-  return /(^|[\s;&|(/])(bin\/contrail|contrail)\s+(why|find|trace|risks|sessions|report|export|doctor|statusline)\b/.test(command);
+  return /(^|[\s;&|(/])(bin\/contrail|contrail)\s+(why|find|trace|risks|sessions|report|review|export|doctor|statusline)\b/.test(command);
 }

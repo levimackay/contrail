@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 /** Every string inside a JSON value, depth-first, with its JSONPath. */
 export function stringLeaves(value: unknown, path = '$'): Array<{ path: string; value: string }> {
@@ -84,4 +85,17 @@ export function clip(s: string, max: number): string {
  */
 export function callId(id: string): string {
   return id.length > 12 ? `${id.slice(0, 5)}…${id.slice(-5)}` : id;
+}
+
+/** The path with symlinks resolved; for a file that no longer exists, its directory's real path. */
+export function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    try {
+      return join(realpathSync(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
 }
